@@ -25,54 +25,25 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-@click.command()
-@click.option(
-    '--input', '-i',
-    type=click.Path(exists=True, path_type=Path),
-    required=True,
-    help='Input audio file path'
-)
-@click.option(
-    '--output-dir', '-o',
-    type=click.Path(path_type=Path),
-    default='output',
-    help='Output directory for results and plots'
-)
-@click.option(
-    '--sample-rate', '-sr',
-    type=int,
-    default=44100,
-    help='Sample rate for audio processing'
-)
-@click.option(
-    '--plot/--no-plot',
-    default=True,
-    help='Generate plots'
-)
-@click.option(
-    '--export-csv/--no-export-csv',
-    default=True,
-    help='Export results to CSV'
-)
-def main(input: Path, output_dir: Path, sample_rate: int, 
-         plot: bool, export_csv: bool) -> None:
-    """Music Analyser - Analyze audio files using octave band filtering.
+def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int) -> bool:
+    """Analyze a single audio track.
     
-    This tool performs comprehensive octave band analysis on audio files,
-    similar to the MATLAB musicanalyser.m script. It generates frequency
-    analysis, statistical measures, and visualizations.
-    
-    Example:
-        python -m src.main --input "song.flac" --output-dir results
+    Args:
+        track_path: Path to the audio file
+        output_dir: Base output directory
+        sample_rate: Sample rate for processing
+        
+    Returns:
+        True if analysis was successful, False otherwise
     """
     try:
-        # Create output directory
-        output_dir.mkdir(parents=True, exist_ok=True)
+        # Create track-specific output directory
+        track_name = track_path.stem  # Get filename without extension
+        track_output_dir = output_dir / track_name
+        track_output_dir.mkdir(parents=True, exist_ok=True)
         
-        logger.info(f"Starting Music Analyser")
-        logger.info(f"Input file: {input}")
-        logger.info(f"Output directory: {output_dir}")
-        logger.info(f"Sample rate: {sample_rate} Hz")
+        logger.info(f"Analyzing: {track_path.name}")
+        logger.info(f"Output directory: {track_output_dir}")
         
         # Initialize components
         audio_processor = AudioProcessor(sample_rate=sample_rate)
@@ -81,7 +52,7 @@ def main(input: Path, output_dir: Path, sample_rate: int,
         
         # Load and preprocess audio
         logger.info("Loading audio file...")
-        audio_data, sr = audio_processor.load_audio(input)
+        audio_data, sr = audio_processor.load_audio(track_path)
         
         # Convert to mono if stereo
         audio_data = audio_processor.stereo_to_mono(audio_data)
@@ -91,7 +62,8 @@ def main(input: Path, output_dir: Path, sample_rate: int,
         
         # Get audio info
         audio_info = audio_processor.get_audio_info(audio_data, sr)
-        logger.info(f"Audio info: {audio_info}")
+        logger.info(f"Audio info: Duration={audio_info['duration_seconds']:.2f}s, "
+                   f"RMS={audio_info['rms']:.4f}, Max={audio_info['max_amplitude']:.4f}")
         
         # Create octave bank
         logger.info("Creating octave bank...")
@@ -104,27 +76,145 @@ def main(input: Path, output_dir: Path, sample_rate: int,
             octave_filter.OCTAVE_CENTER_FREQUENCIES
         )
         
-        # Generate outputs
-        if plot:
-            logger.info("Generating plots...")
-            analyzer.create_octave_spectrum_plot(
-                analysis_results,
-                output_path=str(output_dir / "octave_spectrum.png")
-            )
-            analyzer.create_histogram_plots(
-                analysis_results,
-                output_dir=str(output_dir)
-            )
+        # Generate plots
+        logger.info("Generating plots...")
+        analyzer.create_octave_spectrum_plot(
+            analysis_results,
+            output_path=str(track_output_dir / "octave_spectrum.png")
+        )
+        analyzer.create_histogram_plots(
+            analysis_results,
+            output_dir=str(track_output_dir)
+        )
         
-        if export_csv:
-            logger.info("Exporting results to CSV...")
-            analyzer.export_analysis_results(
-                analysis_results,
-                str(output_dir / "analysis_results.csv")
-            )
+        # Export results to CSV
+        logger.info("Exporting results to CSV...")
+        analyzer.export_analysis_results(
+            analysis_results,
+            str(track_output_dir / "analysis_results.csv")
+        )
         
-        logger.info("Analysis complete!")
-        logger.info(f"Results saved to: {output_dir}")
+        logger.info(f"Analysis complete for {track_path.name}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error analyzing {track_path.name}: {e}")
+        return False
+
+
+@click.command()
+@click.option(
+    '--input', '-i',
+    type=click.Path(exists=True, path_type=Path),
+    help='Input audio file path (for single file analysis)'
+)
+@click.option(
+    '--tracks-dir', '-t',
+    type=click.Path(exists=True, path_type=Path),
+    default='Tracks',
+    help='Directory containing tracks to analyze (default: Tracks)'
+)
+@click.option(
+    '--output-dir', '-o',
+    type=click.Path(path_type=Path),
+    default='analysis',
+    help='Output directory for results (default: analysis)'
+)
+@click.option(
+    '--sample-rate', '-sr',
+    type=int,
+    default=44100,
+    help='Sample rate for audio processing'
+)
+@click.option(
+    '--batch/--single',
+    default=True,
+    help='Process all tracks in directory (batch) or single file'
+)
+@click.option(
+    '--export-csv/--no-export-csv',
+    default=True,
+    help='Export results to CSV'
+)
+def main(input: Optional[Path], tracks_dir: Path, output_dir: Path, sample_rate: int, 
+         batch: bool, export_csv: bool) -> None:
+    """Music Analyser - Analyze audio files using octave band filtering.
+    
+    This tool performs comprehensive octave band analysis on audio files,
+    similar to the MATLAB musicanalyser.m script. It generates frequency
+    analysis, statistical measures, and visualizations.
+    
+    Examples:
+        # Analyze all tracks in Tracks directory
+        python -m src.main
+        
+        # Analyze a single file
+        python -m src.main --input "song.flac" --single
+        
+        # Analyze tracks in custom directory
+        python -m src.main --tracks-dir "MyMusic" --output-dir "results"
+    """
+    try:
+        # Create output directory
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        logger.info(f"Starting Music Analyser")
+        logger.info(f"Output directory: {output_dir}")
+        logger.info(f"Sample rate: {sample_rate} Hz")
+        
+        if batch:
+            # Batch processing - analyze all tracks in directory
+            logger.info(f"Batch processing tracks from: {tracks_dir}")
+            
+            # Find all audio files
+            audio_extensions = {'.wav', '.flac', '.mp3', '.m4a', '.aac', '.ogg'}
+            audio_files = []
+            
+            for ext in audio_extensions:
+                audio_files.extend(tracks_dir.glob(f"*{ext}"))
+                audio_files.extend(tracks_dir.glob(f"*{ext.upper()}"))
+            
+            if not audio_files:
+                logger.error(f"No audio files found in {tracks_dir}")
+                logger.info(f"Supported formats: {', '.join(audio_extensions)}")
+                sys.exit(1)
+            
+            logger.info(f"Found {len(audio_files)} audio files to analyze")
+            
+            # Process each track
+            successful_analyses = 0
+            failed_analyses = 0
+            
+            for track_path in sorted(audio_files):
+                logger.info(f"\n{'='*60}")
+                logger.info(f"Processing track {successful_analyses + failed_analyses + 1}/{len(audio_files)}")
+                
+                if analyze_single_track(track_path, output_dir, sample_rate):
+                    successful_analyses += 1
+                else:
+                    failed_analyses += 1
+            
+            # Summary
+            logger.info(f"\n{'='*60}")
+            logger.info(f"Batch analysis complete!")
+            logger.info(f"Successfully analyzed: {successful_analyses} tracks")
+            logger.info(f"Failed analyses: {failed_analyses} tracks")
+            logger.info(f"Results saved to: {output_dir}")
+            
+        else:
+            # Single file processing
+            if not input:
+                logger.error("--input is required when using --single mode")
+                sys.exit(1)
+            
+            logger.info(f"Single file analysis: {input}")
+            
+            if analyze_single_track(input, output_dir, sample_rate):
+                logger.info("Analysis complete!")
+                logger.info(f"Results saved to: {output_dir}")
+            else:
+                logger.error("Analysis failed!")
+                sys.exit(1)
         
     except Exception as e:
         logger.error(f"Error during analysis: {e}")

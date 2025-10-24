@@ -50,17 +50,17 @@ pip install -e ".[dev]"
 ### Command Line Interface
 
 ```bash
-# Basic usage
-python -m src.main --input "song.flac"
+# Batch processing - analyze all tracks in Tracks directory
+python -m src.main
 
-# With custom output directory
-python -m src.main --input "song.flac" --output-dir results
+# Analyze tracks in custom directory
+python -m src.main --tracks-dir "MyMusic" --output-dir "results"
 
-# Disable plots (faster processing)
-python -m src.main --input "song.flac" --no-plot
+# Single file analysis
+python -m src.main --input "song.flac" --single
 
-# Custom sample rate
-python -m src.main --input "song.flac" --sample-rate 48000
+# Custom sample rate for batch processing
+python -m src.main --sample-rate 48000
 
 # Get help
 python -m src.main --help
@@ -68,10 +68,11 @@ python -m src.main --help
 
 ### Command Line Options
 
-- `--input, -i`: Input audio file path (required)
-- `--output-dir, -o`: Output directory for results (default: 'output')
+- `--input, -i`: Input audio file path (for single file analysis)
+- `--tracks-dir, -t`: Directory containing tracks to analyze (default: 'Tracks')
+- `--output-dir, -o`: Output directory for results (default: 'analysis')
 - `--sample-rate, -sr`: Sample rate for processing (default: 44100)
-- `--plot/--no-plot`: Generate plots (default: True)
+- `--batch/--single`: Process all tracks in directory (batch) or single file (default: batch)
 - `--export-csv/--no-export-csv`: Export results to CSV (default: True)
 
 ### Programmatic Usage
@@ -106,19 +107,33 @@ analyzer.export_analysis_results(results, "results.csv")
 
 ## Analysis Output
 
-The tool generates several outputs:
+The tool generates organized outputs in the analysis directory:
 
-### 1. Octave Spectrum Plot
+### Directory Structure
+```
+analysis/
+├── Track Name 1/
+│   ├── octave_spectrum.png      # Octave spectrum plot
+│   ├── histograms.png          # Amplitude distribution histograms
+│   └── analysis_results.csv   # Statistical data
+├── Track Name 2/
+│   ├── octave_spectrum.png
+│   ├── histograms.png
+│   └── analysis_results.csv
+└── ...
+```
+
+### 1. Octave Spectrum Plot (`octave_spectrum.png`)
 - Logarithmic frequency axis (20Hz - 20kHz)
 - Peak and RMS levels for each octave band
 - Similar to MATLAB's `semilogx` plot
 
-### 2. Amplitude Distribution Histograms
+### 2. Amplitude Distribution Histograms (`histograms.png`)
 - Histogram for each octave band
 - Shows amplitude distribution patterns
 - Useful for understanding signal characteristics
 
-### 3. CSV Export
+### 3. CSV Export (`analysis_results.csv`)
 - Comprehensive statistical data
 - Max amplitude, RMS, dynamic range
 - Percentiles (10th, 25th, 50th, 75th, 90th, 95th, 99th)
