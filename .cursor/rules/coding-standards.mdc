@@ -1,0 +1,17 @@
+---
+description: Enforce PEP 8 coding standards and Python best practices
+globs:
+  - "**/*.py"
+alwaysApply: true
+---
+
+- Follow PEP 8 style guidelines for Python code
+- Use Black formatter with 88-character line length
+- Use isort for import organization with Black profile
+- Use snake_case for variables, functions, and modules
+- Use PascalCase for classes
+- Use UPPER_CASE for constants
+- Always use type hints for function parameters and return values
+- Write docstrings for all public functions, classes, and modules using Google-style format
+- Use specific exception types, not bare `except:`
+- Use `logging` module for error reporting instead of print statements

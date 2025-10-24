@@ -1,0 +1,15 @@
+---
+description: Enforce documentation standards and docstring requirements
+globs:
+  - "src/**/*.py"
+alwaysApply: true
+---
+
+- Write docstrings for all public functions, classes, and modules
+- Use Google-style docstrings format
+- Include type information in docstrings when helpful
+- Add examples for complex functions
+- Document all parameters, return values, and exceptions
+- Keep documentation up to date with code changes
+- Use meaningful variable and function names for self-documenting code
+- Document complex algorithms and business logic

@@ -1,0 +1,18 @@
+---
+description: Music analysis specific guidelines and audio processing best practices
+globs:
+  - "src/**/*.py"
+alwaysApply: true
+---
+
+- Use librosa for audio analysis when needed
+- Handle different audio formats appropriately (mp3, wav, flac, etc.)
+- Consider memory usage for large audio files
+- Use appropriate sample rates and bit depths
+- Use pandas for structured data analysis
+- Use numpy for numerical computations
+- Consider performance for large datasets
+- Use matplotlib or seaborn for plotting with consistent color schemes
+- Include proper labels and legends in visualizations
+- Use context managers for file operations
+- Validate audio file formats and handle errors gracefully

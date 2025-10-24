@@ -1,0 +1,18 @@
+---
+description: Define testing best practices and pytest guidelines
+globs:
+  - "tests/**/*.py"
+alwaysApply: true
+---
+
+- Use pytest for writing and running tests
+- Place tests in `tests/` directory mirroring the source code structure
+- Use descriptive test function names starting with `test_`
+- Use fixtures for common setup/teardown
+- Aim for high test coverage (>90%)
+- Test both happy paths and edge cases
+- Use parametrized tests for multiple scenarios
+- Mock external dependencies
+- Test error conditions and exceptions
+- Keep tests simple and focused
+- One test file per source module

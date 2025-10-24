@@ -1,0 +1,15 @@
+---
+description: Enforce virtual environment usage and dependency management
+globs:
+  - "**/*.py"
+alwaysApply: true
+---
+
+- Always use virtual environment for development
+- Activate venv before running any Python commands: `.\venv\Scripts\Activate.ps1`
+- Install dependencies from requirements files
+- Use `pip install -e .` for development installation
+- Pin major versions in requirements.txt
+- Use requirements-dev.txt for development dependencies
+- Keep dependencies up to date
+- Document any special installation requirements

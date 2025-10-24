@@ -1,0 +1,15 @@
+---
+description: Define Git best practices and version control guidelines
+globs:
+  - "**/*"
+alwaysApply: true
+---
+
+- Use descriptive commit messages following conventional commit format
+- Create feature branches for new features
+- Keep commits atomic and focused
+- Use `.gitignore` to exclude unnecessary files (venv/, __pycache__/, *.pyc)
+- Regularly push changes to remote repository
+- Delete branches after merging
+- Reference issue numbers when applicable
+- Keep the main branch stable

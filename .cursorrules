@@ -1,0 +1,223 @@
+# Cursor Rules for Python Development - Music Analyser Project
+
+## Project Overview
+This is a Python project for music analysis. Follow these rules to maintain code quality, consistency, and best practices.
+
+## Code Style and Standards
+
+### Python Style Guidelines
+- Follow PEP 8 style guidelines strictly
+- Use Black formatter with 88-character line length
+- Use isort for import organization with Black profile
+- Maximum line length: 88 characters (Black default)
+- Use 4 spaces for indentation, never tabs
+- Use snake_case for variables, functions, and modules
+- Use PascalCase for classes
+- Use UPPER_CASE for constants
+
+### Type Annotations
+- Always use type hints for function parameters and return values
+- Use `typing` module for complex types (List, Dict, Optional, Union, etc.)
+- Use `from __future__ import annotations` for forward references
+- Prefer `list[str]` over `List[str]` (Python 3.9+ style)
+
+### Documentation
+- Write docstrings for all public functions, classes, and modules
+- Use Google-style docstrings format
+- Include type information in docstrings when helpful
+- Add examples for complex functions
+- Document all parameters, return values, and exceptions
+
+### Error Handling
+- Use specific exception types, not bare `except:`
+- Always handle exceptions appropriately
+- Use `logging` module for error reporting
+- Create custom exceptions when needed
+- Use context managers (`with` statements) for resource management
+
+## Project Structure
+
+### Directory Organization
+- `src/` - Main source code
+- `tests/` - Test files (mirror src structure)
+- `docs/` - Documentation
+- `scripts/` - Utility scripts
+- `venv/` - Virtual environment (excluded from git)
+
+### File Naming
+- Use snake_case for Python files
+- Test files should start with `test_`
+- Configuration files use appropriate extensions (.toml, .yaml, .json)
+
+### Import Organization
+- Standard library imports first
+- Third-party imports second
+- Local application imports last
+- Use absolute imports when possible
+- Group imports with blank lines between groups
+
+## Testing Guidelines
+
+### Test Structure
+- Use pytest as the testing framework
+- Place tests in `tests/` directory
+- Mirror the source code structure in tests
+- Use descriptive test function names starting with `test_`
+- Use fixtures for common setup/teardown
+
+### Test Coverage
+- Aim for high test coverage (>90%)
+- Test both happy paths and edge cases
+- Use parametrized tests for multiple scenarios
+- Mock external dependencies
+- Test error conditions and exceptions
+
+### Test Organization
+- One test file per source module
+- Group related tests in classes
+- Use descriptive test names that explain the scenario
+- Keep tests simple and focused
+
+## Development Workflow
+
+### Virtual Environment
+- Always use virtual environment for development
+- Activate venv before running any Python commands
+- Install dependencies from requirements files
+- Use `pip install -e .` for development installation
+
+### Git Practices
+- Use descriptive commit messages
+- Follow conventional commit format when possible
+- Create feature branches for new features
+- Keep commits atomic and focused
+- Use `.gitignore` to exclude unnecessary files
+
+### Code Quality Tools
+- Run Black formatter before committing
+- Use flake8 for linting
+- Use mypy for type checking
+- Use pytest for testing
+- Use pre-commit hooks for automation
+
+## Music Analysis Specific Guidelines
+
+### Audio Processing
+- Use librosa for audio analysis when needed
+- Handle different audio formats appropriately
+- Consider memory usage for large audio files
+- Use appropriate sample rates and bit depths
+
+### Data Handling
+- Use pandas for structured data analysis
+- Use numpy for numerical computations
+- Consider performance for large datasets
+- Use appropriate data types to save memory
+
+### Visualization
+- Use matplotlib or seaborn for plotting
+- Create publication-ready figures
+- Use consistent color schemes
+- Include proper labels and legends
+
+## Performance Considerations
+
+### Optimization
+- Profile code before optimizing
+- Use vectorized operations (numpy) over loops
+- Consider memory usage for large datasets
+- Use appropriate data structures
+- Cache expensive computations when possible
+
+### Resource Management
+- Close files and connections properly
+- Use context managers for resource cleanup
+- Consider memory usage for audio processing
+- Handle large files efficiently
+
+## Security and Best Practices
+
+### Security
+- Never commit sensitive information (API keys, passwords)
+- Use environment variables for configuration
+- Validate user inputs
+- Sanitize file paths and names
+
+### Code Quality
+- Write self-documenting code
+- Use meaningful variable and function names
+- Keep functions small and focused
+- Avoid deep nesting
+- Use list/dict comprehensions when appropriate
+
+## Dependencies and Package Management
+
+### Requirements Management
+- Pin major versions in requirements.txt
+- Use requirements-dev.txt for development dependencies
+- Keep dependencies up to date
+- Document any special installation requirements
+
+### Package Structure
+- Use `__init__.py` files appropriately
+- Organize code into logical modules
+- Use relative imports within packages
+- Follow Python packaging best practices
+
+## Debugging and Logging
+
+### Logging
+- Use the `logging` module instead of print statements
+- Set appropriate log levels
+- Include context in log messages
+- Use structured logging when possible
+
+### Debugging
+- Use debugger (pdb) for complex issues
+- Add temporary logging for debugging
+- Use assertions for development checks
+- Remove debug code before committing
+
+## Code Review Guidelines
+
+### Review Checklist
+- Code follows style guidelines
+- Type hints are present and correct
+- Tests are comprehensive and pass
+- Documentation is complete
+- Error handling is appropriate
+- Performance considerations are addressed
+
+### Review Process
+- Review for correctness and clarity
+- Check for security issues
+- Verify test coverage
+- Ensure documentation is updated
+- Consider maintainability
+
+## Continuous Integration
+
+### Automated Checks
+- Run tests on all commits
+- Check code style and formatting
+- Run type checking
+- Verify test coverage
+- Build documentation
+
+### Deployment
+- Use version tags for releases
+- Document deployment process
+- Test in staging environment
+- Monitor application after deployment
+
+## Additional Notes
+
+- Always consider the user experience
+- Write code that others can understand and maintain
+- Follow the principle of least surprise
+- Prefer explicit over implicit
+- Keep it simple and readable
+- Document complex algorithms and business logic
+- Consider edge cases and error conditions
+- Use appropriate data structures for the task
+- Optimize for readability first, performance second
