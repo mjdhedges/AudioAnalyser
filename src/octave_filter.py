@@ -65,9 +65,20 @@ class OctaveBandFilter:
         # Design Butterworth bandpass filter
         low_norm = low_freq / nyquist
         high_norm = high_freq / nyquist
-
-        # Use 4th order Butterworth filter for good performance
-        filter_order = 4
+        
+        # Check for very low frequencies that might cause numerical issues
+        if low_norm < 0.01:  # Less than 1% of Nyquist frequency
+            # Use lower order filter for very low frequencies to avoid numerical instability
+            filter_order = 2
+            logger.debug(f"Using 2nd order filter for low frequency band: {center_freq}Hz")
+        else:
+            # Use 4th order Butterworth filter for good performance
+            filter_order = 4
+            
+        # Ensure normalized frequencies are within valid range for scipy.signal.butter
+        low_norm = max(low_norm, 1e-6)  # Minimum normalized frequency
+        high_norm = min(high_norm, 0.99)  # Maximum normalized frequency
+        
         b, a = signal.butter(filter_order, [low_norm, high_norm], btype='band')
 
         logger.debug(f"Designed octave filter: {center_freq}Hz, "

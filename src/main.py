@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Optional
 
 import click
+import numpy as np
+import pandas as pd
 
 from src.audio_processor import AudioProcessor
 from src.music_analyzer import MusicAnalyzer
@@ -48,7 +50,6 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int) -
         # Initialize components
         audio_processor = AudioProcessor(sample_rate=sample_rate)
         octave_filter = OctaveBandFilter(sample_rate=sample_rate)
-        analyzer = MusicAnalyzer(sample_rate=sample_rate)
         
         # Load and preprocess audio
         logger.info("Loading audio file...")
@@ -56,6 +57,12 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int) -
         
         # Convert to mono if stereo
         audio_data = audio_processor.stereo_to_mono(audio_data)
+        
+        # Store original peak level before normalization for dBFS calculation
+        original_peak = np.max(np.abs(audio_data))
+        
+        # Initialize analyzer with original peak for dBFS calculations
+        analyzer = MusicAnalyzer(sample_rate=sample_rate, original_peak=original_peak)
         
         # Normalize audio
         audio_data = audio_processor.normalize_audio(audio_data)
@@ -76,21 +83,62 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int) -
             octave_filter.OCTAVE_CENTER_FREQUENCIES
         )
         
+        # Perform time-domain crest factor analysis
+        logger.info("Performing time-domain crest factor analysis...")
+        time_analysis = analyzer.analyze_crest_factor_over_time(audio_data, chunk_duration=2.0)
+        
         # Generate plots
         logger.info("Generating plots...")
         analyzer.create_octave_spectrum_plot(
             analysis_results,
-            output_path=str(track_output_dir / "octave_spectrum.png")
+            output_path=str(track_output_dir / "octave_spectrum.png"),
+            time_analysis=time_analysis,
+            audio_data=audio_data
+        )
+        analyzer.create_crest_factor_plot(
+            analysis_results,
+            output_path=str(track_output_dir / "crest_factor.png"),
+            time_analysis=time_analysis,
+            audio_data=audio_data
         )
         analyzer.create_histogram_plots(
             analysis_results,
             output_dir=str(track_output_dir)
         )
+        analyzer.create_histogram_plots_log_db(
+            analysis_results,
+            output_dir=str(track_output_dir)
+        )
+        analyzer.create_crest_factor_time_plot(
+            time_analysis,
+            output_path=str(track_output_dir / "crest_factor_time.png")
+        )
+        analyzer.create_octave_crest_factor_time_plot(
+            audio_data,
+            time_analysis,
+            output_path=str(track_output_dir / "octave_crest_factor_time.png")
+        )
         
         # Export results to CSV
         logger.info("Exporting results to CSV...")
-        analyzer.export_analysis_results(
+        
+        # Prepare comprehensive export data
+        track_metadata = {
+            "track_name": track_path.name,
+            "track_path": str(track_path),
+            "duration_seconds": audio_info["duration_seconds"],
+            "sample_rate": sr,
+            "samples": len(audio_data),
+            "channels": audio_info.get("channels", 1),
+            "original_peak": original_peak,
+            "original_peak_dbfs": 20 * np.log10(original_peak),
+            "analysis_date": pd.Timestamp.now().isoformat()
+        }
+        
+        analyzer.export_comprehensive_results(
             analysis_results,
+            time_analysis,
+            track_metadata,
             str(track_output_dir / "analysis_results.csv")
         )
         

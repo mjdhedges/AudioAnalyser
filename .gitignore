@@ -169,3 +169,6 @@ Thumbs.db
 *.temp
 *.bak
 *.backup
+
+# Audio tracks directory
+Tracks/
