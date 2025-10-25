@@ -76,16 +76,19 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int) -
         logger.info("Creating octave bank...")
         octave_bank = octave_filter.create_octave_bank(audio_data)
         
-        # Perform analysis
-        logger.info("Performing octave band analysis...")
-        analysis_results = analyzer.analyze_octave_bands(
+        # Perform comprehensive analysis (efficient - runs octave analysis only once)
+        logger.info("Performing comprehensive analysis...")
+        comprehensive_results = analyzer.analyze_comprehensive(
+            audio_data, 
             octave_bank, 
-            octave_filter.OCTAVE_CENTER_FREQUENCIES
+            octave_filter.OCTAVE_CENTER_FREQUENCIES,
+            chunk_duration=2.0
         )
         
-        # Perform time-domain crest factor analysis
-        logger.info("Performing time-domain crest factor analysis...")
-        time_analysis = analyzer.analyze_crest_factor_over_time(audio_data, chunk_duration=2.0)
+        # Extract results for backward compatibility
+        analysis_results = comprehensive_results["main_analysis"]
+        time_analysis = comprehensive_results["time_analysis"]
+        chunk_octave_analysis = comprehensive_results["chunk_octave_analysis"]
         
         # Generate plots
         logger.info("Generating plots...")
@@ -93,13 +96,13 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int) -
             analysis_results,
             output_path=str(track_output_dir / "octave_spectrum.png"),
             time_analysis=time_analysis,
-            audio_data=audio_data
+            chunk_octave_analysis=chunk_octave_analysis
         )
         analyzer.create_crest_factor_plot(
             analysis_results,
             output_path=str(track_output_dir / "crest_factor.png"),
             time_analysis=time_analysis,
-            audio_data=audio_data
+            chunk_octave_analysis=chunk_octave_analysis
         )
         analyzer.create_histogram_plots(
             analysis_results,
@@ -139,7 +142,9 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int) -
             analysis_results,
             time_analysis,
             track_metadata,
-            str(track_output_dir / "analysis_results.csv")
+            str(track_output_dir / "analysis_results.csv"),
+            chunk_octave_analysis=chunk_octave_analysis,
+            audio_data=audio_data
         )
         
         logger.info(f"Analysis complete for {track_path.name}")

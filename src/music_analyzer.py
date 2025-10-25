@@ -134,14 +134,14 @@ class MusicAnalyzer:
     def create_octave_spectrum_plot(self, analysis_results: Dict, 
                                   output_path: Optional[str] = None,
                                   time_analysis: Optional[Dict] = None,
-                                  audio_data: Optional[np.ndarray] = None) -> None:
+                                  chunk_octave_analysis: Optional[Dict] = None) -> None:
         """Create octave spectrum plot similar to MATLAB's semilogx plot.
         
         Args:
             analysis_results: Results from octave band analysis
             output_path: Optional path to save the plot
             time_analysis: Optional time-domain analysis results for chunk comparison
-            audio_data: Optional original audio data for chunk analysis
+            chunk_octave_analysis: Optional pre-computed octave analysis for extreme chunks
         """
         logger.info("Creating octave spectrum plot...")
         
@@ -189,8 +189,8 @@ class MusicAnalyzer:
                   label=f'Track RMS ({track_rms_db:.1f} dBFS)')
         
         # Add extreme crest factor chunk analysis if available
-        if time_analysis is not None and audio_data is not None:
-            self._add_extreme_chunk_analysis(ax, time_analysis, audio_data, center_freqs)
+        if time_analysis is not None and chunk_octave_analysis is not None:
+            self._add_extreme_chunk_analysis(ax, time_analysis, chunk_octave_analysis, center_freqs)
         
         # Formatting
         ax.set_xlabel('Frequency (Hz)')
@@ -213,105 +213,79 @@ class MusicAnalyzer:
         
         plt.close(fig)
 
-    def _add_extreme_chunk_analysis(self, ax, time_analysis: Dict, audio_data: np.ndarray, 
+    def _add_extreme_chunk_analysis(self, ax, time_analysis: Dict, chunk_octave_analysis: Dict, 
                                    center_freqs: List[float]) -> None:
         """Add analysis of extreme crest factor chunks to the octave spectrum plot.
         
         Args:
             ax: Matplotlib axis to plot on
             time_analysis: Time-domain analysis results
-            audio_data: Original audio data
+            chunk_octave_analysis: Pre-computed octave analysis for extreme chunks
             center_freqs: Center frequencies for octave bands
         """
-        from src.octave_filter import OctaveBandFilter
+        # Use pre-computed chunk analysis data
+        min_chunk_data = chunk_octave_analysis.get("min_chunk")
+        max_chunk_data = chunk_octave_analysis.get("max_chunk")
         
-        # Find chunks with extreme crest factors
-        crest_factors_db = time_analysis["crest_factors_db"]
-        valid_indices = np.isfinite(crest_factors_db)
-        
-        if not np.any(valid_indices):
-            return
+        if min_chunk_data is not None:
+            min_analysis = min_chunk_data["analysis"]
+            min_time = min_chunk_data["time"]
+            min_crest_db = min_chunk_data["crest_factor_db"]
             
-        valid_crest_db = crest_factors_db[valid_indices]
-        valid_time_points = time_analysis["time_points"][valid_indices]
-        
-        # Find min and max crest factor indices
-        min_idx = np.argmin(valid_crest_db)
-        max_idx = np.argmax(valid_crest_db)
-        
-        # Get the actual indices in the original arrays
-        valid_indices_array = np.where(valid_indices)[0]
-        min_chunk_idx = valid_indices_array[min_idx]
-        max_chunk_idx = valid_indices_array[max_idx]
-        
-        # Extract chunks from audio data
-        chunk_duration = time_analysis["chunk_duration"]
-        chunk_samples = int(chunk_duration * self.sample_rate)
-        
-        # Create octave filter for chunk analysis
-        octave_filter = OctaveBandFilter(self.sample_rate)
-        
-        # Analyze minimum crest factor chunk
-        min_start = min_chunk_idx * chunk_samples
-        min_end = min_start + chunk_samples
-        min_chunk = audio_data[min_start:min_end] if min_end <= len(audio_data) else audio_data[min_start:]
-        
-        if len(min_chunk) > 0:
-            min_octave_bank = octave_filter.create_octave_bank(min_chunk, center_freqs[1:])  # Skip full spectrum
-            min_analysis = self.analyze_octave_bands(min_octave_bank, center_freqs[1:])
+            # Extract RMS and peak levels for octave bands (skip full spectrum)
+            min_rms_db = []
+            min_peak_db = []
             
-            # Get both RMS and peak levels for octave bands
-            min_rms_db = [min_analysis["statistics"][f"{freq:.3f}"]["rms_db"] 
-                         for freq in center_freqs[1:]]
-            min_peak_db = [min_analysis["statistics"][f"{freq:.3f}"]["max_amplitude_db"] 
-                          for freq in center_freqs[1:]]
+            for freq in center_freqs[1:]:  # Skip full spectrum frequency
+                freq_key = f"{freq:.3f}"
+                if freq_key in min_analysis["statistics"]:
+                    min_rms_db.append(min_analysis["statistics"][freq_key]["rms_db"])
+                    min_peak_db.append(min_analysis["statistics"][freq_key]["max_amplitude_db"])
+                else:
+                    min_rms_db.append(-60)
+                    min_peak_db.append(-60)
             
-            # Calculate RMS and peak for the full chunk
-            min_chunk_rms = np.sqrt(np.mean(min_chunk**2))
-            min_chunk_peak = np.max(np.abs(min_chunk))
-            min_chunk_rms_dbfs = 20 * np.log10(min_chunk_rms * self.original_peak) if min_chunk_rms > 0 else -np.inf
-            min_chunk_peak_dbfs = 20 * np.log10(min_chunk_peak * self.original_peak) if min_chunk_peak > 0 else -np.inf
-            
-            min_rms_db = [min_chunk_rms_dbfs] + min_rms_db  # Add full spectrum RMS
-            min_peak_db = [min_chunk_peak_dbfs] + min_peak_db  # Add full spectrum peak
+            # Add full spectrum values at the beginning
+            full_spectrum_rms = min_analysis["statistics"]["Full Spectrum"]["rms_db"]
+            full_spectrum_peak = min_analysis["statistics"]["Full Spectrum"]["max_amplitude_db"]
+            min_rms_db = [full_spectrum_rms] + min_rms_db
+            min_peak_db = [full_spectrum_peak] + min_peak_db
             
             # Plot minimum crest factor chunk levels
-            min_time = valid_time_points[min_idx]
             ax.semilogx(center_freqs, min_rms_db, 'g--', linewidth=1.5, alpha=0.6,
-                       label=f'Min Crest RMS ({valid_crest_db[min_idx]:.1f} dB @ {min_time:.0f}s)')
+                       label=f'Min Crest RMS ({min_crest_db:.1f} dB @ {min_time:.0f}s)')
             ax.semilogx(center_freqs, min_peak_db, 'g:', linewidth=1.5, alpha=0.6,
-                       label=f'Min Crest Peak ({min_chunk_peak_dbfs:.1f} dBFS @ {min_time:.0f}s)')
+                       label=f'Min Crest Peak ({full_spectrum_peak:.1f} dBFS @ {min_time:.0f}s)')
         
-        # Analyze maximum crest factor chunk
-        max_start = max_chunk_idx * chunk_samples
-        max_end = max_start + chunk_samples
-        max_chunk = audio_data[max_start:max_end] if max_end <= len(audio_data) else audio_data[max_start:]
-        
-        if len(max_chunk) > 0:
-            max_octave_bank = octave_filter.create_octave_bank(max_chunk, center_freqs[1:])  # Skip full spectrum
-            max_analysis = self.analyze_octave_bands(max_octave_bank, center_freqs[1:])
+        if max_chunk_data is not None:
+            max_analysis = max_chunk_data["analysis"]
+            max_time = max_chunk_data["time"]
+            max_crest_db = max_chunk_data["crest_factor_db"]
             
-            # Get both RMS and peak levels for octave bands
-            max_rms_db = [max_analysis["statistics"][f"{freq:.3f}"]["rms_db"] 
-                         for freq in center_freqs[1:]]
-            max_peak_db = [max_analysis["statistics"][f"{freq:.3f}"]["max_amplitude_db"] 
-                          for freq in center_freqs[1:]]
+            # Extract RMS and peak levels for octave bands (skip full spectrum)
+            max_rms_db = []
+            max_peak_db = []
             
-            # Calculate RMS and peak for the full chunk
-            max_chunk_rms = np.sqrt(np.mean(max_chunk**2))
-            max_chunk_peak = np.max(np.abs(max_chunk))
-            max_chunk_rms_dbfs = 20 * np.log10(max_chunk_rms * self.original_peak) if max_chunk_rms > 0 else -np.inf
-            max_chunk_peak_dbfs = 20 * np.log10(max_chunk_peak * self.original_peak) if max_chunk_peak > 0 else -np.inf
+            for freq in center_freqs[1:]:  # Skip full spectrum frequency
+                freq_key = f"{freq:.3f}"
+                if freq_key in max_analysis["statistics"]:
+                    max_rms_db.append(max_analysis["statistics"][freq_key]["rms_db"])
+                    max_peak_db.append(max_analysis["statistics"][freq_key]["max_amplitude_db"])
+                else:
+                    max_rms_db.append(-60)
+                    max_peak_db.append(-60)
             
-            max_rms_db = [max_chunk_rms_dbfs] + max_rms_db  # Add full spectrum RMS
-            max_peak_db = [max_chunk_peak_dbfs] + max_peak_db  # Add full spectrum peak
+            # Add full spectrum values at the beginning
+            full_spectrum_rms = max_analysis["statistics"]["Full Spectrum"]["rms_db"]
+            full_spectrum_peak = max_analysis["statistics"]["Full Spectrum"]["max_amplitude_db"]
+            max_rms_db = [full_spectrum_rms] + max_rms_db
+            max_peak_db = [full_spectrum_peak] + max_peak_db
             
             # Plot maximum crest factor chunk levels
-            max_time = valid_time_points[max_idx]
             ax.semilogx(center_freqs, max_rms_db, 'm--', linewidth=1.5, alpha=0.6,
-                       label=f'Max Crest RMS ({valid_crest_db[max_idx]:.1f} dB @ {max_time:.0f}s)')
+                       label=f'Max Crest RMS ({max_crest_db:.1f} dB @ {max_time:.0f}s)')
             ax.semilogx(center_freqs, max_peak_db, 'm:', linewidth=1.5, alpha=0.6,
-                       label=f'Max Crest Peak ({max_chunk_peak_dbfs:.1f} dBFS @ {max_time:.0f}s)')
+                       label=f'Max Crest Peak ({full_spectrum_peak:.1f} dBFS @ {max_time:.0f}s)')
 
     def create_histogram_plots(self, analysis_results: Dict, 
                              output_dir: Optional[str] = None) -> None:
@@ -454,8 +428,40 @@ class MusicAnalyzer:
         
         plt.close(fig)
 
-    def analyze_crest_factor_over_time(self, audio_data: np.ndarray, 
-                                      chunk_duration: float = 2.0) -> Dict:
+    def analyze_comprehensive(self, audio_data: np.ndarray, octave_bank: np.ndarray,
+                            center_frequencies: List[float], chunk_duration: float = 2.0) -> Dict:
+        """Perform comprehensive analysis including time-domain and chunk-specific octave analysis.
+        
+        Args:
+            audio_data: Original audio data
+            octave_bank: Pre-computed octave bank
+            center_frequencies: List of center frequencies
+            chunk_duration: Duration of each chunk in seconds
+            
+        Returns:
+            Dictionary containing all analysis results
+        """
+        logger.info("Performing comprehensive analysis...")
+        
+        # Main octave band analysis
+        main_analysis = self.analyze_octave_bands(octave_bank, center_frequencies)
+        
+        # Time-domain analysis
+        time_analysis = self._analyze_time_domain_chunks(audio_data, chunk_duration)
+        
+        # Chunk-specific octave analysis for min/max crest factor chunks
+        chunk_octave_analysis = self._analyze_extreme_chunks_octave_bands(
+            audio_data, time_analysis, center_frequencies, chunk_duration
+        )
+        
+        return {
+            "main_analysis": main_analysis,
+            "time_analysis": time_analysis,
+            "chunk_octave_analysis": chunk_octave_analysis
+        }
+
+    def _analyze_time_domain_chunks(self, audio_data: np.ndarray, 
+                                  chunk_duration: float = 2.0) -> Dict:
         """Analyze crest factor over time using sliding windows.
         
         Args:
@@ -527,6 +533,92 @@ class MusicAnalyzer:
         }
         
         logger.info(f"Time-domain analysis complete: {num_chunks} chunks over {results['total_duration']:.1f}s")
+        return results
+
+    def analyze_crest_factor_over_time(self, audio_data: np.ndarray, 
+                                     chunk_duration: float = 2.0) -> Dict:
+        """Analyze crest factor over time using sliding windows.
+        
+        This is a convenience method that calls the internal _analyze_time_domain_chunks.
+        """
+        return self._analyze_time_domain_chunks(audio_data, chunk_duration)
+
+    def _analyze_extreme_chunks_octave_bands(self, audio_data: np.ndarray, 
+                                           time_analysis: Dict,
+                                           center_frequencies: List[float],
+                                           chunk_duration: float) -> Dict:
+        """Analyze octave bands for min/max crest factor chunks.
+        
+        Args:
+            audio_data: Original audio data
+            time_analysis: Time-domain analysis results
+            center_frequencies: List of center frequencies
+            chunk_duration: Duration of each chunk in seconds
+            
+        Returns:
+            Dictionary with octave analysis for extreme chunks
+        """
+        from src.octave_filter import OctaveBandFilter
+        
+        crest_factors_db = time_analysis["crest_factors_db"]
+        time_points = time_analysis["time_points"]
+        chunk_samples = int(chunk_duration * self.sample_rate)
+        
+        # Find valid (finite) crest factor values
+        valid_mask = np.isfinite(crest_factors_db)
+        if not np.any(valid_mask):
+            return {"min_chunk": None, "max_chunk": None}
+        
+        valid_crest_db = np.array(crest_factors_db)[valid_mask]
+        valid_time_points = np.array(time_points)[valid_mask]
+        
+        # Find min and max crest factor chunks
+        min_idx = np.argmin(valid_crest_db)
+        max_idx = np.argmax(valid_crest_db)
+        
+        # Get the actual chunk indices from the original time analysis
+        min_chunk_idx = np.where(valid_mask)[0][min_idx]
+        max_chunk_idx = np.where(valid_mask)[0][max_idx]
+        
+        # Create octave filter for chunk analysis
+        octave_filter = OctaveBandFilter(sample_rate=self.sample_rate)
+        
+        results = {}
+        
+        # Analyze minimum crest factor chunk
+        min_start = min_chunk_idx * chunk_samples
+        min_end = min_start + chunk_samples
+        min_chunk = audio_data[min_start:min_end] if min_end <= len(audio_data) else audio_data[min_start:]
+        
+        if len(min_chunk) > 0:
+            min_octave_bank = octave_filter.create_octave_bank(min_chunk)
+            min_analysis = self.analyze_octave_bands(min_octave_bank, center_frequencies)
+            results["min_chunk"] = {
+                "analysis": min_analysis,
+                "time": valid_time_points[min_idx],
+                "crest_factor_db": valid_crest_db[min_idx],
+                "chunk_idx": min_chunk_idx
+            }
+        else:
+            results["min_chunk"] = None
+        
+        # Analyze maximum crest factor chunk
+        max_start = max_chunk_idx * chunk_samples
+        max_end = max_start + chunk_samples
+        max_chunk = audio_data[max_start:max_end] if max_end <= len(audio_data) else audio_data[max_start:]
+        
+        if len(max_chunk) > 0:
+            max_octave_bank = octave_filter.create_octave_bank(max_chunk)
+            max_analysis = self.analyze_octave_bands(max_octave_bank, center_frequencies)
+            results["max_chunk"] = {
+                "analysis": max_analysis,
+                "time": valid_time_points[max_idx],
+                "crest_factor_db": valid_crest_db[max_idx],
+                "chunk_idx": max_chunk_idx
+            }
+        else:
+            results["max_chunk"] = None
+        
         return results
 
     def create_crest_factor_time_plot(self, time_analysis: Dict, 
@@ -672,18 +764,8 @@ class MusicAnalyzer:
         ax.grid(True, alpha=0.3)
         ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
         
-        # Set reasonable Y-axis limits
-        all_values = []
-        for freq_values in octave_crest_factors.values():
-            all_values.extend([v for v in freq_values if v >= 0])
-        
-        if all_values:
-            y_min = min(all_values) - 1
-            y_max = max(all_values) + 2
-            # Ensure Y-axis never goes below 0 dB (physically impossible for crest factor)
-            ax.set_ylim([max(y_min, 0), min(y_max, 35)])
-        else:
-            ax.set_ylim([0, 30])
+        # Set fixed Y-axis limits for consistency across tracks
+        ax.set_ylim([0, 40])
         
         plt.tight_layout()
         
@@ -734,7 +816,9 @@ class MusicAnalyzer:
         logger.info("Analysis results exported successfully")
 
     def export_comprehensive_results(self, analysis_results: Dict, time_analysis: Dict,
-                                    track_metadata: Dict, output_path: str) -> None:
+                                   track_metadata: Dict, output_path: str,
+                                   chunk_octave_analysis: Optional[Dict] = None,
+                                   audio_data: Optional[np.ndarray] = None) -> None:
         """Export comprehensive analysis results including all data to CSV file.
         
         Args:
@@ -829,20 +913,92 @@ class MusicAnalyzer:
             
             for key, value in summary_stats.items():
                 csvfile.write(f"{key},{value}\n")
+            
+            # Add histogram data if available
+            if audio_data is not None:
+                csvfile.write("\n[HISTOGRAM_DATA]\n")
+                csvfile.write("frequency_hz,bin_center,bin_count,bin_density\n")
+                
+                center_freqs = analysis_results["center_frequencies"]
+                statistics = analysis_results["statistics"]
+                
+                for freq in center_freqs:
+                    freq_key = f"{freq:.3f}"
+                    if freq_key in statistics:
+                        # Get the filtered signal for this frequency band
+                        if freq == 0:  # Full spectrum
+                            signal = audio_data
+                        else:
+                            # We need to recreate the octave bank for histogram data
+                            from src.octave_filter import OctaveBandFilter
+                            octave_filter = OctaveBandFilter(sample_rate=self.sample_rate)
+                            octave_bank = octave_filter.create_octave_bank(audio_data)
+                            freq_idx = list(center_freqs[1:]).index(freq)  # Skip full spectrum
+                            signal = octave_bank[freq_idx]
+                        
+                        # Remove DC component and very small values
+                        clean_signal = signal[np.abs(signal) > 1e-10]
+                        
+                        if len(clean_signal) > 0:
+                            # Linear histogram
+                            hist, bin_edges = np.histogram(clean_signal, bins=51, range=(-1, 1), density=True)
+                            bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+                            
+                            for bin_center, count, density in zip(bin_centers, hist, hist):
+                                csvfile.write(f"{freq},{bin_center},{count},{density}\n")
+            
+            # Note: Octave crest factor time data is not included in CSV export
+            # as it would require recalculating octave analysis for every chunk,
+            # which defeats our efficiency optimization. This data is available
+            # in the octave_crest_factor_time.png plot.
+            
+            # Add min/max chunk octave analysis if available
+            if chunk_octave_analysis is not None:
+                csvfile.write("\n[EXTREME_CHUNKS_OCTAVE_ANALYSIS]\n")
+                csvfile.write("chunk_type,time_seconds,crest_factor_db,frequency_hz,max_amplitude_db,rms_db,chunk_crest_factor_db\n")
+                
+                min_chunk_data = chunk_octave_analysis.get("min_chunk")
+                max_chunk_data = chunk_octave_analysis.get("max_chunk")
+                
+                if min_chunk_data is not None:
+                    min_analysis = min_chunk_data["analysis"]
+                    min_time = min_chunk_data["time"]
+                    min_crest_db = min_chunk_data["crest_factor_db"]
+                    
+                    center_freqs = analysis_results["center_frequencies"]
+                    for freq in center_freqs:
+                        freq_key = f"{freq:.3f}"
+                        if freq_key in min_analysis["statistics"]:
+                            stats = min_analysis["statistics"][freq_key]
+                            csvfile.write(f"min_crest,{min_time},{min_crest_db},{freq},"
+                                        f"{stats['max_amplitude_db']},{stats['rms_db']},{stats['crest_factor_db']}\n")
+                
+                if max_chunk_data is not None:
+                    max_analysis = max_chunk_data["analysis"]
+                    max_time = max_chunk_data["time"]
+                    max_crest_db = max_chunk_data["crest_factor_db"]
+                    
+                    center_freqs = analysis_results["center_frequencies"]
+                    for freq in center_freqs:
+                        freq_key = f"{freq:.3f}"
+                        if freq_key in max_analysis["statistics"]:
+                            stats = max_analysis["statistics"][freq_key]
+                            csvfile.write(f"max_crest,{max_time},{max_crest_db},{freq},"
+                                        f"{stats['max_amplitude_db']},{stats['rms_db']},{stats['crest_factor_db']}\n")
         
         logger.info("Comprehensive analysis results exported successfully")
 
     def create_crest_factor_plot(self, analysis_results: Dict, 
                                output_path: Optional[str] = None,
                                time_analysis: Optional[Dict] = None,
-                               audio_data: Optional[np.ndarray] = None) -> None:
+                               chunk_octave_analysis: Optional[Dict] = None) -> None:
         """Create crest factor plot showing peak-to-RMS ratio for each octave band.
         
         Args:
             analysis_results: Results from octave band analysis
             output_path: Optional path to save the plot
             time_analysis: Optional time-domain analysis results for chunk markers
-            audio_data: Optional audio data for calculating chunk octave band crest factors
+            chunk_octave_analysis: Optional pre-computed octave analysis for extreme chunks
         """
         logger.info("Creating crest factor plot...")
         
@@ -883,84 +1039,48 @@ class MusicAnalyzer:
         ax.axhline(y=full_spectrum_crest_db, color='r', linestyle='--', linewidth=2, 
                   label=f'Track Average ({full_spectrum_crest_db:.1f} dB)')
         
-        # Add octave band crest factors for min/max chunks if time analysis is provided
-        if time_analysis is not None:
-            crest_factors_db = time_analysis["crest_factors_db"]
-            time_points = time_analysis["time_points"]
+        # Add octave band crest factors for min/max chunks if pre-computed data is available
+        if chunk_octave_analysis is not None:
+            min_chunk_data = chunk_octave_analysis.get("min_chunk")
+            max_chunk_data = chunk_octave_analysis.get("max_chunk")
             
-            # Find valid (finite) crest factor values
-            valid_mask = np.isfinite(crest_factors_db)
-            if np.any(valid_mask):
-                valid_crest_db = np.array(crest_factors_db)[valid_mask]
-                valid_time_points = np.array(time_points)[valid_mask]
+            if min_chunk_data is not None:
+                min_analysis = min_chunk_data["analysis"]
+                min_time = min_chunk_data["time"]
+                min_crest_db = min_chunk_data["crest_factor_db"]
                 
-                # Find min and max crest factor chunks
-                min_idx = np.argmin(valid_crest_db)
-                max_idx = np.argmax(valid_crest_db)
+                # Extract crest factors for each octave band
+                min_octave_crest_db = []
+                for freq in center_freqs:
+                    freq_key = f"{freq:.3f}"
+                    if freq_key in min_analysis["statistics"]:
+                        crest_db = min_analysis["statistics"][freq_key].get("crest_factor_db", 0.0)
+                        min_octave_crest_db.append(crest_db if np.isfinite(crest_db) else 0.0)
+                    else:
+                        min_octave_crest_db.append(0.0)
                 
-                min_time = valid_time_points[min_idx]
-                max_time = valid_time_points[max_idx]
-                min_crest = valid_crest_db[min_idx]
-                max_crest = valid_crest_db[max_idx]
+                # Plot min chunk octave band crest factors
+                ax.semilogx(center_freqs, min_octave_crest_db, 'g--', linewidth=1.5, alpha=0.8,
+                           label=f'Min Crest Chunk Octaves ({min_crest_db:.1f} dB @ {min_time:.0f}s)')
+            
+            if max_chunk_data is not None:
+                max_analysis = max_chunk_data["analysis"]
+                max_time = max_chunk_data["time"]
+                max_crest_db = max_chunk_data["crest_factor_db"]
                 
-                # Calculate octave band crest factors for these chunks
-                chunk_duration = 2.0  # seconds
-                chunk_samples = int(chunk_duration * self.sample_rate)
+                # Extract crest factors for each octave band
+                max_octave_crest_db = []
+                for freq in center_freqs:
+                    freq_key = f"{freq:.3f}"
+                    if freq_key in max_analysis["statistics"]:
+                        crest_db = max_analysis["statistics"][freq_key].get("crest_factor_db", 0.0)
+                        max_octave_crest_db.append(crest_db if np.isfinite(crest_db) else 0.0)
+                    else:
+                        max_octave_crest_db.append(0.0)
                 
-                # Get the actual chunk indices from the original time analysis
-                min_chunk_idx = np.where(valid_mask)[0][min_idx]
-                max_chunk_idx = np.where(valid_mask)[0][max_idx]
-                
-                # Calculate octave band crest factors for chunks if audio data is provided
-                if audio_data is not None:
-                    from src.octave_filter import OctaveBandFilter
-                    
-                    # Create octave filter for chunk analysis
-                    octave_filter = OctaveBandFilter(sample_rate=self.sample_rate)
-                    
-                    # Analyze minimum crest factor chunk
-                    min_start = min_chunk_idx * chunk_samples
-                    min_end = min_start + chunk_samples
-                    min_chunk = audio_data[min_start:min_end] if min_end <= len(audio_data) else audio_data[min_start:]
-                    
-                    if len(min_chunk) > 0:
-                        min_octave_bank = octave_filter.create_octave_bank(min_chunk)
-                        min_analysis = self.analyze_octave_bands(min_octave_bank, center_freqs)
-                        min_octave_crest_db = []
-                        
-                        for freq in center_freqs:
-                            freq_key = f"{freq:.3f}"
-                            if freq_key in min_analysis["statistics"]:
-                                crest_db = min_analysis["statistics"][freq_key].get("crest_factor_db", -np.inf)
-                                min_octave_crest_db.append(crest_db if np.isfinite(crest_db) else 0.0)
-                            else:
-                                min_octave_crest_db.append(0.0)
-                        
-                        # Plot min chunk octave band crest factors
-                        ax.semilogx(center_freqs, min_octave_crest_db, 'g--', linewidth=1.5, alpha=0.8,
-                                   label=f'Min Crest Chunk Octaves ({min_crest:.1f} dB @ {min_time:.0f}s)')
-                    
-                    # Analyze maximum crest factor chunk
-                    max_start = max_chunk_idx * chunk_samples
-                    max_end = max_start + chunk_samples
-                    max_chunk = audio_data[max_start:max_end] if max_end <= len(audio_data) else audio_data[max_start:]
-                    
-                    if len(max_chunk) > 0:
-                        max_octave_bank = octave_filter.create_octave_bank(max_chunk)
-                        max_analysis = self.analyze_octave_bands(max_octave_bank, center_freqs)
-                        max_octave_crest_db = []
-                        
-                        for freq in center_freqs:
-                            freq_key = f"{freq:.3f}"
-                            if freq_key in max_analysis["statistics"]:
-                                crest_db = max_analysis["statistics"][freq_key].get("crest_factor_db", -np.inf)
-                                max_octave_crest_db.append(crest_db if np.isfinite(crest_db) else 0.0)
-                            else:
-                                max_octave_crest_db.append(0.0)
-                        
-                        # Plot max chunk octave band crest factors
-                        ax.semilogx(center_freqs, max_octave_crest_db, 'm--', linewidth=1.5, alpha=0.8,
-                                   label=f'Max Crest Chunk Octaves ({max_crest:.1f} dB @ {max_time:.0f}s)')
+                # Plot max chunk octave band crest factors
+                ax.semilogx(center_freqs, max_octave_crest_db, 'm--', linewidth=1.5, alpha=0.8,
+                           label=f'Max Crest Chunk Octaves ({max_crest_db:.1f} dB @ {max_time:.0f}s)')
         
         # Formatting
         ax.set_xlabel('Frequency (Hz)')
