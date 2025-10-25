@@ -175,9 +175,13 @@ class MusicAnalyzer:
         max_db_values[max_db_values == -np.inf] = -60
         rms_db_values[rms_db_values == -np.inf] = -60
 
-        # Plot the data
-        ax.semilogx(center_freqs, max_db_values, 'b-o', label='Max Peak (dBFS)', linewidth=2)
-        ax.semilogx(center_freqs, rms_db_values, 'r-s', label='RMS (dBFS)', linewidth=2)
+        # Plot the data (skip full spectrum at index 0)
+        plot_freqs = center_freqs[1:]  # Skip full spectrum (0 Hz)
+        plot_max_db = max_db_values[1:]  # Skip full spectrum data
+        plot_rms_db = rms_db_values[1:]  # Skip full spectrum data
+        
+        ax.semilogx(plot_freqs, plot_max_db, 'b-o', label='Max Peak (dBFS)', linewidth=2)
+        ax.semilogx(plot_freqs, plot_rms_db, 'r-s', label='RMS (dBFS)', linewidth=2)
         
         # Add horizontal reference lines for track totals
         track_peak_db = statistics["Full Spectrum"]["max_amplitude_db"]
@@ -190,7 +194,7 @@ class MusicAnalyzer:
         
         # Add extreme crest factor chunk analysis if available
         if time_analysis is not None and chunk_octave_analysis is not None:
-            self._add_extreme_chunk_analysis(ax, time_analysis, chunk_octave_analysis, center_freqs)
+            self._add_extreme_chunk_analysis(ax, time_analysis, chunk_octave_analysis, plot_freqs)
         
         # Formatting
         ax.set_xlabel('Frequency (Hz)')
@@ -198,12 +202,12 @@ class MusicAnalyzer:
         ax.set_title('Octave Band Analysis - Peak and RMS Levels (dBFS)')
         ax.grid(True, alpha=0.3)
         ax.legend()
-        ax.set_xlim([20, 20000])
+        ax.set_xlim([15, 20000])
         ax.set_ylim([-60, 3])
         
         # Add frequency labels
-        ax.set_xticks([31.25, 62.5, 125, 250, 500, 1000, 2000, 4000, 8000, 16000])
-        ax.set_xticklabels(['31.25', '62.5', '125', '250', '500', '1k', '2k', '4k', '8k', '16k'])
+        ax.set_xticks([16, 31.25, 62.5, 125, 250, 500, 1000, 2000, 4000, 8000, 16000])
+        ax.set_xticklabels(['16', '31.25', '62.5', '125', '250', '500', '1k', '2k', '4k', '8k', '16k'])
         
         plt.tight_layout()
         
@@ -232,11 +236,11 @@ class MusicAnalyzer:
             min_time = min_chunk_data["time"]
             min_crest_db = min_chunk_data["crest_factor_db"]
             
-            # Extract RMS and peak levels for octave bands (skip full spectrum)
+            # Extract RMS and peak levels for octave bands (center_freqs now excludes full spectrum)
             min_rms_db = []
             min_peak_db = []
             
-            for freq in center_freqs[1:]:  # Skip full spectrum frequency
+            for freq in center_freqs:  # center_freqs now only contains actual frequency bands
                 freq_key = f"{freq:.3f}"
                 if freq_key in min_analysis["statistics"]:
                     min_rms_db.append(min_analysis["statistics"][freq_key]["rms_db"])
@@ -245,11 +249,8 @@ class MusicAnalyzer:
                     min_rms_db.append(-60)
                     min_peak_db.append(-60)
             
-            # Add full spectrum values at the beginning
-            full_spectrum_rms = min_analysis["statistics"]["Full Spectrum"]["rms_db"]
+            # Get full spectrum peak for legend
             full_spectrum_peak = min_analysis["statistics"]["Full Spectrum"]["max_amplitude_db"]
-            min_rms_db = [full_spectrum_rms] + min_rms_db
-            min_peak_db = [full_spectrum_peak] + min_peak_db
             
             # Plot minimum crest factor chunk levels
             ax.semilogx(center_freqs, min_rms_db, 'g--', linewidth=1.5, alpha=0.6,
@@ -262,11 +263,11 @@ class MusicAnalyzer:
             max_time = max_chunk_data["time"]
             max_crest_db = max_chunk_data["crest_factor_db"]
             
-            # Extract RMS and peak levels for octave bands (skip full spectrum)
+            # Extract RMS and peak levels for octave bands (center_freqs now excludes full spectrum)
             max_rms_db = []
             max_peak_db = []
             
-            for freq in center_freqs[1:]:  # Skip full spectrum frequency
+            for freq in center_freqs:  # center_freqs now only contains actual frequency bands
                 freq_key = f"{freq:.3f}"
                 if freq_key in max_analysis["statistics"]:
                     max_rms_db.append(max_analysis["statistics"][freq_key]["rms_db"])
@@ -275,11 +276,8 @@ class MusicAnalyzer:
                     max_rms_db.append(-60)
                     max_peak_db.append(-60)
             
-            # Add full spectrum values at the beginning
-            full_spectrum_rms = max_analysis["statistics"]["Full Spectrum"]["rms_db"]
+            # Get full spectrum peak for legend
             full_spectrum_peak = max_analysis["statistics"]["Full Spectrum"]["max_amplitude_db"]
-            max_rms_db = [full_spectrum_rms] + max_rms_db
-            max_peak_db = [full_spectrum_peak] + max_peak_db
             
             # Plot maximum crest factor chunk levels
             ax.semilogx(center_freqs, max_rms_db, 'm--', linewidth=1.5, alpha=0.6,
@@ -1198,8 +1196,11 @@ class MusicAnalyzer:
         # Get the full spectrum (average) crest factor for reference line
         full_spectrum_crest_db = statistics["Full Spectrum"]["crest_factor_db"]
         
-        # Plot dB crest factor
-        ax.semilogx(center_freqs, crest_factor_db_values, 'b-o', 
+        # Plot dB crest factor (skip full spectrum at index 0)
+        plot_freqs = center_freqs[1:]  # Skip full spectrum (0 Hz)
+        plot_crest_db = crest_factor_db_values[1:]  # Skip full spectrum data
+        
+        ax.semilogx(plot_freqs, plot_crest_db, 'b-o', 
                    label='Crest Factor (dB)', linewidth=2, markersize=6)
         
         # Add horizontal reference line for average crest factor
@@ -1216,9 +1217,9 @@ class MusicAnalyzer:
                 min_time = min_chunk_data["time"]
                 min_crest_db = min_chunk_data["crest_factor_db"]
                 
-                # Extract crest factors for each octave band
+                # Extract crest factors for each octave band (skip full spectrum)
                 min_octave_crest_db = []
-                for freq in center_freqs:
+                for freq in plot_freqs:  # Use plot_freqs which excludes full spectrum
                     freq_key = f"{freq:.3f}"
                     if freq_key in min_analysis["statistics"]:
                         crest_db = min_analysis["statistics"][freq_key].get("crest_factor_db", 0.0)
@@ -1227,7 +1228,7 @@ class MusicAnalyzer:
                         min_octave_crest_db.append(0.0)
                 
                 # Plot min chunk octave band crest factors
-                ax.semilogx(center_freqs, min_octave_crest_db, 'g--', linewidth=1.5, alpha=0.8,
+                ax.semilogx(plot_freqs, min_octave_crest_db, 'g--', linewidth=1.5, alpha=0.8,
                            label=f'Min Crest Chunk Octaves ({min_crest_db:.1f} dB @ {min_time:.0f}s)')
             
             if max_chunk_data is not None:
@@ -1235,9 +1236,9 @@ class MusicAnalyzer:
                 max_time = max_chunk_data["time"]
                 max_crest_db = max_chunk_data["crest_factor_db"]
                 
-                # Extract crest factors for each octave band
+                # Extract crest factors for each octave band (skip full spectrum)
                 max_octave_crest_db = []
-                for freq in center_freqs:
+                for freq in plot_freqs:  # Use plot_freqs which excludes full spectrum
                     freq_key = f"{freq:.3f}"
                     if freq_key in max_analysis["statistics"]:
                         crest_db = max_analysis["statistics"][freq_key].get("crest_factor_db", 0.0)
@@ -1246,19 +1247,19 @@ class MusicAnalyzer:
                         max_octave_crest_db.append(0.0)
                 
                 # Plot max chunk octave band crest factors
-                ax.semilogx(center_freqs, max_octave_crest_db, 'm--', linewidth=1.5, alpha=0.8,
+                ax.semilogx(plot_freqs, max_octave_crest_db, 'm--', linewidth=1.5, alpha=0.8,
                            label=f'Max Crest Chunk Octaves ({max_crest_db:.1f} dB @ {max_time:.0f}s)')
         
         # Formatting
         ax.set_xlabel('Frequency (Hz)')
         ax.set_ylabel('Crest Factor (dB)')
-        ax.set_xlim([20, 20000])
+        ax.set_xlim([15, 20000])
         ax.set_ylim([0, max(30, np.max(crest_factor_db_values) * 1.1)])
         ax.grid(True, alpha=0.3)
         
         # Add frequency labels
-        ax.set_xticks([31.25, 62.5, 125, 250, 500, 1000, 2000, 4000, 8000, 16000])
-        ax.set_xticklabels(['31.25', '62.5', '125', '250', '500', '1k', '2k', '4k', '8k', '16k'])
+        ax.set_xticks([16, 31.25, 62.5, 125, 250, 500, 1000, 2000, 4000, 8000, 16000])
+        ax.set_xticklabels(['16', '31.25', '62.5', '125', '250', '500', '1k', '2k', '4k', '8k', '16k'])
         
         # Title and legend
         ax.set_title('Octave Band Analysis - Crest Factor (Peak/RMS Ratio)')

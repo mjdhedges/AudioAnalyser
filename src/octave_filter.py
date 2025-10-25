@@ -19,8 +19,9 @@ class OctaveBandFilter:
     """Handles octave band filtering operations."""
 
     # Standard octave band center frequencies (Hz)
+    # Added 16Hz for cinema/LFE signal analysis
     OCTAVE_CENTER_FREQUENCIES = [
-        31.25, 62.5, 125, 250, 500, 1000, 2000, 4000, 8000, 16000
+        16.0, 31.25, 62.5, 125, 250, 500, 1000, 2000, 4000, 8000, 16000
     ]
 
     def __init__(self, sample_rate: int = 44100) -> None:
