@@ -1,0 +1,105 @@
+# Music Analyser Configuration File
+# This file defines default parameters for audio analysis
+# Parameters can be overridden via command line arguments
+
+[analysis]
+# Time-domain analysis parameters
+chunk_duration_seconds = 2.0
+sample_rate = 44100
+
+# Octave band analysis parameters
+octave_center_frequencies = [16.0, 31.25, 62.5, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0]
+filter_order = 4
+low_frequency_filter_order = 2  # For frequencies < 1% of Nyquist
+low_frequency_threshold = 0.01   # Threshold for using lower order filter
+
+# Plotting parameters
+[plotting]
+# Figure sizes
+octave_spectrum_figsize = [12, 8]
+crest_factor_figsize = [12, 8]
+histogram_figsize = [15, 10]
+crest_factor_time_figsize = [14, 10]
+octave_crest_factor_time_figsize = [14, 12]
+
+# Axis limits
+octave_spectrum_xlim = [15, 20000]
+octave_spectrum_ylim = [-60, 3]
+crest_factor_xlim = [15, 20000]
+crest_factor_ylim_min = 0
+crest_factor_ylim_max = 30
+octave_crest_factor_time_ylim = [0, 40]
+
+# Histogram parameters
+histogram_bins = 51
+histogram_range = [-1, 1]
+log_histogram_bins = 51
+log_histogram_noise_floor_db = -120
+
+# DPI and quality
+dpi = 300
+bbox_inches = "tight"
+
+# Advanced statistics parameters
+[advanced_stats]
+# Peak analysis thresholds
+hot_peaks_threshold_db = -1.0      # Near-clipping events threshold
+clip_events_threshold_db = -0.1    # Actual clipping events threshold
+peak_saturation_threshold_db = -3.0 # Heavily compressed regions threshold
+
+# Transient analysis
+transient_threshold_db = 3.0       # Significant level change threshold
+
+# Peak distribution ranges
+peak_distribution_ranges = [
+    [-0.1, 0.0, "clipping"],
+    [-1.0, -0.1, "hot"],
+    [-3.0, -1.0, "loud"],
+    [-6.0, -3.0, "moderate"],
+    [-12.0, -6.0, "quiet"],
+    [-60.0, -12.0, "very_quiet"]
+]
+
+# Frequency band definitions
+bass_frequencies = [31.25, 62.5, 125.0]      # Bass energy calculation
+mid_frequencies = [250.0, 500.0, 1000.0, 2000.0]  # Mid energy calculation
+treble_frequencies = [4000.0, 8000.0, 16000.0]     # Treble energy calculation
+
+# File handling parameters
+[file_handling]
+# Supported audio formats
+supported_formats = ["wav", "flac", "mp3", "aiff", "m4a"]
+
+# Output directory structure
+create_subdirectories = true
+use_track_name_for_output = true
+
+# CSV export parameters
+[export]
+# CSV sections to include
+include_track_metadata = true
+include_advanced_statistics = true
+include_octave_band_analysis = true
+include_time_domain_analysis = true
+include_time_domain_summary = true
+include_histogram_data = true
+include_extreme_chunks_analysis = true
+
+# Note: Octave crest factor time data is excluded for efficiency
+# as it would require recalculating octave analysis for every chunk
+
+# Logging parameters
+[logging]
+level = "INFO"
+format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+include_debug_info = false
+
+# Performance parameters
+[performance]
+# Memory management
+max_chunk_size_mb = 100
+enable_memory_optimization = true
+
+# Parallel processing (future enhancement)
+enable_parallel_processing = false
+max_workers = 4

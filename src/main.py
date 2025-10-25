@@ -18,6 +18,7 @@ import pandas as pd
 from src.audio_processor import AudioProcessor
 from src.music_analyzer import MusicAnalyzer
 from src.octave_filter import OctaveBandFilter
+from src.config import config, Config
 
 
 def determine_content_type(track_path: Path) -> str:
@@ -50,7 +51,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int) -> bool:
+def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, chunk_duration: float) -> bool:
     """Analyze a single audio track.
     
     Args:
@@ -105,7 +106,7 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int) -
             audio_data, 
             octave_bank, 
             octave_filter.OCTAVE_CENTER_FREQUENCIES,
-            chunk_duration=2.0
+            chunk_duration=chunk_duration
         )
         
         # Extract results for backward compatibility
@@ -203,8 +204,27 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int) -
 @click.option(
     '--sample-rate', '-sr',
     type=int,
-    default=44100,
-    help='Sample rate for audio processing'
+    help='Sample rate for audio processing (overrides config)'
+)
+@click.option(
+    '--chunk-duration', '-cd',
+    type=float,
+    help='Duration of analysis chunks in seconds (overrides config)'
+)
+@click.option(
+    '--dpi', '-d',
+    type=int,
+    help='DPI for plot output (overrides config)'
+)
+@click.option(
+    '--log-level', '-l',
+    type=click.Choice(['DEBUG', 'INFO', 'WARNING', 'ERROR']),
+    help='Logging level (overrides config)'
+)
+@click.option(
+    '--config', '-c',
+    type=click.Path(exists=True, path_type=Path),
+    help='Path to configuration file (default: config.toml)'
 )
 @click.option(
     '--batch/--single',
@@ -216,7 +236,9 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int) -
     default=True,
     help='Export results to CSV'
 )
-def main(input: Optional[Path], tracks_dir: Path, output_dir: Path, sample_rate: int, 
+def main(input: Optional[Path], tracks_dir: Path, output_dir: Path, 
+         sample_rate: Optional[int], chunk_duration: Optional[float],
+         dpi: Optional[int], log_level: Optional[str], config_path: Optional[Path],
          batch: bool, export_csv: bool) -> None:
     """Music Analyser - Analyze audio files using octave band filtering.
     
@@ -235,12 +257,34 @@ def main(input: Optional[Path], tracks_dir: Path, output_dir: Path, sample_rate:
         python -m src.main --tracks-dir "MyMusic" --output-dir "results"
     """
     try:
+        # Load configuration
+        global config
+        if config_path:
+            config = Config(config_path)
+        
+        # Override configuration with command line arguments
+        config.override_from_args(
+            sample_rate=sample_rate,
+            chunk_duration=chunk_duration,
+            dpi=dpi,
+            log_level=log_level
+        )
+        
+        # Update logging level if specified
+        if log_level:
+            logging.getLogger().setLevel(getattr(logging, log_level))
+        
+        # Get configuration values
+        sample_rate = config.get('analysis.sample_rate', 44100)
+        chunk_duration = config.get('analysis.chunk_duration_seconds', 2.0)
+        
         # Create output directory
         output_dir.mkdir(parents=True, exist_ok=True)
         
         logger.info(f"Starting Music Analyser")
         logger.info(f"Output directory: {output_dir}")
         logger.info(f"Sample rate: {sample_rate} Hz")
+        logger.info(f"Chunk duration: {chunk_duration} seconds")
         
         if batch:
             # Batch processing - analyze all tracks in directory
@@ -269,7 +313,7 @@ def main(input: Optional[Path], tracks_dir: Path, output_dir: Path, sample_rate:
                 logger.info(f"\n{'='*60}")
                 logger.info(f"Processing track {successful_analyses + failed_analyses + 1}/{len(audio_files)}")
                 
-                if analyze_single_track(track_path, output_dir, sample_rate):
+                if analyze_single_track(track_path, output_dir, sample_rate, chunk_duration):
                     successful_analyses += 1
                 else:
                     failed_analyses += 1
@@ -289,7 +333,7 @@ def main(input: Optional[Path], tracks_dir: Path, output_dir: Path, sample_rate:
             
             logger.info(f"Single file analysis: {input}")
             
-            if analyze_single_track(input, output_dir, sample_rate):
+            if analyze_single_track(input, output_dir, sample_rate, chunk_duration):
                 logger.info("Analysis complete!")
                 logger.info(f"Results saved to: {output_dir}")
             else:
