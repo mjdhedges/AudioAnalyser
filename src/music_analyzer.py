@@ -815,6 +815,130 @@ class MusicAnalyzer:
         
         logger.info("Analysis results exported successfully")
 
+    def _calculate_advanced_statistics(self, audio_data: np.ndarray, 
+                                      analysis_results: Dict, 
+                                      time_analysis: Dict) -> Dict:
+        """Calculate advanced statistics for track dynamics and quality assessment.
+        
+        Args:
+            audio_data: Raw audio data
+            analysis_results: Octave band analysis results
+            time_analysis: Time-domain analysis results
+            
+        Returns:
+            Dictionary containing advanced statistics
+        """
+        logger.info("Calculating advanced statistics...")
+        
+        stats = {}
+        duration = len(audio_data) / self.sample_rate
+        
+        # Convert audio to dBFS for peak analysis
+        audio_dbfs = 20 * np.log10(np.abs(audio_data) * self.original_peak + 1e-10)
+        
+        # 1. CLIPPING & PEAK STATISTICS
+        hot_peaks = np.sum(audio_dbfs > -1.0)  # Near-clipping events
+        clip_events = np.sum(audio_dbfs > -0.1)  # Actual clipping events
+        peak_saturation = np.sum(audio_dbfs > -3.0)  # Heavily compressed regions
+        
+        stats.update({
+            "hot_peaks_rate_per_sec": hot_peaks / duration,
+            "clip_events_rate_per_sec": clip_events / duration,
+            "peak_saturation_percent": (peak_saturation / len(audio_data)) * 100,
+            "max_true_peak_dbfs": np.max(audio_dbfs),
+            "peak_density_above_minus3db": peak_saturation / len(audio_data)
+        })
+        
+        # 2. FREQUENCY-SPECIFIC DYNAMICS
+        center_freqs = analysis_results["center_frequencies"][1:]  # Skip full spectrum
+        octave_crest_factors = []
+        octave_rms_levels = []
+        
+        for freq in center_freqs:
+            freq_key = f"{freq:.3f}"
+            if freq_key in analysis_results["statistics"]:
+                crest_db = analysis_results["statistics"][freq_key]["crest_factor_db"]
+                rms_db = analysis_results["statistics"][freq_key]["rms_db"]
+                octave_crest_factors.append(crest_db if np.isfinite(crest_db) else 0.0)
+                octave_rms_levels.append(rms_db if np.isfinite(rms_db) else -60.0)
+        
+        if octave_crest_factors:
+            stats.update({
+                "frequency_crest_factor_variance": np.var(octave_crest_factors),
+                "frequency_crest_factor_range": np.max(octave_crest_factors) - np.min(octave_crest_factors),
+                "bass_vs_treble_dynamics_ratio": np.mean(octave_crest_factors[:3]) / max(np.mean(octave_crest_factors[-3:]), 0.1),
+                "frequency_balance_std": np.std(octave_rms_levels),
+                "most_dynamic_frequency_hz": center_freqs[np.argmax(octave_crest_factors)],
+                "least_dynamic_frequency_hz": center_freqs[np.argmin(octave_crest_factors)]
+            })
+        
+        # 3. TEMPORAL DYNAMICS
+        time_crest_factors = time_analysis["crest_factors_db"]
+        time_rms_levels = time_analysis["rms_levels_dbfs"]
+        time_peak_levels = time_analysis["peak_levels_dbfs"]
+        
+        # Calculate transient density (sudden level changes)
+        rms_changes = np.abs(np.diff(time_rms_levels))
+        significant_changes = np.sum(rms_changes > 3.0)  # Changes > 3dB
+        
+        stats.update({
+            "dynamic_consistency_std": np.std(time_crest_factors),
+            "transient_density_per_sec": significant_changes / duration,
+            "loudness_stability_std": np.std(time_rms_levels),
+            "peak_level_variance": np.var(time_peak_levels),
+            "temporal_crest_factor_range": np.max(time_crest_factors) - np.min(time_crest_factors)
+        })
+        
+        # 4. MASTERING QUALITY INDICATORS
+        full_spectrum_stats = analysis_results["statistics"]["Full Spectrum"]
+        true_peak_to_rms_ratio = full_spectrum_stats["max_amplitude_db"] - full_spectrum_stats["rms_db"]
+        
+        # Calculate spectral centroid (brightness indicator)
+        # Use energy in each octave band weighted by frequency
+        octave_energies = []
+        for freq in center_freqs:
+            freq_key = f"{freq:.3f}"
+            if freq_key in analysis_results["statistics"]:
+                rms_linear = analysis_results["statistics"][freq_key]["rms"]
+                energy = rms_linear ** 2
+                octave_energies.append(energy)
+            else:
+                octave_energies.append(0.0)
+        
+        total_energy = sum(octave_energies)
+        if total_energy > 0:
+            spectral_centroid = sum(freq * energy for freq, energy in zip(center_freqs, octave_energies)) / total_energy
+            bass_energy_ratio = sum(octave_energies[:3]) / total_energy  # 31.25, 62.5, 125 Hz
+        else:
+            spectral_centroid = 0.0
+            bass_energy_ratio = 0.0
+        
+        stats.update({
+            "true_peak_to_rms_ratio_db": true_peak_to_rms_ratio,
+            "spectral_centroid_hz": spectral_centroid,
+            "bass_energy_ratio": bass_energy_ratio,
+            "treble_energy_ratio": sum(octave_energies[-3:]) / max(total_energy, 1e-10),  # 4k, 8k, 16k Hz
+            "mid_energy_ratio": sum(octave_energies[3:7]) / max(total_energy, 1e-10)  # 250Hz - 2kHz
+        })
+        
+        # 5. PEAK DISTRIBUTION ANALYSIS
+        # Analyze distribution of peaks in different dBFS ranges
+        peak_ranges = [
+            (-0.1, 0.0, "clipping"),
+            (-1.0, -0.1, "hot"),
+            (-3.0, -1.0, "loud"),
+            (-6.0, -3.0, "moderate"),
+            (-12.0, -6.0, "quiet"),
+            (-60.0, -12.0, "very_quiet")
+        ]
+        
+        for min_db, max_db, range_name in peak_ranges:
+            count = np.sum((audio_dbfs >= min_db) & (audio_dbfs < max_db))
+            stats[f"peak_distribution_{range_name}_percent"] = (count / len(audio_data)) * 100
+        
+        logger.info(f"Advanced statistics calculated: {len(stats)} metrics")
+        return stats
+
     def export_comprehensive_results(self, analysis_results: Dict, time_analysis: Dict,
                                    track_metadata: Dict, output_path: str,
                                    chunk_octave_analysis: Optional[Dict] = None,
@@ -842,7 +966,50 @@ class MusicAnalyzer:
                 csvfile.write(f"{key},{value}\n")
             csvfile.write("\n")
             
-            # Section 2: Octave Band Analysis
+            # Section 2: Advanced Statistics
+            if audio_data is not None:
+                csvfile.write("[ADVANCED_STATISTICS]\n")
+                csvfile.write("parameter,value,description\n")
+                
+                advanced_stats = self._calculate_advanced_statistics(audio_data, analysis_results, time_analysis)
+                
+                # Define descriptions for each statistic
+                stat_descriptions = {
+                    "hot_peaks_rate_per_sec": "Near-clipping events (>-1dBFS) per second",
+                    "clip_events_rate_per_sec": "Actual clipping events (>-0.1dBFS) per second", 
+                    "peak_saturation_percent": "Percentage of samples above -3dBFS (heavily compressed)",
+                    "max_true_peak_dbfs": "Maximum true peak level in dBFS",
+                    "peak_density_above_minus3db": "Fraction of samples above -3dBFS",
+                    "frequency_crest_factor_variance": "Variance of crest factors across frequency bands",
+                    "frequency_crest_factor_range": "Range of crest factors across frequency bands (dB)",
+                    "bass_vs_treble_dynamics_ratio": "Ratio of bass dynamics to treble dynamics",
+                    "frequency_balance_std": "Standard deviation of RMS levels across frequencies",
+                    "most_dynamic_frequency_hz": "Frequency band with highest crest factor",
+                    "least_dynamic_frequency_hz": "Frequency band with lowest crest factor",
+                    "dynamic_consistency_std": "Standard deviation of crest factor over time",
+                    "transient_density_per_sec": "Rate of significant level changes (>3dB) per second",
+                    "loudness_stability_std": "Standard deviation of RMS level over time",
+                    "peak_level_variance": "Variance of peak levels over time",
+                    "temporal_crest_factor_range": "Range of crest factors over time (dB)",
+                    "true_peak_to_rms_ratio_db": "Overall dynamic range (peak to RMS ratio)",
+                    "spectral_centroid_hz": "Spectral centroid (brightness indicator)",
+                    "bass_energy_ratio": "Fraction of energy in bass frequencies (31-125Hz)",
+                    "treble_energy_ratio": "Fraction of energy in treble frequencies (4-16kHz)",
+                    "mid_energy_ratio": "Fraction of energy in mid frequencies (250Hz-2kHz)",
+                    "peak_distribution_clipping_percent": "Percentage of samples in clipping range (-0.1 to 0dBFS)",
+                    "peak_distribution_hot_percent": "Percentage of samples in hot range (-1 to -0.1dBFS)",
+                    "peak_distribution_loud_percent": "Percentage of samples in loud range (-3 to -1dBFS)",
+                    "peak_distribution_moderate_percent": "Percentage of samples in moderate range (-6 to -3dBFS)",
+                    "peak_distribution_quiet_percent": "Percentage of samples in quiet range (-12 to -6dBFS)",
+                    "peak_distribution_very_quiet_percent": "Percentage of samples in very quiet range (<-12dBFS)"
+                }
+                
+                for key, value in advanced_stats.items():
+                    description = stat_descriptions.get(key, "Advanced statistic")
+                    csvfile.write(f"{key},{value},{description}\n")
+                csvfile.write("\n")
+            
+            # Section 3: Octave Band Analysis
             csvfile.write("[OCTAVE_BAND_ANALYSIS]\n")
             csvfile.write("frequency_hz,max_amplitude,max_amplitude_db,rms,rms_db,dynamic_range,dynamic_range_db,crest_factor,crest_factor_db,mean,std,p10,p25,p50,p75,p90,p95,p99\n")
             
@@ -871,7 +1038,7 @@ class MusicAnalyzer:
             
             csvfile.write("\n")
             
-            # Section 3: Time Domain Analysis
+            # Section 4: Time Domain Analysis
             csvfile.write("[TIME_DOMAIN_ANALYSIS]\n")
             csvfile.write("time_seconds,crest_factor,crest_factor_db,peak_level,rms_level,peak_level_dbfs,rms_level_dbfs\n")
             
@@ -889,7 +1056,7 @@ class MusicAnalyzer:
             
             csvfile.write("\n")
             
-            # Section 4: Time Domain Summary Statistics
+            # Section 5: Time Domain Summary Statistics
             csvfile.write("[TIME_DOMAIN_SUMMARY]\n")
             csvfile.write("parameter,value\n")
             
