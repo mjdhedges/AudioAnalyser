@@ -19,6 +19,29 @@ from src.audio_processor import AudioProcessor
 from src.music_analyzer import MusicAnalyzer
 from src.octave_filter import OctaveBandFilter
 
+
+def determine_content_type(track_path: Path) -> str:
+    """Determine content type based on folder structure.
+    
+    Args:
+        track_path: Path to the audio file
+        
+    Returns:
+        Content type string: 'Music', 'Film', or 'Test Signal'
+    """
+    # Get the parent directory name
+    parent_dir = track_path.parent.name
+    
+    # Map folder names to content types
+    content_type_mapping = {
+        'Music': 'Music',
+        'Film': 'Film', 
+        'Test Signals': 'Test Signal'
+    }
+    
+    # Return mapped content type or default to 'Unknown'
+    return content_type_mapping.get(parent_dir, 'Unknown')
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -125,10 +148,14 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int) -
         # Export results to CSV
         logger.info("Exporting results to CSV...")
         
+        # Determine content type based on folder structure
+        content_type = determine_content_type(track_path)
+        
         # Prepare comprehensive export data
         track_metadata = {
             "track_name": track_path.name,
             "track_path": str(track_path),
+            "content_type": content_type,
             "duration_seconds": audio_info["duration_seconds"],
             "sample_rate": sr,
             "samples": len(audio_data),
