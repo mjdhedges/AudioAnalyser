@@ -31,6 +31,7 @@ class OctaveBandFilter:
             sample_rate: Sample rate of the audio signal
         """
         self.sample_rate = sample_rate
+        self._filter_cache = {}  # Cache for filter coefficients (b, a)
 
     def design_octave_filter(self, center_freq: float, order: int = 1) -> Tuple[np.ndarray, np.ndarray]:
         """Design an octave band filter.
@@ -44,6 +45,11 @@ class OctaveBandFilter:
         Returns:
             Tuple of (b, a) filter coefficients
         """
+        # OPTIMIZATION: Check cache first to avoid redundant filter design
+        cache_key = (center_freq, order, self.sample_rate)
+        if cache_key in self._filter_cache:
+            return self._filter_cache[cache_key]
+        
         # Calculate bandwidth based on order
         if order == 1:
             # Octave band: bandwidth = center_freq / sqrt(2)
@@ -86,6 +92,9 @@ class OctaveBandFilter:
                     f"bandwidth: {bandwidth:.2f}Hz, "
                     f"range: {low_freq:.2f}-{high_freq:.2f}Hz")
 
+        # Cache the filter coefficients for future use
+        self._filter_cache[cache_key] = (b, a)
+        
         return b, a
 
     def apply_octave_filter(self, audio_data: np.ndarray, center_freq: float, 
@@ -120,20 +129,24 @@ class OctaveBandFilter:
         if center_frequencies is None:
             center_frequencies = self.OCTAVE_CENTER_FREQUENCIES
 
-        # Start with original signal
-        octave_bank = audio_data.reshape(-1, 1)
-        
         logger.info("Creating octave bank...")
+        
+        # OPTIMIZATION: Build list of signals and stack once instead of repeated column_stack
+        # This is more efficient and reduces memory allocations
+        filtered_signals = [audio_data]
         
         # Add filtered signals for each center frequency
         for freq in center_frequencies:
             if freq < self.sample_rate / 2:  # Check Nyquist limit
                 filtered_signal = self.apply_octave_filter(audio_data, freq)
-                octave_bank = np.column_stack([octave_bank, filtered_signal])
+                filtered_signals.append(filtered_signal)
                 logger.info(f"Added octave band: {freq}Hz")
             else:
                 logger.warning(f"Skipping frequency {freq}Hz (above Nyquist limit)")
 
+        # Stack all signals into octave bank array
+        octave_bank = np.column_stack(filtered_signals)
+        
         logger.info(f"Octave bank created with {octave_bank.shape[1]} bands")
         return octave_bank
 

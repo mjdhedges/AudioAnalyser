@@ -148,6 +148,12 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, c
             output_path=str(track_output_dir / "octave_crest_factor_time.png")
         )
         
+        # MEMORY CLEANUP: Close all matplotlib figures and free memory immediately
+        import matplotlib.pyplot as plt
+        import gc
+        plt.close('all')  # Close all figures
+        gc.collect()  # Force garbage collection
+        
         # Export results to CSV
         logger.info("Exporting results to CSV...")
         
