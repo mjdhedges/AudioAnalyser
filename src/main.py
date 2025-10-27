@@ -531,7 +531,7 @@ def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional
                 available_cores = multiprocessing.cpu_count()
                 
                 if max_workers is None:
-                    max_workers = min(available_cores, 4)  # Default to 4 workers max
+                    max_workers = 2  # Default: 2 workers to keep memory reasonable
                 
                 logger.info(f"Using parallel batch processing with {max_workers} workers")
                 

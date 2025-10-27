@@ -118,5 +118,6 @@ enable_result_cache = true
 result_cache_dir = "cache/results"
 
 # Batch processing parallelism
+# REDUCED: 4 workers = 2GB+ RAM per batch (too high for large tracks)
 enable_parallel_batch = true
-max_batch_workers = 4  # Leave blank for auto-detection
+max_batch_workers = 2  # Use 1-2 workers for reasonable memory usage
