@@ -21,6 +21,10 @@ import logging
 import sys
 from pathlib import Path
 
+# Use Agg backend for non-interactive plotting
+import matplotlib
+matplotlib.use('Agg')
+
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy import signal as sp_signal
@@ -50,10 +54,15 @@ def analyze_frequency_response(audio_data: np.ndarray, sample_rate: int,
     # Convert to dB
     magnitude_db = 10 * np.log10(power_spectrum + 1e-10)
     
-    # Calculate phase response using FFT
+    # Calculate phase response using FFT with unwrapping
+    # Unwrapping is essential for swept signals to show true phase progression
     fft_result = np.fft.rfft(audio_data)
     phase_rad = np.angle(fft_result)
-    phase_degrees = np.degrees(phase_rad)
+    
+    # Unwrap phase to show continuous phase progression
+    # This is critical for swept sine waves and chirp signals
+    phase_rad_unwrapped = np.unwrap(phase_rad)
+    phase_degrees = np.degrees(phase_rad_unwrapped)
     
     # Frequency vector for phase
     phase_freq = np.fft.rfftfreq(len(audio_data), 1.0/sample_rate)
@@ -78,41 +87,6 @@ def plot_frequency_and_phase(frequencies, magnitude_db, phase_freq, phase_degree
     ax1.set_ylim([-80, 10])
     
     # Phase plot
-    ax2.semilogx(phase_freq, phase_degrees, linewidth=1.5, alpha=0.7)
-    ax2.set_xlabel('Frequency (Hz)')
-    ax2.set_ylabel('Phase (degrees)')
-    ax2.set_title(f'{title} - Phase Response')
-    ax2.grid(True, alpha=0.3)
-    ax2.set_xlim([20, 20000])
-    
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=150, bbox_inches='tight')
-    logger.info(f"Saved plot to {output_path}")
-    plt.close(fig)
-
-
-def plot_octave_bands_overlay(freq_responses, center_frequencies, output_path):
-    """Plot all octave band frequency responses on one graph."""
-    fig, ax = plt.subplots(1, 1, figsize=(12, 8))
-    
-    colors = plt.cm.viridis(np.linspace(0, 1, len(freq_responses)))
-    
-    for idx, (freq, mag_db) in enumerate(freq_responses):
-        label = f"{center_frequencies[idx]:.2f} Hz" if idx < len(center_frequencies) else "Full Spectrum"
-        ax.semilogx(freq, mag_db, linewidth=1.5, label=label, color=colors[idx], alpha=0.7)
-    
-    ax.set_xlabel('Frequency (Hz)')
-    ax.set_ylabel('Magnitude (dB)')
-    ax.set_title('Octave Band Frequency Responses - All Bands')
-    ax.grid(True, alpha=0.3)
-    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-    ax.set_xlim([20, 20000])
-    ax.set_ylim([-80, 10])
-    
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=150, bbox_inches='tight')
-    logger.info(f"Saved octave band overlay to {output_path}")
-    plt.close(fig editing the phase response section
     ax2.semilogx(phase_freq, phase_degrees, linewidth=1.5, alpha=0.7)
     ax2.set_xlabel('Frequency (Hz)')
     ax2.set_ylabel('Phase (degrees)')
@@ -215,7 +189,7 @@ def main():
     
     # Step 5: Sum all octave bands back together
     logger.info("\nStep 5: Summing all octave bands back together...")
-    reconstructed_signal = np.sum(octave_bank[:, 1:], axis=1)  # Sum all octave bands (skip full spectrum)
+    reconstructed_signal = np.sum(octave_bank[:, 1:], axis=1)  # Sum all bands except full spectrum
     
     logger.info(f"Reconstructed signal: {len(reconstructed_signal)} samples")
     
@@ -252,7 +226,7 @@ def main():
                  alpha=0.7, linestyle='--')
     ax2.set_xlabel('Frequency (Hz)')
     ax2.set_ylabel('Phase (degrees)')
-    ax2.set_title('Phase Response Comparison')
+    ax2.set_title('Phase Response Comparison (Unwrapped)')
     ax2.grid(True, alpha=0.3)
     ax2.legend()
     ax2.set_xlim([20, 20000])
@@ -295,7 +269,7 @@ def main():
     ax.set_ylim([0, np.max(magnitude_diff) * 1.1])
     
     plt.tight_layout()
-    plt.savefig说说(output_dir / "05_magnitude_difference.png", dpi=150, bbox_inches='tight')
+    plt.savefig(output_dir / "05_magnitude_difference.png", dpi=150, bbox_inches='tight')
     logger.info(f"Saved magnitude difference to {output_dir / '05_magnitude_difference.png'}")
     plt.close(fig)
     
