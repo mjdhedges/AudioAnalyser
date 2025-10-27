@@ -55,7 +55,7 @@ class MusicAnalyzer:
         extended_frequencies = [0] + center_frequencies  # Add 0 for full spectrum
         
         results = {
-            "band_data": {},
+            # band_data removed - causes 500MB+ memory duplication per track!
             "statistics": {},
             "center_frequencies": extended_frequencies
         }
@@ -66,7 +66,9 @@ class MusicAnalyzer:
             freq_label = f"{extended_frequencies[i]:.3f}" if i > 0 else "Full Spectrum"
             
             band_stats = self._calculate_band_statistics(band_signal)
-            results["band_data"][freq_label] = band_signal
+            # Don't store band_data - creates massive memory duplication!
+            # Instead, histogram functions can slice from octave_bank directly
+            # results["band_data"][freq_label] = band_signal
             results["statistics"][freq_label] = band_stats
 
         logger.info("Octave band analysis complete")

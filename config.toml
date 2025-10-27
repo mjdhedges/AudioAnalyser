@@ -109,7 +109,8 @@ enable_parallel_processing = true
 max_workers = 4  # Set to CPU count or leave blank for auto-detection
 
 # Caching for octave banks (near-instant re-analysis)
-enable_octave_cache = true
+# DISABLED: Creates 500MB+ cache files per track - not practical
+enable_octave_cache = false
 cache_dir = "cache/octave_banks"
 
 # Result caching for plots and CSV (skip if unchanged)
