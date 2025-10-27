@@ -6,6 +6,8 @@ This module provides the command-line interface for the music analysis tool.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import sys
 from pathlib import Path
@@ -68,6 +70,118 @@ def get_cache_path(track_path: Path, cache_dir: Path) -> Path:
     return cache_file
 
 
+def get_config_hash() -> str:
+    """Generate a hash of relevant configuration parameters.
+    
+    Returns:
+        Hexadecimal hash string of config
+    """
+    # Get relevant config sections that affect analysis results
+    relevant_config = {
+        'sample_rate': config.get('analysis.sample_rate', 44100),
+        'chunk_duration': config.get('analysis.chunk_duration_seconds', 2.0),
+        'octave_frequencies': config.get('analysis.octave_center_frequencies', []),
+        'filter_order': config.get('analysis.filter_order', 4),
+        'dpi': config.get('plotting.dpi', 300),
+    }
+    
+    # Convert to JSON string and hash
+    config_str = json.dumps(relevant_config, sort_keys=True)
+    return hashlib.md5(config_str.encode()).hexdigest()
+
+
+def check_result_cache(track_path: Path, output_dir: Path, 
+                      config_hash: str, use_cache: bool) -> bool:
+    """Check if cached analysis results are still valid.
+    
+    Args:
+        track_path: Path to the audio track
+        output_dir: Output directory for results
+        config_hash: Hash of current configuration
+        use_cache: Whether to use caching
+        
+    Returns:
+        True if cache is valid and exists, False otherwise
+    """
+    if not use_cache:
+        return False
+    
+    track_name = track_path.stem
+    track_output_dir = output_dir / track_name
+    
+    # Check if all required output files exist
+    required_files = [
+        'octave_spectrum.png',
+        'crest_factor.png',
+        'histograms.png',
+        'histograms_log_db.png',
+        'crest_factor_time.png',
+        'octave_crest_factor_time.png',
+        'analysis_results.csv'
+    ]
+    
+    for filename in required_files:
+        file_path = track_output_dir / filename
+        if not file_path.exists():
+            return False
+    
+    # Check if cache metadata exists
+    cache_meta_path = track_output_dir / '.cache_meta.json'
+    if not cache_meta_path.exists():
+        return False
+    
+    # Load cache metadata
+    try:
+        with open(cache_meta_path, 'r') as f:
+            cache_meta = json.load(f)
+        
+        # Check if source file has been modified
+        if cache_meta.get('source_mtime', 0) != track_path.stat().st_mtime:
+            return False
+        
+        # Check if config has changed
+        if cache_meta.get('config_hash') != config_hash:
+            return False
+        
+        # Check if all cached files are newer than source
+        for filename in required_files:
+            file_path = track_output_dir / filename
+            if file_path.stat().st_mtime <= track_path.stat().st_mtime:
+                return False
+        
+        return True
+    except Exception as e:
+        logger.warning(f"Error checking cache metadata: {e}")
+        return False
+
+
+def save_result_cache(track_path: Path, output_dir: Path, config_hash: str) -> None:
+    """Save cache metadata for analysis results.
+    
+    Args:
+        track_path: Path to the audio track
+        output_dir: Output directory for results
+        config_hash: Hash of current configuration
+    """
+    track_name = track_path.stem
+    track_output_dir = output_dir / track_name
+    track_output_dir.mkdir(parents=True, exist_ok=True)
+    
+    cache_meta = {
+        'source_path': str(track_path),
+        'source_mtime': track_path.stat().st_mtime,
+        'config_hash': config_hash,
+        'cache_date': pd.Timestamp.now().isoformat()
+    }
+    
+    cache_meta_path = track_output_dir / '.cache_meta.json'
+    try:
+        with open(cache_meta_path, 'w') as f:
+            json.dump(cache_meta, f, indent=2)
+    except Exception as e:
+        logger.warning(f"Failed to save cache metadata: {e}")
+
+
 def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, chunk_duration: float, 
                          use_cache: bool = True) -> bool:
     """Analyze a single audio track.
@@ -76,6 +190,8 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, c
         track_path: Path to the audio file
         output_dir: Base output directory
         sample_rate: Sample rate for processing
+        chunk_duration: Duration of analysis chunks in seconds
+        use_cache: Whether to use result caching
         
     Returns:
         True if analysis was successful, False otherwise
@@ -88,6 +204,14 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, c
         
         logger.info(f"Analyzing: {track_path.name}")
         logger.info(f"Output directory: {track_output_dir}")
+        
+        # Check if result cache is valid
+        enable_result_cache = use_cache and config.get('performance.enable_result_cache', True)
+        config_hash = get_config_hash()
+        
+        if enable_result_cache and check_result_cache(track_path, output_dir, config_hash, use_cache):
+            logger.info(f"Result cache valid - skipping analysis for {track_path.name}")
+            return True
         
         # Initialize components
         audio_processor = AudioProcessor(sample_rate=sample_rate)
@@ -104,7 +228,13 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, c
         original_peak = np.max(np.abs(audio_data))
         
         # Initialize analyzer with original peak for dBFS calculations
-        analyzer = MusicAnalyzer(sample_rate=sample_rate, original_peak=original_peak)
+        # Use lower DPI for batch processing if enabled
+        use_batch_dpi = config.get('performance.enable_parallel_batch', False) or \
+                       config.get('performance.enable_result_cache', False)
+        plot_dpi = config.get('plotting.batch_dpi', 150) if use_batch_dpi else \
+                   config.get('plotting.dpi', 300)
+        
+        analyzer = MusicAnalyzer(sample_rate=sample_rate, original_peak=original_peak, dpi=plot_dpi)
         
         # Normalize audio
         audio_data = audio_processor.normalize_audio(audio_data)
@@ -246,6 +376,11 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, c
         # Memory cleanup - explicitly delete large arrays to reduce memory footprint
         del audio_data, octave_bank, comprehensive_results
         logger.info(f"Analysis complete for {track_path.name}")
+        
+        # Save cache metadata
+        if enable_result_cache:
+            save_result_cache(track_path, output_dir, config_hash)
+        
         return True
         
     except Exception as e:
@@ -380,19 +515,59 @@ def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional
             
             logger.info(f"Found {len(audio_files)} audio files to analyze")
             
-            # Process each track with progress indicator
+            # Process tracks (parallel or sequential based on config)
             successful_analyses = 0
             failed_analyses = 0
             total_tracks = len(audio_files)
             
-            for idx, track_path in enumerate(sorted(audio_files), 1):
-                logger.info(f"\n{'='*60}")
-                logger.info(f"Processing track {idx}/{total_tracks} ({100*idx/total_tracks:.1f}%) - {track_path.name}")
+            enable_parallel_batch = config.get('performance.enable_parallel_batch', False)
+            
+            if enable_parallel_batch:
+                # PARALLEL PROCESSING: Process multiple tracks simultaneously
+                from concurrent.futures import ProcessPoolExecutor, as_completed
+                import multiprocessing
                 
-                if analyze_single_track(track_path, output_dir, sample_rate, chunk_duration):
-                    successful_analyses += 1
-                else:
-                    failed_analyses += 1
+                max_workers = config.get('performance.max_batch_workers', None)
+                available_cores = multiprocessing.cpu_count()
+                
+                if max_workers is None:
+                    max_workers = min(available_cores, 4)  # Default to 4 workers max
+                
+                logger.info(f"Using parallel batch processing with {max_workers} workers")
+                
+                with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                    # Submit all tasks
+                    future_to_track = {
+                        executor.submit(
+                            analyze_single_track, track_path, output_dir, sample_rate, chunk_duration
+                        ): (idx, track_path, total_tracks)
+                        for idx, track_path in enumerate(sorted(audio_files), 1)
+                    }
+                    
+                    # Collect results as they complete
+                    for future in as_completed(future_to_track):
+                        idx, track_path, total_tracks = future_to_track[future]
+                        try:
+                            result = future.result(timeout=600)  # 10 min timeout per track
+                            if result:
+                                successful_analyses += 1
+                                logger.info(f"[{idx}/{total_tracks}] ✓ {track_path.name}")
+                            else:
+                                failed_analyses += 1
+                                logger.error(f"[{idx}/{total_tracks}] ✗ {track_path.name}")
+                        except Exception as e:
+                            failed_analyses += 1
+                            logger.error(f"[{idx}/{total_tracks}] ✗ {track_path.name}: {e}")
+            else:
+                # SEQUENTIAL PROCESSING: Process tracks one at a time
+                for idx, track_path in enumerate(sorted(audio_files), 1):
+                    logger.info(f"\n{'='*60}")
+                    logger.info(f"Processing track {idx}/{total_tracks} ({100*idx/total_tracks:.1f}%) - {track_path.name}")
+                    
+                    if analyze_single_track(track_path, output_dir, sample_rate, chunk_duration):
+                        successful_analyses += 1
+                    else:
+                        failed_analyses += 1
             
             # Summary
             logger.info(f"\n{'='*60}")

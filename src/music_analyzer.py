@@ -10,6 +10,10 @@ import logging
 from pathlib import Path
 from typing import Dict, List, Optional
 
+# Use Agg backend for non-interactive plotting (faster, no GUI)
+import matplotlib
+matplotlib.use('Agg')
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -20,15 +24,17 @@ logger = logging.getLogger(__name__)
 class MusicAnalyzer:
     """Main class for music analysis operations."""
 
-    def __init__(self, sample_rate: int = 44100, original_peak: float = 1.0) -> None:
+    def __init__(self, sample_rate: int = 44100, original_peak: float = 1.0, dpi: int = 300) -> None:
         """Initialize the music analyzer.
         
         Args:
             sample_rate: Sample rate for audio processing
             original_peak: Original peak level before normalization (for dBFS calculation)
+            dpi: DPI for plot output (lower for faster batch processing)
         """
         self.sample_rate = sample_rate
         self.original_peak = original_peak
+        self.dpi = dpi
 
     def analyze_octave_bands(self, octave_bank: np.ndarray, 
                            center_frequencies: List[float]) -> Dict:
@@ -212,7 +218,7 @@ class MusicAnalyzer:
         plt.tight_layout()
         
         if output_path:
-            plt.savefig(output_path, dpi=300, bbox_inches='tight')
+            plt.savefig(output_path, dpi=self.dpi, bbox_inches='tight')
             logger.info(f"Plot saved to: {output_path}")
         
         plt.close(fig)
@@ -342,7 +348,7 @@ class MusicAnalyzer:
         
         if output_dir:
             output_path = Path(output_dir) / "histograms.png"
-            plt.savefig(output_path, dpi=300, bbox_inches='tight')
+            plt.savefig(output_path, dpi=self.dpi, bbox_inches='tight')
             logger.info(f"Histograms saved to: {output_path}")
         
         plt.close(fig)
@@ -430,7 +436,7 @@ class MusicAnalyzer:
         
         if output_dir:
             output_path = Path(output_dir) / "histograms_log_db.png"
-            plt.savefig(output_path, dpi=300, bbox_inches='tight')
+            plt.savefig(output_path, dpi=self.dpi, bbox_inches='tight')
             logger.info(f"Log dB histograms saved to: {output_path}")
         
         plt.close(fig)
@@ -685,7 +691,7 @@ class MusicAnalyzer:
         plt.tight_layout()
         
         if output_path:
-            plt.savefig(output_path, dpi=300, bbox_inches='tight')
+            plt.savefig(output_path, dpi=self.dpi, bbox_inches='tight')
             logger.info(f"Crest factor time plot saved to: {output_path}")
         
         plt.close(fig)
@@ -796,7 +802,7 @@ class MusicAnalyzer:
         plt.tight_layout()
         
         if output_path:
-            plt.savefig(output_path, dpi=300, bbox_inches='tight')
+            plt.savefig(output_path, dpi=self.dpi, bbox_inches='tight')
             logger.info(f"Octave band crest factor time plot saved to: {output_path}")
         
         plt.close(fig)
@@ -1291,7 +1297,7 @@ class MusicAnalyzer:
         plt.tight_layout()
         
         if output_path:
-            plt.savefig(output_path, dpi=300, bbox_inches='tight')
+            plt.savefig(output_path, dpi=self.dpi, bbox_inches='tight')
             logger.info(f"Crest factor plot saved to: {output_path}")
         
         plt.close(fig)

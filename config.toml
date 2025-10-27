@@ -44,6 +44,8 @@ log_histogram_max_bin_size_db = 3.0
 
 # DPI and quality
 dpi = 300
+batch_dpi = 150  # Lower DPI for faster batch processing
+high_quality_dpi = 300  # For single-file analysis
 bbox_inches = "tight"
 
 # Advanced statistics parameters
@@ -109,3 +111,11 @@ max_workers = 4  # Set to CPU count or leave blank for auto-detection
 # Caching for octave banks (near-instant re-analysis)
 enable_octave_cache = true
 cache_dir = "cache/octave_banks"
+
+# Result caching for plots and CSV (skip if unchanged)
+enable_result_cache = true
+result_cache_dir = "cache/results"
+
+# Batch processing parallelism
+enable_parallel_batch = true
+max_batch_workers = 4  # Leave blank for auto-detection
