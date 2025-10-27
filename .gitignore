@@ -172,3 +172,6 @@ Thumbs.db
 
 # Audio tracks directory
 Tracks/
+
+# Analysis output directory
+analysis/
