@@ -288,6 +288,12 @@ The tool analyzes audio using standard octave band center frequencies including 
 - **Spectral Analysis**: Spectral centroid, bass/mid/treble energy ratios
 - **Peak Distribution**: Sample distribution across 6 dBFS ranges
 
+## Documentation
+
+- **[ARCHITECTURE.md](ARCHITECTURE.md)**: Comprehensive system architecture and design details
+- **[FINAL_PERFORMANCE_SUMMARY.md](FINAL_PERFORMANCE_SUMMARY.md)**: Complete performance optimization history
+- **[PHASE3_OPTIMIZATION_SUMMARY.md](PHASE3_OPTIMIZATION_SUMMARY.md)**: Latest optimizations (batch processing & caching)
+
 ## Development Commands
 
 - Run tests: `pytest`
