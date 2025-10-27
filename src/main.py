@@ -51,7 +51,25 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, chunk_duration: float) -> bool:
+def get_cache_path(track_path: Path, cache_dir: Path) -> Path:
+    """Generate cache file path for a track.
+    
+    Args:
+        track_path: Path to the audio track
+        cache_dir: Base cache directory
+        
+    Returns:
+        Path to the cache file
+    """
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    # Use track name and hash for uniqueness
+    track_hash = hash(str(track_path))
+    cache_file = cache_dir / f"{track_path.stem}_{abs(track_hash)}.npy"
+    return cache_file
+
+
+def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, chunk_duration: float, 
+                         use_cache: bool = True) -> bool:
     """Analyze a single audio track.
     
     Args:
@@ -96,17 +114,52 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, c
         logger.info(f"Audio info: Duration={audio_info['duration_seconds']:.2f}s, "
                    f"RMS={audio_info['rms']:.4f}, Max={audio_info['max_amplitude']:.4f}")
         
-        # Create octave bank with optional parallel processing
-        import multiprocessing
-        parallel_enabled = config.get('performance.enable_parallel_processing', False)
+        # Try to load cached octave bank or create new one
+        enable_cache = use_cache and config.get('performance.enable_octave_cache', True)
+        cache_dir = Path(config.get('performance.cache_dir', 'cache/octave_banks'))
         
-        if parallel_enabled:
-            logger.info("Creating octave bank with parallel processing...")
-            num_workers = config.get('performance.max_workers', None)
-            octave_bank = octave_filter.create_octave_bank_parallel(audio_data, num_workers=num_workers)
+        if enable_cache:
+            cache_file = get_cache_path(track_path, cache_dir)
+            
+            # Check if cache exists and is valid
+            if cache_file.exists():
+                # Check if source file hasn't been modified since caching
+                if cache_file.stat().st_mtime > track_path.stat().st_mtime:
+                    try:
+                        logger.info(f"Loading cached octave bank: {cache_file.name}")
+                        octave_bank = np.load(cache_file, mmap_mode='r')  # Memory-mapped for efficiency
+                        logger.info(f"Loaded octave bank from cache ({octave_bank.shape[1]} bands)")
+                    except Exception as e:
+                        logger.warning(f"Failed to load cache: {e}, creating new octave bank")
+                        octave_bank = None
+                else:
+                    logger.info("Cache expired (source file modified), creating new octave bank")
+                    octave_bank = None
+            else:
+                octave_bank = None
         else:
-            logger.info("Creating octave bank...")
-            octave_bank = octave_filter.create_octave_bank(audio_data)
+            octave_bank = None
+        
+        # Create octave bank if not loaded from cache
+        if octave_bank is None:
+            import multiprocessing
+            parallel_enabled = config.get('performance.enable_parallel_processing', False)
+            
+            if parallel_enabled:
+                logger.info("Creating octave bank with parallel processing...")
+                num_workers = config.get('performance.max_workers', None)
+                octave_bank = octave_filter.create_octave_bank_parallel(audio_data, num_workers=num_workers)
+            else:
+                logger.info("Creating octave bank...")
+                octave_bank = octave_filter.create_octave_bank(audio_data)
+            
+            # Save to cache
+            if enable_cache:
+                try:
+                    np.save(cache_file, octave_bank)
+                    logger.info(f"Cached octave bank to: {cache_file.name}")
+                except Exception as e:
+                    logger.warning(f"Failed to cache octave bank: {e}")
         
         # Perform comprehensive analysis (efficient - runs octave analysis only once)
         logger.info("Performing comprehensive analysis...")
