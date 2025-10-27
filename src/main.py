@@ -380,13 +380,14 @@ def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional
             
             logger.info(f"Found {len(audio_files)} audio files to analyze")
             
-            # Process each track
+            # Process each track with progress indicator
             successful_analyses = 0
             failed_analyses = 0
+            total_tracks = len(audio_files)
             
-            for track_path in sorted(audio_files):
+            for idx, track_path in enumerate(sorted(audio_files), 1):
                 logger.info(f"\n{'='*60}")
-                logger.info(f"Processing track {successful_analyses + failed_analyses + 1}/{len(audio_files)}")
+                logger.info(f"Processing track {idx}/{total_tracks} ({100*idx/total_tracks:.1f}%) - {track_path.name}")
                 
                 if analyze_single_track(track_path, output_dir, sample_rate, chunk_duration):
                     successful_analyses += 1
