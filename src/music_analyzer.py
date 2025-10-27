@@ -348,12 +348,14 @@ class MusicAnalyzer:
         plt.close(fig)
 
     def create_histogram_plots_log_db(self, analysis_results: Dict, 
-                                     output_dir: Optional[str] = None) -> None:
+                                     output_dir: Optional[str] = None,
+                                     config: Optional[Dict] = None) -> None:
         """Create histogram plots for each octave band with log dB X-axis.
         
         Args:
             analysis_results: Results from octave band analysis
             output_dir: Optional directory to save plots
+            config: Optional configuration dictionary
         """
         logger.info("Creating log dB histogram plots...")
         
@@ -364,9 +366,16 @@ class MusicAnalyzer:
         fig, axes = plt.subplots(3, 4, figsize=(16, 12))
         axes = axes.flatten()
         
-        # Define dB range and noise floor
-        noise_floor_db = -120  # dB below full scale
-        max_db = 0  # 0 dBFS
+        # Define dB range and noise floor from config
+        noise_floor_db = config.get("log_histogram_noise_floor_db", -60) if config else -60
+        max_db = config.get("log_histogram_max_db", 0) if config else 0
+        max_bin_size_db = config.get("log_histogram_max_bin_size_db", 3.0) if config else 3.0
+        
+        # Calculate number of bins to ensure bin size is no larger than max_bin_size_db
+        db_range = max_db - noise_floor_db
+        min_bins = int(np.ceil(db_range / max_bin_size_db))
+        
+        logger.info(f"Log histogram range: {noise_floor_db} to {max_db} dBFS with {min_bins} bins (max bin size: {max_bin_size_db} dB)")
         
         for i, (freq_label, signal) in enumerate(band_data.items()):
             if i >= len(axes):
@@ -393,8 +402,8 @@ class MusicAnalyzer:
                     signal_db = 20 * np.log10(abs_signal)
                     
                     # Create logarithmically spaced bins in dB
-                    # Use 51 bins (odd) for better 0-centered distribution
-                    db_bins = np.linspace(noise_floor_db, max_db, 51)
+                    # Use calculated number of bins to ensure bin size is no larger than max_bin_size_db
+                    db_bins = np.linspace(noise_floor_db, max_db, min_bins)
                     
                     # Create histogram
                     ax.hist(signal_db, bins=db_bins, alpha=0.7, density=True)

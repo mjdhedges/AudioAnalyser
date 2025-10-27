@@ -134,7 +134,8 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, c
         )
         analyzer.create_histogram_plots_log_db(
             analysis_results,
-            output_dir=str(track_output_dir)
+            output_dir=str(track_output_dir),
+            config=config.get_plotting_config()
         )
         analyzer.create_crest_factor_time_plot(
             time_analysis,
@@ -192,14 +193,12 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, c
 @click.option(
     '--tracks-dir', '-t',
     type=click.Path(exists=True, path_type=Path),
-    default='Tracks',
-    help='Directory containing tracks to analyze (default: Tracks)'
+    help='Directory containing tracks to analyze (default: from config)'
 )
 @click.option(
     '--output-dir', '-o',
     type=click.Path(path_type=Path),
-    default='analysis',
-    help='Output directory for results (default: analysis)'
+    help='Output directory for results (default: from config)'
 )
 @click.option(
     '--sample-rate', '-sr',
@@ -223,6 +222,7 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, c
 )
 @click.option(
     '--config', '-c',
+    'config_path',
     type=click.Path(exists=True, path_type=Path),
     help='Path to configuration file (default: config.toml)'
 )
@@ -236,7 +236,7 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, c
     default=True,
     help='Export results to CSV'
 )
-def main(input: Optional[Path], tracks_dir: Path, output_dir: Path, 
+def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional[Path], 
          sample_rate: Optional[int], chunk_duration: Optional[float],
          dpi: Optional[int], log_level: Optional[str], config_path: Optional[Path],
          batch: bool, export_csv: bool) -> None:
@@ -278,6 +278,12 @@ def main(input: Optional[Path], tracks_dir: Path, output_dir: Path,
         sample_rate = config.get('analysis.sample_rate', 44100)
         chunk_duration = config.get('analysis.chunk_duration_seconds', 2.0)
         
+        # Use config defaults if CLI options not provided
+        if tracks_dir is None:
+            tracks_dir = Path(config.get('analysis.tracks_dir', 'Tracks'))
+        if output_dir is None:
+            output_dir = Path(config.get('analysis.output_dir', 'analysis'))
+        
         # Create output directory
         output_dir.mkdir(parents=True, exist_ok=True)
         
@@ -295,8 +301,8 @@ def main(input: Optional[Path], tracks_dir: Path, output_dir: Path,
             audio_files = []
             
             for ext in audio_extensions:
-                audio_files.extend(tracks_dir.glob(f"*{ext}"))
-                audio_files.extend(tracks_dir.glob(f"*{ext.upper()}"))
+                audio_files.extend(tracks_dir.glob(f"**/*{ext}"))
+                audio_files.extend(tracks_dir.glob(f"**/*{ext.upper()}"))
             
             if not audio_files:
                 logger.error(f"No audio files found in {tracks_dir}")

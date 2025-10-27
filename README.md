@@ -59,6 +59,8 @@ The configuration file is organized into sections:
 [analysis]
 chunk_duration_seconds = 2.0        # Time-domain analysis chunk size
 sample_rate = 44100                 # Audio processing sample rate
+tracks_dir = "Tracks"               # Default tracks directory
+output_dir = "analysis"             # Default output directory
 octave_center_frequencies = [16.0, 31.25, 62.5, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0]
 
 [plotting]
@@ -122,8 +124,8 @@ python -m src.main --help
 
 #### Basic Options
 - `--input, -i`: Input audio file path (for single file analysis)
-- `--tracks-dir, -t`: Directory containing tracks to analyze (default: 'Tracks')
-- `--output-dir, -o`: Output directory for results (default: 'analysis')
+- `--tracks-dir, -t`: Directory containing tracks to analyze (default: from config)
+- `--output-dir, -o`: Output directory for results (default: from config)
 - `--batch/--single`: Process all tracks in directory (batch) or single file (default: batch)
 - `--export-csv/--no-export-csv`: Export results to CSV (default: True)
 

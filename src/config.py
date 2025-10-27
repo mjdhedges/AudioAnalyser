@@ -50,6 +50,8 @@ class Config:
             "analysis": {
                 "chunk_duration_seconds": 2.0,
                 "sample_rate": 44100,
+                "tracks_dir": "Tracks",
+                "output_dir": "analysis",
                 "octave_center_frequencies": [16.0, 31.25, 62.5, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0],
                 "filter_order": 4,
                 "low_frequency_filter_order": 2,
@@ -70,7 +72,9 @@ class Config:
                 "histogram_bins": 51,
                 "histogram_range": [-1, 1],
                 "log_histogram_bins": 51,
-                "log_histogram_noise_floor_db": -120,
+                "log_histogram_noise_floor_db": -60,
+                "log_histogram_max_db": 0,
+                "log_histogram_max_bin_size_db": 3.0,
                 "dpi": 300,
                 "bbox_inches": "tight"
             },
@@ -79,14 +83,9 @@ class Config:
                 "clip_events_threshold_db": -0.1,
                 "peak_saturation_threshold_db": -3.0,
                 "transient_threshold_db": 3.0,
-                "peak_distribution_ranges": [
-                    [-0.1, 0.0, "clipping"],
-                    [-1.0, -0.1, "hot"],
-                    [-3.0, -1.0, "loud"],
-                    [-6.0, -3.0, "moderate"],
-                    [-12.0, -6.0, "quiet"],
-                    [-60.0, -12.0, "very_quiet"]
-                ],
+                "peak_distribution_ranges_min": [-0.1, -1.0, -3.0, -6.0, -12.0, -60.0],
+                "peak_distribution_ranges_max": [0.0, -0.1, -1.0, -3.0, -6.0, -12.0],
+                "peak_distribution_ranges_labels": ["clipping", "hot", "loud", "moderate", "quiet", "very_quiet"],
                 "bass_frequencies": [31.25, 62.5, 125.0],
                 "mid_frequencies": [250.0, 500.0, 1000.0, 2000.0],
                 "treble_frequencies": [4000.0, 8000.0, 16000.0]
