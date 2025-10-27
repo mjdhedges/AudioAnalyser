@@ -175,3 +175,6 @@ Tracks/
 
 # Analysis output directory
 analysis/
+
+# Cache directory
+cache/
