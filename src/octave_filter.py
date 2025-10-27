@@ -8,11 +8,64 @@ from __future__ import annotations
 
 import logging
 from typing import List, Tuple
+import multiprocessing
 
 import numpy as np
 from scipy import signal
 
 logger = logging.getLogger(__name__)
+
+
+def _filter_worker(args: Tuple[np.ndarray, float, int, int]) -> Tuple[float, np.ndarray]:
+    """Worker function for parallel octave band filtering.
+    
+    This module-level function is used for multiprocessing as it can be pickled.
+    
+    Args:
+        args: Tuple of (audio_data, center_freq, sample_rate, filter_order)
+        
+    Returns:
+        Tuple of (center_freq, filtered_signal)
+    """
+    audio_data, center_freq, sample_rate, filter_order = args
+    
+    try:
+        # Calculate bandwidth for octave band
+        bandwidth = center_freq / np.sqrt(2)
+        
+        # Calculate filter frequencies
+        low_freq = center_freq - bandwidth / 2
+        high_freq = center_freq + bandwidth / 2
+        
+        # Ensure frequencies are within valid range
+        nyquist = sample_rate / 2
+        low_freq = max(low_freq, 1.0)
+        high_freq = min(high_freq, nyquist * 0.99)
+        
+        # Normalize frequencies
+        low_norm = low_freq / nyquist
+        high_norm = high_freq / nyquist
+        
+        # Adjust filter order for low frequencies
+        if low_norm < 0.01:
+            actual_filter_order = 2
+        else:
+            actual_filter_order = filter_order
+        
+        # Ensure normalized frequencies are within valid range
+        low_norm = max(low_norm, 1e-6)
+        high_norm = min(high_norm, 0.99)
+        
+        # Design and apply filter
+        b, a = signal.butter(actual_filter_order, [low_norm, high_norm], btype='band')
+        filtered_signal = signal.filtfilt(b, a, audio_data)
+        
+        return (center_freq, filtered_signal)
+    
+    except Exception as e:
+        logger.error(f"Error in filter worker for {center_freq}Hz: {e}")
+        # Return zeros on error
+        return (center_freq, np.zeros_like(audio_data))
 
 
 class OctaveBandFilter:
@@ -148,6 +201,84 @@ class OctaveBandFilter:
         octave_bank = np.column_stack(filtered_signals)
         
         logger.info(f"Octave bank created with {octave_bank.shape[1]} bands")
+        return octave_bank
+
+    def create_octave_bank_parallel(self, audio_data: np.ndarray, 
+                                    center_frequencies: List[float] = None,
+                                    num_workers: int = None) -> np.ndarray:
+        """Create octave bank using parallel processing for improved performance.
+        
+        Args:
+            audio_data: Input audio signal
+            center_frequencies: List of center frequencies (default: standard octaves)
+            num_workers: Number of parallel workers (default: min of freq count and CPU count)
+            
+        Returns:
+            Octave bank array with original signal in first column
+        """
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+        
+        if center_frequencies is None:
+            center_frequencies = self.OCTAVE_CENTER_FREQUENCIES
+        
+        logger.info("Creating octave bank with parallel processing...")
+        
+        # Determine optimal number of workers
+        available_cores = multiprocessing.cpu_count()
+        if num_workers is None:
+            num_workers = min(len(center_frequencies), available_cores)
+        
+        logger.info(f"Using {num_workers} parallel workers (out of {available_cores} available cores)")
+        
+        # Start with original signal
+        filtered_signals = [audio_data]
+        
+        # Filter out frequencies above Nyquist
+        valid_frequencies = [f for f in center_frequencies if f < self.sample_rate / 2]
+        
+        if len(valid_frequencies) == 0:
+            logger.warning("No valid frequencies below Nyquist limit")
+            return np.column_stack(filtered_signals)
+        
+        # Process frequencies in parallel
+        try:
+            with ProcessPoolExecutor(max_workers=num_workers) as executor:
+                # Submit all filtering tasks
+                futures = {
+                    executor.submit(
+                        _filter_worker,
+                        (audio_data, freq, self.sample_rate, 4)
+                    ): freq
+                    for freq in valid_frequencies
+                }
+                
+                # Collect results as they complete
+                results = {}
+                for future in as_completed(futures):
+                    freq = futures[future]
+                    try:
+                        _, filtered_signal = future.result(timeout=300)  # 5 min timeout per task
+                        results[freq] = filtered_signal
+                        logger.info(f"Completed octave band: {freq}Hz")
+                    except Exception as e:
+                        logger.error(f"Failed to process {freq}Hz: {e}")
+                        # Use zeros as fallback
+                        results[freq] = np.zeros_like(audio_data)
+            
+            # Add filtered signals in the correct order
+            for freq in valid_frequencies:
+                filtered_signals.append(results.get(freq, np.zeros_like(audio_data)))
+                
+        except Exception as e:
+            logger.error(f"Parallel processing failed: {e}")
+            logger.info("Falling back to sequential processing...")
+            # Fallback to sequential processing
+            return self.create_octave_bank(audio_data, center_frequencies)
+        
+        # Stack all signals into octave bank array
+        octave_bank = np.column_stack(filtered_signals)
+        
+        logger.info(f"Octave bank created with {octave_bank.shape[1]} bands (parallel)")
         return octave_bank
 
     def get_octave_analysis(self, octave_bank: np.ndarray) -> dict:

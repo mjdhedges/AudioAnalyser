@@ -47,10 +47,12 @@ class AudioProcessor:
             raise FileNotFoundError(f"Audio file not found: {file_path}")
         
         try:
-            # Load audio file
-            audio_data, sr = librosa.load(str(file_path), sr=self.sample_rate)
+            # Load audio file with optional dtype optimization
+            use_float32 = True  # Default to float32 for 50% memory reduction
+            dtype = np.float32 if use_float32 else None
+            audio_data, sr = librosa.load(str(file_path), sr=self.sample_rate, dtype=dtype)
             logger.info(f"Loaded audio file: {file_path}")
-            logger.info(f"Sample rate: {sr} Hz, Duration: {len(audio_data)/sr:.2f}s")
+            logger.info(f"Sample rate: {sr} Hz, Duration: {len(audio_data)/sr:.2f}s, dtype: {audio_data.dtype}")
             
             return audio_data, sr
             

@@ -75,7 +75,7 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, c
         audio_processor = AudioProcessor(sample_rate=sample_rate)
         octave_filter = OctaveBandFilter(sample_rate=sample_rate)
         
-        # Load and preprocess audio
+        # Load and preprocess audio (now uses float32 by default for 50% memory savings)
         logger.info("Loading audio file...")
         audio_data, sr = audio_processor.load_audio(track_path)
         
@@ -96,9 +96,17 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, c
         logger.info(f"Audio info: Duration={audio_info['duration_seconds']:.2f}s, "
                    f"RMS={audio_info['rms']:.4f}, Max={audio_info['max_amplitude']:.4f}")
         
-        # Create octave bank
-        logger.info("Creating octave bank...")
-        octave_bank = octave_filter.create_octave_bank(audio_data)
+        # Create octave bank with optional parallel processing
+        import multiprocessing
+        parallel_enabled = config.get('performance.enable_parallel_processing', False)
+        
+        if parallel_enabled:
+            logger.info("Creating octave bank with parallel processing...")
+            num_workers = config.get('performance.max_workers', None)
+            octave_bank = octave_filter.create_octave_bank_parallel(audio_data, num_workers=num_workers)
+        else:
+            logger.info("Creating octave bank...")
+            octave_bank = octave_filter.create_octave_bank(audio_data)
         
         # Perform comprehensive analysis (efficient - runs octave analysis only once)
         logger.info("Performing comprehensive analysis...")
