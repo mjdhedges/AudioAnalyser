@@ -142,8 +142,9 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, c
             output_path=str(track_output_dir / "crest_factor_time.png")
         )
         analyzer.create_octave_crest_factor_time_plot(
-            audio_data,
+            octave_bank,
             time_analysis,
+            octave_filter.OCTAVE_CENTER_FREQUENCIES,
             output_path=str(track_output_dir / "octave_crest_factor_time.png")
         )
         
@@ -172,10 +173,11 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, c
             time_analysis,
             track_metadata,
             str(track_output_dir / "analysis_results.csv"),
-            chunk_octave_analysis=chunk_octave_analysis,
-            audio_data=audio_data
+            chunk_octave_analysis=chunk_octave_analysis, audio_data=audio_data
         )
         
+        # Memory cleanup - explicitly delete large arrays to reduce memory footprint
+        del audio_data, octave_bank, comprehensive_results
         logger.info(f"Analysis complete for {track_path.name}")
         return True
         

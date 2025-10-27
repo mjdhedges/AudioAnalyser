@@ -458,7 +458,7 @@ class MusicAnalyzer:
         
         # Chunk-specific octave analysis for min/max crest factor chunks
         chunk_octave_analysis = self._analyze_extreme_chunks_octave_bands(
-            audio_data, time_analysis, center_frequencies, chunk_duration
+            octave_bank, time_analysis, center_frequencies, chunk_duration
         )
         
         return {
@@ -550,14 +550,14 @@ class MusicAnalyzer:
         """
         return self._analyze_time_domain_chunks(audio_data, chunk_duration)
 
-    def _analyze_extreme_chunks_octave_bands(self, audio_data: np.ndarray, 
+    def _analyze_extreme_chunks_octave_bands(self, octave_bank: np.ndarray,
                                            time_analysis: Dict,
                                            center_frequencies: List[float],
                                            chunk_duration: float) -> Dict:
         """Analyze octave bands for min/max crest factor chunks.
         
         Args:
-            audio_data: Original audio data
+            octave_bank: Pre-computed octave bank (full track) - CRITICAL for performance
             time_analysis: Time-domain analysis results
             center_frequencies: List of center frequencies
             chunk_duration: Duration of each chunk in seconds
@@ -565,8 +565,6 @@ class MusicAnalyzer:
         Returns:
             Dictionary with octave analysis for extreme chunks
         """
-        from src.octave_filter import OctaveBandFilter
-        
         crest_factors_db = time_analysis["crest_factors_db"]
         time_points = time_analysis["time_points"]
         chunk_samples = int(chunk_duration * self.sample_rate)
@@ -587,19 +585,18 @@ class MusicAnalyzer:
         min_chunk_idx = np.where(valid_mask)[0][min_idx]
         max_chunk_idx = np.where(valid_mask)[0][max_idx]
         
-        # Create octave filter for chunk analysis
-        octave_filter = OctaveBandFilter(sample_rate=self.sample_rate)
-        
         results = {}
         
-        # Analyze minimum crest factor chunk
+        # Analyze minimum crest factor chunk using pre-computed octave bank
         min_start = min_chunk_idx * chunk_samples
         min_end = min_start + chunk_samples
-        min_chunk = audio_data[min_start:min_end] if min_end <= len(audio_data) else audio_data[min_start:]
+        if min_end > octave_bank.shape[0]:
+            min_end = octave_bank.shape[0]
         
-        if len(min_chunk) > 0:
-            min_octave_bank = octave_filter.create_octave_bank(min_chunk)
-            min_analysis = self.analyze_octave_bands(min_octave_bank, center_frequencies)
+        if min_start < min_end:
+            # Slice pre-computed octave bank
+            min_chunk_octave = octave_bank[min_start:min_end, :]
+            min_analysis = self.analyze_octave_bands(min_chunk_octave, center_frequencies)
             results["min_chunk"] = {
                 "analysis": min_analysis,
                 "time": valid_time_points[min_idx],
@@ -609,14 +606,16 @@ class MusicAnalyzer:
         else:
             results["min_chunk"] = None
         
-        # Analyze maximum crest factor chunk
+        # Analyze maximum crest factor chunk using pre-computed octave bank
         max_start = max_chunk_idx * chunk_samples
         max_end = max_start + chunk_samples
-        max_chunk = audio_data[max_start:max_end] if max_end <= len(audio_data) else audio_data[max_start:]
+        if max_end > octave_bank.shape[0]:
+            max_end = octave_bank.shape[0]
         
-        if len(max_chunk) > 0:
-            max_octave_bank = octave_filter.create_octave_bank(max_chunk)
-            max_analysis = self.analyze_octave_bands(max_octave_bank, center_frequencies)
+        if max_start < max_end:
+            # Slice pre-computed octave bank
+            max_chunk_octave = octave_bank[max_start:max_end, :]
+            max_analysis = self.analyze_octave_bands(max_chunk_octave, center_frequencies)
             results["max_chunk"] = {
                 "analysis": max_analysis,
                 "time": valid_time_points[max_idx],
@@ -691,14 +690,16 @@ class MusicAnalyzer:
         
         plt.close(fig)
 
-    def create_octave_crest_factor_time_plot(self, audio_data: np.ndarray,
+    def create_octave_crest_factor_time_plot(self, octave_bank: np.ndarray,
                                            time_analysis: Dict, 
+                                           center_frequencies: List[float],
                                            output_path: Optional[str] = None) -> None:
         """Create plot showing crest factor over time for all octave bands.
         
         Args:
-            audio_data: Original audio data for chunk analysis
+            octave_bank: Pre-computed octave bank (full track) - CRITICAL for performance
             time_analysis: Time-domain analysis results with chunk data
+            center_frequencies: List of center frequencies for octave bands
             output_path: Optional path to save the plot
         """
         logger.info("Creating octave band crest factor vs time plot...")
@@ -708,10 +709,8 @@ class MusicAnalyzer:
         chunk_duration = 2.0  # seconds
         chunk_samples = int(chunk_duration * self.sample_rate)
         
-        # Get octave band center frequencies
-        from src.octave_filter import OctaveBandFilter
-        octave_filter = OctaveBandFilter(sample_rate=self.sample_rate)
-        center_freqs = octave_filter.OCTAVE_CENTER_FREQUENCIES
+        # Use provided center frequencies (no need to create filter instance)
+        center_freqs = center_frequencies
         
         # Initialize storage for octave band crest factors over time
         octave_crest_factors = {freq: [] for freq in center_freqs}
@@ -722,19 +721,28 @@ class MusicAnalyzer:
             start_sample = i * chunk_samples
             end_sample = start_sample + chunk_samples
             
-            # Get chunk from original audio
-            chunk = audio_data[start_sample:end_sample] if end_sample <= len(audio_data) else audio_data[start_sample:]
+            # Ensure we don't exceed array bounds
+            if end_sample > octave_bank.shape[0]:
+                end_sample = octave_bank.shape[0]
             
-            if len(chunk) > 0:
-                # Create octave bank for this chunk
-                chunk_octave_bank = octave_filter.create_octave_bank(chunk)
-                chunk_analysis = self.analyze_octave_bands(chunk_octave_bank, center_freqs)
+            if start_sample < end_sample:
+                # PERFORMANCE FIX: Slice pre-computed octave bank instead of recreating
+                # This eliminates ~1,695 redundant filter operations per track
+                chunk_octave_data = octave_bank[start_sample:end_sample, :]
                 
-                # Extract crest factors for each octave band
-                for freq in center_freqs:
-                    freq_key = f"{freq:.3f}"
-                    if freq_key in chunk_analysis["statistics"]:
-                        crest_db = chunk_analysis["statistics"][freq_key].get("crest_factor_db", -np.inf)
+                # Calculate crest factors directly from sliced data
+                for freq_idx, freq in enumerate(center_freqs):
+                    # Skip full spectrum band (index 0), octave bands start from index 1
+                    band_data = chunk_octave_data[:, freq_idx + 1]
+                    
+                    # Calculate RMS and peak for this chunk band
+                    rms_val = np.sqrt(np.mean(band_data**2))
+                    peak_val = np.max(np.abs(band_data))
+                    
+                    # Calculate crest factor in dB
+                    if rms_val > 0 and peak_val > 0:
+                        crest_factor = max(peak_val / rms_val, 1.0)  # Ensure >= 1.0
+                        crest_db = 20 * np.log10(crest_factor)
                         octave_crest_factors[freq].append(crest_db if np.isfinite(crest_db) else 0.0)
                     else:
                         octave_crest_factors[freq].append(0.0)
@@ -1096,19 +1104,14 @@ class MusicAnalyzer:
                 center_freqs = analysis_results["center_frequencies"]
                 statistics = analysis_results["statistics"]
                 
+                # PERFORMANCE FIX: Use cached band_data instead of recreating octave bank
+                band_data = analysis_results.get("band_data", {})
+                
                 for freq in center_freqs:
-                    freq_key = f"{freq:.3f}"
+                    freq_key = f"{freq:.3f}" if freq > 0 else "Full Spectrum"
                     if freq_key in statistics:
-                        # Get the filtered signal for this frequency band
-                        if freq == 0:  # Full spectrum
-                            signal = audio_data
-                        else:
-                            # We need to recreate the octave bank for histogram data
-                            from src.octave_filter import OctaveBandFilter
-                            octave_filter = OctaveBandFilter(sample_rate=self.sample_rate)
-                            octave_bank = octave_filter.create_octave_bank(audio_data)
-                            freq_idx = list(center_freqs[1:]).index(freq)  # Skip full spectrum
-                            signal = octave_bank[freq_idx]
+                        # Get the filtered signal for this frequency band from cached data
+                        signal = band_data.get(freq_key, audio_data)
                         
                         # Remove DC component and very small values
                         clean_signal = signal[np.abs(signal) > 1e-10]
