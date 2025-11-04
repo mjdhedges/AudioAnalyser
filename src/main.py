@@ -349,6 +349,21 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, c
             config=config.get('envelope_analysis', {})
         )
         
+        # Create envelope visualization plots
+        logger.info("Creating envelope visualization plots...")
+        analyzer.create_pattern_envelope_plots(
+            envelope_stats,
+            octave_filter.OCTAVE_CENTER_FREQUENCIES,
+            output_dir=str(track_output_dir),
+            config=config.get('envelope_analysis', {})
+        )
+        analyzer.create_independent_envelope_plots(
+            envelope_stats,
+            octave_filter.OCTAVE_CENTER_FREQUENCIES,
+            output_dir=str(track_output_dir),
+            config=config.get('envelope_analysis', {})
+        )
+        
         # MEMORY CLEANUP: Close all matplotlib figures and free memory immediately
         import matplotlib.pyplot as plt
         import gc
