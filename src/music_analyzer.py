@@ -1550,7 +1550,8 @@ class MusicAnalyzer:
     def export_comprehensive_results(self, analysis_results: Dict, time_analysis: Dict,
                                    track_metadata: Dict, output_path: str,
                                    chunk_octave_analysis: Optional[Dict] = None,
-                                   audio_data: Optional[np.ndarray] = None) -> None:
+                                   audio_data: Optional[np.ndarray] = None,
+                                   envelope_statistics: Optional[Dict] = None) -> None:
         """Export comprehensive analysis results including all data to CSV file.
         
         Args:
@@ -1755,6 +1756,45 @@ class MusicAnalyzer:
                             stats = max_analysis["statistics"][freq_key]
                             csvfile.write(f"max_crest,{max_time},{max_crest_db},{freq},"
                                         f"{stats['max_amplitude_db']},{stats['rms_db']},{stats['crest_factor_db']}\n")
+            
+            # Add envelope statistics if available
+            if envelope_statistics is not None:
+                csvfile.write("\n[ENVELOPE_STATISTICS]\n")
+                csvfile.write("frequency_hz,analysis_type,rank,peak_value_db,peak_time_seconds,attack_time_ms,peak_hold_time_ms,decay_3db_ms,decay_6db_ms,decay_9db_ms,decay_12db_ms,decay_12db_reached\n")
+                
+                # Export worst-case envelopes
+                for freq_label, band_data in envelope_statistics.items():
+                    worst_case = band_data.get("worst_case_envelopes", [])
+                    for envelope in worst_case:
+                        decay = envelope.get("decay_times", {})
+                        csvfile.write(
+                            f"{freq_label},worst_case,{envelope['rank']},"
+                            f"{envelope['peak_value_db']},{envelope['peak_time_seconds']},"
+                            f"{envelope['attack_time_ms']},{envelope['peak_hold_time_ms']},"
+                            f"{decay.get('decay_3db_ms', '')},{decay.get('decay_6db_ms', '')},"
+                            f"{decay.get('decay_9db_ms', '')},{decay.get('decay_12db_ms', '')},"
+                            f"{decay.get('decay_12db_reached', False)}\n"
+                        )
+                
+                # Export pattern analysis summary
+                csvfile.write("\n[ENVELOPE_PATTERN_ANALYSIS]\n")
+                csvfile.write("frequency_hz,pattern_num,num_repetitions,mean_interval_seconds,std_interval_seconds,median_interval_seconds,min_interval_seconds,max_interval_seconds,pattern_regularity_score,pattern_confidence,beats_per_minute\n")
+                
+                for freq_label, band_data in envelope_statistics.items():
+                    pattern_analysis = band_data.get("pattern_analysis", {})
+                    patterns_detected = pattern_analysis.get("patterns_detected", 0)
+                    
+                    for pattern_num in range(1, patterns_detected + 1):
+                        pattern_key = f"pattern_{pattern_num}"
+                        if pattern_key in pattern_analysis:
+                            pattern = pattern_analysis[pattern_key]
+                            csvfile.write(
+                                f"{freq_label},{pattern_num},{pattern['num_repetitions']},"
+                                f"{pattern['mean_interval_seconds']},{pattern['std_interval_seconds']},"
+                                f"{pattern['median_interval_seconds']},{pattern['min_interval_seconds']},"
+                                f"{pattern['max_interval_seconds']},{pattern['pattern_regularity_score']},"
+                                f"{pattern['pattern_confidence']},{pattern['beats_per_minute']}\n"
+                            )
         
         logger.info("Comprehensive analysis results exported successfully")
 

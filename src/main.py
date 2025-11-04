@@ -380,7 +380,9 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, c
             time_analysis,
             track_metadata,
             str(track_output_dir / "analysis_results.csv"),
-            chunk_octave_analysis=chunk_octave_analysis, audio_data=audio_data
+            chunk_octave_analysis=chunk_octave_analysis,
+            audio_data=audio_data,
+            envelope_statistics=envelope_stats
         )
         
         # Memory cleanup - explicitly delete large arrays to reduce memory footprint
