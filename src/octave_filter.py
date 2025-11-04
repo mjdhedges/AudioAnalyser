@@ -74,7 +74,7 @@ class OctaveBandFilter:
     ]
 
     def __init__(self, sample_rate: int = 44100, use_linkwitz_riley: bool = False,
-                 normalize_overlap: bool = True) -> None:
+                 normalize_overlap: bool = True, use_cascade: bool = False) -> None:
         """Initialize the octave band filter.
         
         Args:
@@ -84,11 +84,19 @@ class OctaveBandFilter:
             normalize_overlap: If True, normalize band gains to eliminate ripple from overlapping bands.
                                When bands overlap, their summed response can exceed unity, causing ripple.
                                Normalization ensures bands sum to flat frequency response.
+            use_cascade: If True, use cascade complementary filter bank approach (sequential extraction).
+                        Preserves phase relationships and ensures natural summing to unity.
+                        Requires use_linkwitz_riley=True for proper operation.
         """
         self.sample_rate = sample_rate
         self.use_linkwitz_riley = use_linkwitz_riley
         self.normalize_overlap = normalize_overlap
+        self.use_cascade = use_cascade
+        if use_cascade and not use_linkwitz_riley:
+            logger.warning("Cascade mode requires Linkwitz-Riley filters. Enabling use_linkwitz_riley=True")
+            self.use_linkwitz_riley = True
         self._filter_cache = {}  # Cache for filter coefficients (b, a)
+        self._sos_cache = {}  # Cache for SOS filter coefficients
         self._crossover_frequencies = None  # Cached crossover frequencies for LR alignment
         self._normalization_factors = {}  # Cache for per-band normalization factors
 
@@ -170,8 +178,11 @@ class OctaveBandFilter:
         This method produces more numerically stable filters, especially for
         low frequencies and long signals. Recommended for production use.
         
-        When normalize_overlap is enabled, adjusts bandwidths to use geometric mean
-        crossover points, reducing ripple from overlapping bands.
+        When use_linkwitz_riley is True, designs complementary LR bandpass filters
+        with crossover-based alignment for flat summing. Otherwise uses Butterworth.
+        
+        When normalize_overlap is enabled with Butterworth, adjusts bandwidths to use 
+        geometric mean crossover points, reducing ripple from overlapping bands.
         
         Args:
             center_freq: Center frequency of the octave band
@@ -180,7 +191,11 @@ class OctaveBandFilter:
         Returns:
             SOS (second-order sections) filter coefficients (Nx6 array)
         """
-        # Calculate filter frequencies
+        if self.use_linkwitz_riley:
+            # Use complementary Linkwitz-Riley design with crossover alignment
+            return self._design_lr_complementary_bandpass_sos(center_freq, order)
+        
+        # Calculate filter frequencies for Butterworth design
         if self.normalize_overlap and center_freq in self.OCTAVE_CENTER_FREQUENCIES:
             # Use geometric mean crossover points for better summing
             sorted_freqs = sorted([f for f in self.OCTAVE_CENTER_FREQUENCIES if f > 0])
@@ -243,6 +258,140 @@ class OctaveBandFilter:
         
         return sos
 
+    def _calculate_complementary_crossovers(self, center_freq: float) -> Tuple[float, float]:
+        """Calculate complementary crossover frequencies for adjacent bands.
+        
+        For complementary filter design, crossover frequencies are calculated as
+        geometric mean of adjacent center frequencies. At these crossovers, 
+        adjacent filters should each contribute -6 dB (magnitude 0.5), summing to 0 dB.
+        
+        Args:
+            center_freq: Center frequency of current band
+            
+        Returns:
+            Tuple of (lower_crossover_freq, higher_crossover_freq) in Hz
+        """
+        sorted_freqs = sorted([f for f in self.OCTAVE_CENTER_FREQUENCIES if f > 0])
+        
+        if center_freq not in sorted_freqs:
+            # Fallback to ISO standard if not in standard frequencies
+            lower_crossover = center_freq / np.sqrt(2)
+            higher_crossover = center_freq * np.sqrt(2)
+        else:
+            idx = sorted_freqs.index(center_freq)
+            
+            # Lower crossover: geometric mean with previous band
+            if idx > 0:
+                lower_crossover = np.sqrt(sorted_freqs[idx - 1] * center_freq)
+            else:
+                # First band: use ISO standard lower bound
+                lower_crossover = center_freq / np.sqrt(2)
+            
+            # Higher crossover: geometric mean with next band
+            if idx < len(sorted_freqs) - 1:
+                higher_crossover = np.sqrt(center_freq * sorted_freqs[idx + 1])
+            else:
+                # Last band: use ISO standard upper bound
+                higher_crossover = center_freq * np.sqrt(2)
+        
+        # Ensure frequencies are within valid range
+        nyquist = self.sample_rate / 2
+        lower_crossover = max(lower_crossover, 1.0)
+        higher_crossover = min(higher_crossover, nyquist * 0.99)
+        
+        return lower_crossover, higher_crossover
+    
+    def _design_lr_complementary_bandpass_sos(self, center_freq: float, order: int = 1) -> np.ndarray:
+        """Design complementary bandpass filter with -6 dB alignment at crossovers.
+        
+        The key insight: For complementary summing, we need each filter to be at -6 dB
+        (magnitude 0.5) at crossover frequencies, so they sum to 1.0 (0 dB).
+        
+        Butterworth filters are -3 dB at their cutoff frequencies. To get -6 dB at
+        the crossover, we need to adjust the filter bandwidths so the -6 dB points
+        align with the crossover frequencies.
+        
+        For a 4th order Butterworth bandpass:
+        - -3 dB points are at the specified cutoff frequencies
+        - -6 dB points are further from center (bandwidth is wider)
+        - We calculate what cutoff frequencies give us -6 dB at the crossovers
+        
+        Args:
+            center_freq: Center frequency of the octave band
+            order: Filter order (1 for octave, 3 for third-octave) - not used for LR
+            
+        Returns:
+            SOS (second-order sections) filter coefficients (Nx6 array)
+        """
+        # Calculate complementary crossover frequencies (where we want -6 dB)
+        lower_crossover, higher_crossover = self._calculate_complementary_crossovers(center_freq)
+        
+        nyquist = self.sample_rate / 2
+        
+        # For 4th order Butterworth, the relationship between -3 dB and -6 dB points
+        # is approximately: f_6db = f_3db * (1 ± 0.189) for bandpass
+        # More precisely, we need to solve: |H(f)| = 0.5 at crossover frequency
+        # This requires iterative adjustment or analytical solution
+        
+        # Simplified approach: adjust cutoff frequencies to achieve -6 dB at crossovers
+        # For Butterworth filters, we can approximate by widening/narrowing bandwidth
+        
+        # Test frequencies to find -6 dB points
+        test_freqs_low = np.logspace(np.log10(lower_crossover * 0.5), np.log10(lower_crossover * 1.5), 200)
+        test_freqs_high = np.logspace(np.log10(higher_crossover * 0.5), np.log10(higher_crossover * 1.5), 200)
+        
+        # Find filter cutoffs that give -6 dB at crossover frequencies
+        # Start with crossover frequencies as initial guess
+        lower_cutoff = lower_crossover
+        higher_cutoff = higher_crossover
+        
+        # Iteratively adjust to get -6 dB at crossovers
+        for iteration in range(5):  # Limit iterations
+            lower_norm = max(lower_cutoff / nyquist, 1e-6)
+            higher_norm = min(higher_cutoff / nyquist, 0.99)
+            
+            sos_test = signal.butter(4, [lower_norm, higher_norm], btype='band', output='sos')
+            
+            # Check magnitude at crossover frequencies
+            w_low, h_low = signal.sosfreqz(sos_test, worN=[lower_crossover], fs=self.sample_rate)
+            w_high, h_high = signal.sosfreqz(sos_test, worN=[higher_crossover], fs=self.sample_rate)
+            
+            mag_low_db = 20 * np.log10(np.abs(h_low[0]) + 1e-10)
+            mag_high_db = 20 * np.log10(np.abs(h_high[0]) + 1e-10)
+            
+            target_db = -6.0
+            error_low = mag_low_db - target_db
+            error_high = mag_high_db - target_db
+            
+            # If close enough, break
+            if abs(error_low) < 0.1 and abs(error_high) < 0.1:
+                break
+            
+            # Adjust cutoffs: if magnitude too high, widen bandwidth; if too low, narrow
+            # For low crossover: if mag > -6 dB, increase lower cutoff (narrow low side)
+            # For high crossover: if mag > -6 dB, decrease higher cutoff (narrow high side)
+            if error_low > 0:  # Magnitude too high (closer to 0 dB)
+                lower_cutoff *= 1.05  # Move cutoff further from center
+            else:
+                lower_cutoff *= 0.95  # Move cutoff closer to center
+            
+            if error_high > 0:  # Magnitude too high
+                higher_cutoff *= 0.95  # Move cutoff closer to center
+            else:
+                higher_cutoff *= 1.05  # Move cutoff further from center
+            
+            # Ensure cutoffs are reasonable
+            lower_cutoff = max(lower_cutoff, 1.0)
+            higher_cutoff = min(higher_cutoff, nyquist * 0.99)
+        
+        # Final design with adjusted cutoffs
+        lower_norm = max(lower_cutoff / nyquist, 1e-6)
+        higher_norm = min(higher_cutoff / nyquist, 0.99)
+        
+        sos_band = signal.butter(4, [lower_norm, higher_norm], btype='band', output='sos')
+        
+        return sos_band
+    
     def _calculate_lr_crossover_bandwidth(self, center_freq: float, 
                                          all_center_freqs: List[float]) -> Tuple[float, float]:
         """Calculate adjusted bandwidth for Linkwitz-Riley filters with -6dB crossover alignment.
@@ -366,6 +515,175 @@ class OctaveBandFilter:
         a_cascade = np.convolve(a1, a2)
         
         return b_cascade, a_cascade
+    
+    def _design_lr_highpass_sos(self, crossover_freq: float, order: int = 4) -> np.ndarray:
+        """Design Linkwitz-Riley high-pass filter in SOS format.
+        
+        LR filters are created by cascading Butterworth filters:
+        - 4th order LR = two 2nd order Butterworth filters cascaded
+        - At crossover frequency, LR HP is -6 dB (magnitude 0.5)
+        
+        Args:
+            crossover_freq: Crossover frequency in Hz
+            order: Filter order (must be even, typically 4)
+            
+        Returns:
+            SOS (second-order sections) filter coefficients (Nx6 array)
+        """
+        if order % 2 != 0:
+            raise ValueError("Linkwitz-Riley filter order must be even")
+        
+        nyquist = self.sample_rate / 2
+        crossover_norm = max(crossover_freq / nyquist, 1e-6)
+        crossover_norm = min(crossover_norm, 0.99)
+        
+        # Design 2nd order Butterworth HP
+        half_order = order // 2
+        sos_hp_bw = signal.butter(half_order, crossover_norm, btype='high', output='sos')
+        
+        # Cascade two 2nd order sections to get LR4
+        b_hp_bw, a_hp_bw = signal.sos2tf(sos_hp_bw)
+        b_hp_lr, a_hp_lr = self._cascade_filters(b_hp_bw, a_hp_bw, b_hp_bw, a_hp_bw)
+        
+        # Convert back to SOS format for stability
+        sos_hp_lr = signal.tf2sos(b_hp_lr, a_hp_lr)
+        
+        return sos_hp_lr
+    
+    def _design_lr_lowpass_sos(self, crossover_freq: float, order: int = 4) -> np.ndarray:
+        """Design Linkwitz-Riley low-pass filter in SOS format.
+        
+        LR filters are created by cascading Butterworth filters:
+        - 4th order LR = two 2nd order Butterworth filters cascaded
+        - At crossover frequency, LR LP is -6 dB (magnitude 0.5)
+        
+        Args:
+            crossover_freq: Crossover frequency in Hz
+            order: Filter order (must be even, typically 4)
+            
+        Returns:
+            SOS (second-order sections) filter coefficients (Nx6 array)
+        """
+        if order % 2 != 0:
+            raise ValueError("Linkwitz-Riley filter order must be even")
+        
+        nyquist = self.sample_rate / 2
+        crossover_norm = max(crossover_freq / nyquist, 1e-6)
+        crossover_norm = min(crossover_norm, 0.99)
+        
+        # Design 2nd order Butterworth LP
+        half_order = order // 2
+        sos_lp_bw = signal.butter(half_order, crossover_norm, btype='low', output='sos')
+        
+        # Cascade two 2nd order sections to get LR4
+        b_lp_bw, a_lp_bw = signal.sos2tf(sos_lp_bw)
+        b_lp_lr, a_lp_lr = self._cascade_filters(b_lp_bw, a_lp_bw, b_lp_bw, a_lp_bw)
+        
+        # Convert back to SOS format for stability
+        sos_lp_lr = signal.tf2sos(b_lp_lr, a_lp_lr)
+        
+        return sos_lp_lr
+    
+    def create_octave_bank_cascade(self, audio_data: np.ndarray,
+                                   center_frequencies: List[float] = None) -> np.ndarray:
+        """Create octave bank using cascade complementary filter approach.
+        
+        Bands are extracted from the FULL signal using complementary bandpass filters
+        designed to partition the spectrum into non-overlapping bands. All bands use
+        the same signal path (full signal), preserving phase relationships and ensuring
+        linear phase (via filtfilt) for crest factor preservation.
+        
+        Each band is extracted as: LP(lower_crossover) - LP(upper_crossover)
+        This creates non-overlapping partitions that naturally sum closer to unity.
+        
+        This approach avoids error accumulation from sequential filtering while
+        maintaining phase coherence through the use of filtfilt (zero-phase).
+        
+        Args:
+            audio_data: Input audio signal
+            center_frequencies: List of center frequencies (default: standard octaves)
+            
+        Returns:
+            Octave bank array with original signal in first column, then extracted bands
+        """
+        if center_frequencies is None:
+            center_frequencies = self.OCTAVE_CENTER_FREQUENCIES
+        
+        logger.info("Creating octave bank using cascade complementary filter approach...")
+        
+        sorted_freqs = sorted([f for f in center_frequencies if f > 0])
+        filtered_signals = [audio_data]  # First column: full spectrum
+        
+        # Extract each band from the FULL signal to avoid error accumulation
+        # All bands use the same signal path, preserving phase coherence
+        for i in range(len(sorted_freqs)):
+            fc = sorted_freqs[i]
+            
+            if fc >= self.sample_rate / 2:
+                # Skip frequencies above Nyquist
+                filtered_signals.append(np.zeros_like(audio_data))
+                continue
+            
+            # Calculate crossover frequencies for this band
+            if i > 0:
+                lower_crossover = np.sqrt(sorted_freqs[i - 1] * fc)
+            else:
+                # First band: use ISO standard lower bound
+                lower_crossover = fc / np.sqrt(2)
+            
+            if i < len(sorted_freqs) - 1:
+                upper_crossover = np.sqrt(fc * sorted_freqs[i + 1])
+            else:
+                # Last band: everything above lower crossover
+                cache_key_lp = f"lr_lp_{lower_crossover:.2f}"
+                if cache_key_lp not in self._sos_cache:
+                    sos_lp = self._design_lr_lowpass_sos(lower_crossover, order=4)
+                    self._sos_cache[cache_key_lp] = sos_lp
+                else:
+                    sos_lp = self._sos_cache[cache_key_lp]
+                
+                # Extract final band: signal above lower crossover from FULL signal
+                # This is the complement of LP(lower_crossover)
+                low_pass_signal = signal.sosfiltfilt(sos_lp, audio_data)
+                extracted_band = audio_data - low_pass_signal
+                filtered_signals.append(extracted_band)
+                logger.debug(f"Extracted final band {fc:.2f} Hz (f > {lower_crossover:.2f} Hz)")
+                break
+            
+            # Extract band as frequency range between lower and upper crossover
+            # Applied to FULL signal to preserve phase coherence and avoid error accumulation
+            # Band = LP(lower) - LP(upper) from full signal
+            
+            # Design LP filters at both crossovers
+            cache_key_lp_low = f"lr_lp_{lower_crossover:.2f}"
+            cache_key_lp_high = f"lr_lp_{upper_crossover:.2f}"
+            
+            if cache_key_lp_low not in self._sos_cache:
+                sos_lp_low = self._design_lr_lowpass_sos(lower_crossover, order=4)
+                self._sos_cache[cache_key_lp_low] = sos_lp_low
+            else:
+                sos_lp_low = self._sos_cache[cache_key_lp_low]
+            
+            if cache_key_lp_high not in self._sos_cache:
+                sos_lp_high = self._design_lr_lowpass_sos(upper_crossover, order=4)
+                self._sos_cache[cache_key_lp_high] = sos_lp_high
+            else:
+                sos_lp_high = self._sos_cache[cache_key_lp_high]
+            
+            # Extract band from FULL signal: frequency range between crossovers
+            # This creates a non-overlapping partition without error accumulation
+            band_low = signal.sosfiltfilt(sos_lp_low, audio_data)
+            band_high = signal.sosfiltfilt(sos_lp_high, audio_data)
+            extracted_band = band_low - band_high
+            filtered_signals.append(extracted_band)
+            
+            logger.debug(f"Extracted band {fc:.2f} Hz (range: {lower_crossover:.2f}-{upper_crossover:.2f} Hz)")
+        
+        # Stack all signals into octave bank array
+        octave_bank = np.column_stack(filtered_signals)
+        
+        logger.info(f"Created octave bank with {octave_bank.shape[1]} bands using cascade method")
+        return octave_bank
 
     def apply_octave_filter(self, audio_data: np.ndarray, center_freq: float, 
                            order: int = 1) -> np.ndarray:
@@ -454,6 +772,9 @@ class OctaveBandFilter:
                           center_frequencies: List[float] = None) -> np.ndarray:
         """Create octave bank with filtered signals.
         
+        Uses cascade complementary filter approach if use_cascade=True,
+        otherwise uses parallel filtering approach.
+        
         Args:
             audio_data: Input audio signal
             center_frequencies: List of center frequencies (default: standard octaves)
@@ -461,6 +782,9 @@ class OctaveBandFilter:
         Returns:
             Octave bank array with original signal in first column
         """
+        if self.use_cascade:
+            return self.create_octave_bank_cascade(audio_data, center_frequencies)
+        
         if center_frequencies is None:
             center_frequencies = self.OCTAVE_CENTER_FREQUENCIES
 

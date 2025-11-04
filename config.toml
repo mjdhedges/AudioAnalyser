@@ -46,7 +46,32 @@ output_dir = "analysis"
 # Full Spectrum (0 Hz) is automatically included for comparison
 octave_center_frequencies = [16.0, 31.25, 62.5, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0]
 
-# Butterworth filter order for octave band filtering
+# Filter type for octave band filtering
+# true = Use Linkwitz-Riley filters (recommended for cascade complementary approach)
+# false = Use Butterworth filters (legacy, parallel processing only)
+# Linkwitz-Riley filters are designed for complementary summing and better phase coherence
+use_linkwitz_riley = true
+
+# Cascade complementary filter bank approach
+# true = Use cascade complementary approach (recommended for crest factor preservation)
+#        - Non-overlapping bands
+#        - Linear phase (zero-phase via filtfilt)
+#        - Better phase coherence
+#        - Sequential processing (cannot be parallelized)
+# false = Use parallel filter bank approach
+#         - Overlapping bands (ISO standard)
+#         - Can be parallelized for speed
+#         - May have phase interference issues
+use_cascade_complementary = true
+
+# Normalize overlapping bands to eliminate ripple
+# Only applies when use_cascade_complementary = false (parallel approach)
+# true = Apply frequency-dependent normalization to reduce ripple
+# false = Use ISO standard bandwidths without normalization
+# Not needed with cascade complementary approach (bands don't overlap)
+normalize_overlap = false
+
+# Butterworth filter order for octave band filtering (legacy, when use_linkwitz_riley = false)
 # Higher order = steeper rolloff, better isolation between bands
 # 4th order provides -24 dB/octave rolloff (adequate precision at all frequencies)
 # Options: 2, 4, 6, 8 (higher = more CPU intensive)

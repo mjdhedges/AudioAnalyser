@@ -215,7 +215,22 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, c
         
         # Initialize components
         audio_processor = AudioProcessor(sample_rate=sample_rate)
-        octave_filter = OctaveBandFilter(sample_rate=sample_rate)
+        
+        # Use cascade complementary Linkwitz-Riley filters for optimal crest factor preservation
+        # This approach ensures non-overlapping bands, linear phase, and better phase coherence
+        use_linkwitz_riley = config.get('analysis.use_linkwitz_riley', True)
+        use_cascade = config.get('analysis.use_cascade_complementary', True)
+        normalize_overlap = config.get('analysis.normalize_overlap', False)
+        
+        octave_filter = OctaveBandFilter(
+            sample_rate=sample_rate,
+            use_linkwitz_riley=use_linkwitz_riley,
+            use_cascade=use_cascade,
+            normalize_overlap=normalize_overlap
+        )
+        
+        if use_cascade:
+            logger.info("Using cascade complementary filter approach for optimal crest factor preservation")
         
         # Load and preprocess audio (now uses float32 by default for 50% memory savings)
         logger.info("Loading audio file...")
@@ -245,11 +260,16 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, c
                    f"RMS={audio_info['rms']:.4f}, Max={audio_info['max_amplitude']:.4f}")
         
         # Try to load cached octave bank or create new one
+        # Note: Cache is invalidated when filter settings change (use_cascade, use_linkwitz_riley)
+        # This ensures cached banks match current filter configuration
         enable_cache = use_cache and config.get('performance.enable_octave_cache', True)
         cache_dir = Path(config.get('performance.cache_dir', 'cache/octave_banks'))
         
         if enable_cache:
-            cache_file = get_cache_path(track_path, cache_dir)
+            # Include filter settings in cache key to invalidate when settings change
+            filter_config_hash = f"lr_{use_linkwitz_riley}_cascade_{use_cascade}_norm_{normalize_overlap}"
+            cache_file_base = get_cache_path(track_path, cache_dir)
+            cache_file = cache_file_base.parent / f"{cache_file_base.stem}_{filter_config_hash}{cache_file_base.suffix}"
             
             # Check if cache exists and is valid
             if cache_file.exists():
@@ -266,6 +286,7 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, c
                     logger.info("Cache expired (source file modified), creating new octave bank")
                     octave_bank = None
             else:
+                logger.debug(f"Cache not found for filter config {filter_config_hash}, creating new octave bank")
                 octave_bank = None
         else:
             octave_bank = None
@@ -275,17 +296,22 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, c
             import multiprocessing
             parallel_enabled = config.get('performance.enable_parallel_processing', False)
             
-            if parallel_enabled:
+            # Note: Cascade complementary approach is sequential by design and cannot be parallelized
+            # Parallel processing only applies to parallel filter bank approach
+            if parallel_enabled and not use_cascade:
                 logger.info("Creating octave bank with parallel processing...")
                 num_workers = config.get('performance.max_workers', None)
                 octave_bank = octave_filter.create_octave_bank_parallel(audio_data, num_workers=num_workers)
             else:
+                if parallel_enabled and use_cascade:
+                    logger.info("Parallel processing disabled for cascade complementary approach (sequential by design)")
                 logger.info("Creating octave bank...")
                 octave_bank = octave_filter.create_octave_bank(audio_data)
             
-            # Save to cache
+            # Save to cache (cache_file already includes filter config hash)
             if enable_cache:
                 try:
+                    cache_file.parent.mkdir(parents=True, exist_ok=True)
                     np.save(cache_file, octave_bank)
                     logger.info(f"Cached octave bank to: {cache_file.name}")
                 except Exception as e:

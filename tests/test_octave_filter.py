@@ -18,7 +18,7 @@ class TestOctaveBandFilter:
     def test_init(self):
         """Test OctaveBandFilter initialization."""
         assert self.filter.sample_rate == 44100
-        assert len(self.filter.OCTAVE_CENTER_FREQUENCIES) == 10
+        assert len(self.filter.OCTAVE_CENTER_FREQUENCIES) == 11  # Includes 16Hz band
 
     def test_design_octave_filter(self):
         """Test octave filter design."""
@@ -63,7 +63,7 @@ class TestOctaveBandFilter:
         
         # Check dimensions
         assert octave_bank.shape[0] == len(test_signal)
-        assert octave_bank.shape[1] == 11  # Original + 10 octave bands
+        assert octave_bank.shape[1] == 12  # Original + 11 octave bands (includes 16Hz)
         
         # Check that first column is original signal
         np.testing.assert_array_equal(octave_bank[:, 0], test_signal)

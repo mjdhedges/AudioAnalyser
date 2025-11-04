@@ -53,6 +53,9 @@ class Config:
                 "tracks_dir": "Tracks",
                 "output_dir": "analysis",
                 "octave_center_frequencies": [16.0, 31.25, 62.5, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0],
+                "use_linkwitz_riley": True,
+                "use_cascade_complementary": True,
+                "normalize_overlap": False,
                 "filter_order": 4,
                 "low_frequency_filter_order": 2,
                 "low_frequency_threshold": 0.01
