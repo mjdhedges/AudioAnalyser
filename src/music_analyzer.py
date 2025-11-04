@@ -1166,10 +1166,18 @@ class MusicAnalyzer:
             p2_norm = f2(x_common)
         
         # Calculate correlation
+        # Check for constant patterns (zero variance) which cause division by zero
+        if np.std(p1_norm) == 0 or np.std(p2_norm) == 0:
+            # If both patterns are constant and identical, return 1.0
+            if np.allclose(p1_norm, p2_norm):
+                return 1.0
+            # Otherwise, cannot compute correlation
+            return 0.0
+        
         correlation = np.corrcoef(p1_norm, p2_norm)[0, 1]
         
-        # Handle NaN (shouldn't happen, but safety check)
-        if np.isnan(correlation):
+        # Handle NaN/Inf (shouldn't happen, but safety check)
+        if np.isnan(correlation) or np.isinf(correlation):
             return 0.0
         
         return float(correlation)
@@ -1386,6 +1394,8 @@ class MusicAnalyzer:
             )
             
             # Convert to dBFS
+            # Ensure envelope values are positive (handle any numerical issues)
+            rms_envelope_linear = np.maximum(rms_envelope_linear, 1e-10)
             rms_envelope_db = 20 * np.log10(
                 rms_envelope_linear * self.original_peak + 1e-10
             )
