@@ -17,6 +17,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from scipy import signal as sp_signal
 
 logger = logging.getLogger(__name__)
 
@@ -842,6 +843,45 @@ class MusicAnalyzer:
             logger.info(f"Octave band crest factor time plot saved to: {output_path}")
         
         plt.close(fig)
+
+    def _calculate_rms_envelope(self, signal: np.ndarray, 
+                                window_ms: float) -> np.ndarray:
+        """Calculate RMS envelope using efficient FFT convolution.
+        
+        This method uses scipy's fftconvolve for optimal performance with large
+        windows. The RMS envelope can be reused for both plotting and statistics.
+        
+        Args:
+            signal: Audio signal array (normalized)
+            window_ms: Window size in milliseconds for RMS calculation
+            
+        Returns:
+            RMS envelope array in linear scale (same length as input)
+        """
+        window_samples = int(window_ms * self.sample_rate / 1000)
+        
+        if window_samples < 1:
+            window_samples = 1
+        
+        if window_samples >= len(signal):
+            # Window larger than signal - return single RMS value
+            rms_val = np.sqrt(np.mean(signal**2))
+            return np.full_like(signal, rms_val)
+        
+        # Create rectangular window
+        window = np.ones(window_samples, dtype=signal.dtype) / window_samples
+        
+        # Calculate RMS envelope using FFT convolution (faster for large windows)
+        signal_squared = signal ** 2
+        rms_squared = sp_signal.fftconvolve(signal_squared, window, mode='same')
+        
+        # Ensure non-negative (handle numerical precision issues)
+        rms_squared = np.maximum(rms_squared, 0.0)
+        
+        # Calculate RMS
+        rms_envelope = np.sqrt(rms_squared)
+        
+        return rms_envelope
 
     def export_analysis_results(self, analysis_results: Dict, 
                               output_path: str) -> None:
