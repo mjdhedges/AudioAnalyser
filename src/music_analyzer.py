@@ -1236,27 +1236,48 @@ class MusicAnalyzer:
             normalized_patterns.append(normalized)
         
         # Find pattern groups using correlation
+        # Optimize: Limit comparisons for performance with large patterns
+        # For very large patterns, sample down for comparison or limit number of peaks
+        max_peaks_for_pattern_matching = 500  # Limit peaks analyzed to prevent O(n²) explosion
+        
+        if len(normalized_patterns) > max_peaks_for_pattern_matching:
+            # For bands with many peaks, sample the top peaks by value
+            peak_values_sorted_indices = np.argsort(peak_values_db)[::-1]
+            selected_indices = set(peak_values_sorted_indices[:max_peaks_for_pattern_matching])
+            normalized_patterns_filtered = [(i, p) for i, p in enumerate(normalized_patterns) 
+                                          if i in selected_indices]
+            patterns_to_compare = [p for _, p in normalized_patterns_filtered]
+            indices_mapping = {new_idx: orig_idx for new_idx, (orig_idx, _) 
+                              in enumerate(normalized_patterns_filtered)}
+        else:
+            patterns_to_compare = normalized_patterns
+            indices_mapping = {i: i for i in range(len(normalized_patterns))}
+        
         pattern_groups = []
         used_indices = set()
         
-        for i, pattern in enumerate(normalized_patterns):
-            if i in used_indices:
+        # Use optimized comparison method for better performance
+        for i, pattern in enumerate(patterns_to_compare):
+            orig_i = indices_mapping[i]
+            if orig_i in used_indices:
                 continue
             
             # Find similar patterns
-            group = [i]
-            for j in range(i + 1, len(normalized_patterns)):
-                if j in used_indices:
+            group = [orig_i]
+            for j in range(i + 1, len(patterns_to_compare)):
+                orig_j = indices_mapping[j]
+                if orig_j in used_indices:
                     continue
                 
-                correlation = np.corrcoef(pattern, normalized_patterns[j])[0, 1]
-                if not np.isnan(correlation) and correlation >= similarity_threshold:
-                    group.append(j)
-                    used_indices.add(j)
+                # Use optimized comparison method
+                correlation = self._compare_envelope_shapes(pattern, patterns_to_compare[j])
+                if correlation >= similarity_threshold:
+                    group.append(orig_j)
+                    used_indices.add(orig_j)
             
             if len(group) >= min_repetitions:
                 pattern_groups.append(group)
-                used_indices.add(i)
+                used_indices.add(orig_i)
         
         if len(pattern_groups) == 0:
             return {"patterns_detected": 0}
@@ -1424,6 +1445,11 @@ class MusicAnalyzer:
                     num_wavelengths = 20  # Match plotting window
                     period = 1.0 / freq
                     pattern_window_ms = (num_wavelengths * period) * 1000.0
+                    
+                    # Limit maximum window size to prevent performance issues
+                    # For very low frequencies, cap at reasonable limit (500ms)
+                    max_pattern_window_ms = 500.0
+                    pattern_window_ms = min(pattern_window_ms, max_pattern_window_ms)
                 else:
                     # Full Spectrum fallback
                     pattern_window_ms = fallback_window_ms * 2
