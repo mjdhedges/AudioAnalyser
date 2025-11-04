@@ -1438,18 +1438,24 @@ class MusicAnalyzer:
             
             # Pattern analysis (if enabled) - run FIRST to identify pattern peaks
             pattern_peak_indices = set()
+            window_was_capped = False  # Track if window was capped for plotting
+            
             if pattern_max_patterns > 0 and len(peak_indices) >= pattern_min_reps:
                 # Calculate pattern extraction window based on center frequency
+                # Get num_wavelengths from config (should match plotting)
+                num_wavelengths = config.get('envelope_plots_num_wavelengths', 50)
+                
                 if freq > 0:
                     # Use frequency-relative window (in wavelengths)
-                    num_wavelengths = 20  # Match plotting window
                     period = 1.0 / freq
                     pattern_window_ms = (num_wavelengths * period) * 1000.0
                     
                     # Limit maximum window size to prevent performance issues
                     # For very low frequencies, cap at reasonable limit (500ms)
                     max_pattern_window_ms = 500.0
-                    pattern_window_ms = min(pattern_window_ms, max_pattern_window_ms)
+                    if pattern_window_ms > max_pattern_window_ms:
+                        window_was_capped = True
+                        pattern_window_ms = max_pattern_window_ms
                 else:
                     # Full Spectrum fallback
                     pattern_window_ms = fallback_window_ms * 2
@@ -1496,6 +1502,7 @@ class MusicAnalyzer:
             # Store RMS envelope for visualization (needed for plotting)
             band_results["rms_envelope_db"] = rms_envelope_db
             band_results["rms_envelope_time"] = np.arange(len(rms_envelope_db)) / self.sample_rate
+            band_results["window_was_capped"] = window_was_capped  # Store cap status for plotting
             
             results[freq_label] = band_results
             
@@ -1525,7 +1532,7 @@ class MusicAnalyzer:
         
         # Pattern plots show configurable number of envelopes
         num_envelopes = config.get('envelope_plots_num_pattern_envelopes', 10)
-        num_wavelengths = config.get('envelope_plots_num_wavelengths', 20)
+        num_wavelengths = config.get('envelope_plots_num_wavelengths', 50)
         fallback_window_ms = config.get('envelope_plots_window_ms', 200.0)
         ylim_min = config.get('envelope_plots_ylim_min', -30)
         ylim_max = config.get('envelope_plots_ylim_max', 0)
@@ -1553,10 +1560,16 @@ class MusicAnalyzer:
             
             # Calculate window size based on center frequency (in wavelengths)
             # For Full Spectrum (freq = 0), use fallback absolute window
+            window_was_capped = band_data.get("window_was_capped", False)
             if freq > 0:
                 # Window in seconds = num_wavelengths / frequency
                 window_seconds = num_wavelengths / freq
                 window_ms = window_seconds * 1000.0
+                
+                # Check if this frequency would exceed pattern analysis cap
+                max_pattern_window_ms = 500.0
+                if window_ms > max_pattern_window_ms:
+                    window_was_capped = True
             else:
                 window_ms = fallback_window_ms
             
@@ -1645,7 +1658,15 @@ class MusicAnalyzer:
             
             ax.set_xlabel('Time (ms relative to peak)')
             ax.set_ylabel('RMS Level (dBFS)')
-            ax.set_title(f'Top {len(top_envelopes)} Pattern Envelopes - {freq_label}')
+            
+            # Check if window was capped and add note to title
+            window_was_capped = band_data.get("window_was_capped", False)
+            title = f'Top {len(top_envelopes)} Pattern Envelopes - {freq_label}'
+            if window_was_capped and freq > 0:
+                expected_window_ms = (num_wavelengths / freq) * 1000.0
+                title += f'\n(Window capped at 500ms, {num_wavelengths}λ would be {expected_window_ms:.0f}ms)'
+            
+            ax.set_title(title)
             ax.grid(True, alpha=0.3)
             ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
             ax.set_ylim([ylim_min, ylim_max])
@@ -1680,7 +1701,7 @@ class MusicAnalyzer:
         
         # Independent plots show configurable number of worst envelopes
         num_envelopes = config.get('envelope_plots_num_independent_envelopes', 3)
-        num_wavelengths = config.get('envelope_plots_num_wavelengths', 20)
+        num_wavelengths = config.get('envelope_plots_num_wavelengths', 50)
         fallback_window_ms = config.get('envelope_plots_window_ms', 200.0)
         ylim_min = config.get('envelope_plots_ylim_min', -30)
         ylim_max = config.get('envelope_plots_ylim_max', 0)
@@ -1770,7 +1791,14 @@ class MusicAnalyzer:
             
             ax.set_xlabel('Time (ms relative to peak)')
             ax.set_ylabel('RMS Level (dBFS)')
-            ax.set_title(f'Top {len(top_envelopes)} Independent Envelopes - {freq_label}')
+            
+            # Check if window was capped and add note to title
+            title = f'Top {len(top_envelopes)} Independent Envelopes - {freq_label}'
+            if window_was_capped and freq > 0:
+                expected_window_ms = (num_wavelengths / freq) * 1000.0
+                title += f'\n(Window capped at 500ms, {num_wavelengths}λ would be {expected_window_ms:.0f}ms)'
+            
+            ax.set_title(title)
             ax.grid(True, alpha=0.3)
             ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
             ax.set_ylim([ylim_min, ylim_max])

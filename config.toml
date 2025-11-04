@@ -185,7 +185,8 @@ envelope_plots_num_independent_envelopes = 3
 # Lower frequencies get longer windows, higher frequencies get shorter windows
 # This ensures consistent number of cycles shown across all bands
 # For Full Spectrum (0 Hz), falls back to absolute window_ms
-envelope_plots_num_wavelengths = 20
+# Note: Very low frequencies may be capped at max_pattern_window_ms (500ms) for performance
+envelope_plots_num_wavelengths = 50
 
 # Fallback absolute time window for Full Spectrum band (milliseconds)
 # Used when center frequency is 0 Hz (Full Spectrum)
