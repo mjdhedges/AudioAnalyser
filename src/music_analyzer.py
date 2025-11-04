@@ -1225,18 +1225,18 @@ class MusicAnalyzer:
         
         result = {"patterns_detected": len(pattern_groups)}
         
-            # Analyze each pattern group
-            for pattern_num, group in enumerate(pattern_groups, 1):
-                group_peak_indices = [valid_peak_indices[i] for i in group]
-                group_peak_times = [idx / self.sample_rate for idx in group_peak_indices]
-                
-                # Sort by time for consistent ordering
-                sorted_pairs = sorted(zip(group_peak_times, group_peak_indices))
-                group_peak_times = [t for t, _ in sorted_pairs]
-                group_peak_indices = [idx for _, idx in sorted_pairs]
+        # Analyze each pattern group
+        for pattern_num, group in enumerate(pattern_groups, 1):
+            group_peak_indices = [valid_peak_indices[i] for i in group]
+            group_peak_times = [idx / self.sample_rate for idx in group_peak_indices]
+            
+            # Sort by time for consistent ordering
+            sorted_pairs = sorted(zip(group_peak_times, group_peak_indices))
+            group_peak_times = [t for t, _ in sorted_pairs]
+            group_peak_indices = [idx for _, idx in sorted_pairs]
             
             # Calculate inter-peak intervals
-            intervals = np.diff(sorted(group_peak_times))
+            intervals = np.diff(group_peak_times)
             
             if len(intervals) == 0:
                 continue
@@ -1272,7 +1272,7 @@ class MusicAnalyzer:
                 "pattern_regularity_score": pattern_regularity_score,
                 "pattern_confidence": confidence,
                 "beats_per_minute": beats_per_minute,
-                "peak_times_seconds": sorted(group_peak_times),
+                "peak_times_seconds": group_peak_times,
                 "peak_indices": group_peak_indices  # Store peak indices for filtering
             }
         
