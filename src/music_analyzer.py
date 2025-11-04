@@ -1467,6 +1467,10 @@ class MusicAnalyzer:
                 
                 # Extract envelope around each peak in this pattern
                 for peak_idx, peak_time in zip(peak_indices, peak_times):
+                    # Ensure peak_idx is within bounds
+                    if peak_idx < 0 or peak_idx >= len(rms_envelope_db):
+                        continue
+                    
                     start_idx = max(0, peak_idx - half_window)
                     end_idx = min(len(rms_envelope_db), peak_idx + half_window)
                     
@@ -1478,6 +1482,9 @@ class MusicAnalyzer:
                     
                     # Convert time to relative (ms from peak)
                     peak_time_idx = peak_idx - start_idx
+                    if peak_time_idx < 0 or peak_time_idx >= len(time_window):
+                        continue
+                    
                     time_relative_ms = (time_window - time_window[peak_time_idx]) * 1000.0
                     
                     peak_value_db = rms_envelope_db[peak_idx]
@@ -1487,7 +1494,8 @@ class MusicAnalyzer:
                         "time_ms": time_relative_ms,
                         "peak_value_db": peak_value_db,
                         "peak_time_seconds": peak_time,
-                        "pattern_num": pattern_num
+                        "pattern_num": pattern_num,
+                        "peak_idx": peak_idx
                     })
             
             if len(pattern_envelopes) == 0:
