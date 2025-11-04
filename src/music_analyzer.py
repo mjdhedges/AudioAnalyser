@@ -844,44 +844,77 @@ class MusicAnalyzer:
         
         plt.close(fig)
 
-    def _calculate_rms_envelope(self, signal: np.ndarray, 
-                                window_ms: float) -> np.ndarray:
-        """Calculate RMS envelope using efficient FFT convolution.
+    def _calculate_rms_envelope(self, signal: np.ndarray,
+                                center_freq: float = 0.0,
+                                method: str = 'rectification_lpf',
+                                lpf_multiplier: float = 4.0,
+                                fallback_window_ms: float = 10.0) -> np.ndarray:
+        """Calculate envelope using rectification + low-pass filter method.
         
-        This method uses scipy's fftconvolve for optimal performance with large
-        windows. The RMS envelope can be reused for both plotting and statistics.
+        This method uses full-wave rectification followed by a low-pass filter
+        at Nx the center frequency. This is band-relative and effectively removes
+        rectification ripple while preserving envelope shape.
         
         Args:
             signal: Audio signal array (normalized)
-            window_ms: Window size in milliseconds for RMS calculation
+            center_freq: Center frequency of the octave band (Hz). Use 0 for Full Spectrum.
+            method: Envelope detection method ('rectification_lpf' or 'rms_window')
+            lpf_multiplier: LPF cutoff multiplier (default 4.0 = 4x center frequency)
+            fallback_window_ms: Fallback window size in ms for Full Spectrum (center_freq=0)
             
         Returns:
-            RMS envelope array in linear scale (same length as input)
+            Envelope array in linear scale (same length as input)
         """
-        window_samples = int(window_ms * self.sample_rate / 1000)
+        if method == 'rectification_lpf':
+            # Method 1: Rectification + Low-Pass Filter
+            # Rectify: take absolute value (full-wave rectification)
+            rectified = np.abs(signal)
+            
+            if center_freq > 0:
+                # Calculate LPF cutoff: multiplier × center frequency
+                lpf_cutoff = lpf_multiplier * center_freq
+                nyquist = self.sample_rate / 2.0
+                
+                # Ensure cutoff is below Nyquist
+                lpf_cutoff = min(lpf_cutoff, nyquist * 0.95)
+                
+                # Design Butterworth low-pass filter (4th order for steep rolloff)
+                sos = sp_signal.butter(4, lpf_cutoff, btype='low', 
+                                      fs=self.sample_rate, output='sos')
+                
+                # Apply filter to rectified signal
+                envelope = sp_signal.sosfilt(sos, rectified)
+            else:
+                # Full Spectrum (0 Hz) - use fallback RMS window method
+                window_samples = int(fallback_window_ms * self.sample_rate / 1000)
+                window_samples = max(1, min(window_samples, len(signal) // 2))
+                
+                window = np.ones(window_samples, dtype=signal.dtype) / window_samples
+                signal_squared = signal ** 2
+                rms_squared = sp_signal.fftconvolve(signal_squared, window, mode='same')
+                rms_squared = np.maximum(rms_squared, 0.0)
+                envelope = np.sqrt(rms_squared)
+            
+            return envelope
         
-        if window_samples < 1:
-            window_samples = 1
-        
-        if window_samples >= len(signal):
-            # Window larger than signal - return single RMS value
-            rms_val = np.sqrt(np.mean(signal**2))
-            return np.full_like(signal, rms_val)
-        
-        # Create rectangular window
-        window = np.ones(window_samples, dtype=signal.dtype) / window_samples
-        
-        # Calculate RMS envelope using FFT convolution (faster for large windows)
-        signal_squared = signal ** 2
-        rms_squared = sp_signal.fftconvolve(signal_squared, window, mode='same')
-        
-        # Ensure non-negative (handle numerical precision issues)
-        rms_squared = np.maximum(rms_squared, 0.0)
-        
-        # Calculate RMS
-        rms_envelope = np.sqrt(rms_squared)
-        
-        return rms_envelope
+        else:
+            # Legacy RMS window method (for backwards compatibility)
+            window_samples = int(fallback_window_ms * self.sample_rate / 1000)
+            
+            if window_samples < 1:
+                window_samples = 1
+            
+            if window_samples >= len(signal):
+                rms_val = np.sqrt(np.mean(signal**2))
+                return np.full_like(signal, rms_val)
+            
+            window = np.ones(window_samples, dtype=signal.dtype) / window_samples
+            signal_squared = signal ** 2
+            rms_squared = sp_signal.fftconvolve(signal_squared, window, mode='same')
+            rms_squared = np.maximum(rms_squared, 0.0)
+            rms_envelope = np.sqrt(rms_squared)
+            
+            return rms_envelope
 
     def _find_attack_time(self, envelope_db: np.ndarray, peak_idx: int,
                          peak_value_db: float, attack_threshold_db: float) -> float:
@@ -1306,7 +1339,12 @@ class MusicAnalyzer:
             from src.config import config as global_config
             config = global_config.get('envelope_analysis', {})
         
-        window_ms = config.get('rms_envelope_window_ms', 10.0)
+        # Envelope calculation method
+        envelope_method = config.get('envelope_method', 'rectification_lpf')
+        lpf_multiplier = config.get('envelope_lpf_multiplier', 4.0)
+        fallback_window_ms = config.get('rms_envelope_window_ms', 10.0)
+        
+        # Peak detection and analysis parameters
         min_height_db = config.get('peak_detection_min_height_db', -40.0)
         min_distance_ms = config.get('peak_detection_min_distance_ms', 50.0)
         worst_case_num = config.get('worst_case_num_envelopes', 1)
@@ -1337,8 +1375,15 @@ class MusicAnalyzer:
             # Extract band signal
             band_signal = octave_bank[:, band_idx]
             
-            # Calculate RMS envelope ONCE (reused for all analysis)
-            rms_envelope_linear = self._calculate_rms_envelope(band_signal, window_ms)
+            # Calculate envelope ONCE (reused for all analysis)
+            # Use rectification + LPF method (band-relative)
+            rms_envelope_linear = self._calculate_rms_envelope(
+                band_signal,
+                center_freq=freq,
+                method=envelope_method,
+                lpf_multiplier=lpf_multiplier,
+                fallback_window_ms=fallback_window_ms
+            )
             
             # Convert to dBFS
             rms_envelope_db = 20 * np.log10(

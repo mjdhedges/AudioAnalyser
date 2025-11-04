@@ -63,13 +63,25 @@ filter_order = 4
 [envelope_analysis]
 
 # ----------------------------------------------------------------------------
-# RMS Envelope Calculation
+# Envelope Calculation Method
 # ----------------------------------------------------------------------------
 
-# RMS envelope window size in milliseconds
-# Larger window = smoother envelope, less detail
-# Smaller window = more detailed envelope, more noise
-# Used for calculating instantaneous RMS level over time
+# Envelope detection method
+# Options:
+#   "rectification_lpf" - Rectification + Low-Pass Filter (recommended, band-relative)
+#   "rms_window" - RMS window method (legacy, fixed window size)
+envelope_method = "rectification_lpf"
+
+# LPF cutoff multiplier for rectification + LPF method
+# LPF cutoff = multiplier × center_frequency
+# Lower values (1.0-2.0) = smoother but slower response
+# Higher values (4.0-5.0) = faster response but more ripple
+# 4.0 removes rectification ripple effectively while maintaining good peak tracking
+envelope_lpf_multiplier = 4.0
+
+# Fallback RMS window size for Full Spectrum band (milliseconds)
+# Used when center_frequency = 0 Hz (Full Spectrum)
+# Only applies when using "rms_window" method or Full Spectrum with "rectification_lpf"
 rms_envelope_window_ms = 10.0
 
 # ----------------------------------------------------------------------------
