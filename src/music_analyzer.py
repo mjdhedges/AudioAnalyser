@@ -1429,7 +1429,8 @@ class MusicAnalyzer:
             from src.config import config as global_config
             config = global_config.get('envelope_analysis', {})
         
-        num_envelopes = config.get('envelope_plots_num_envelopes', 3)
+        # Pattern plots show top 10 envelopes
+        num_envelopes = 10
         window_ms = config.get('envelope_plots_window_ms', 200.0)
         ylim_min = config.get('envelope_plots_ylim_min', -30)
         ylim_max = config.get('envelope_plots_ylim_max', 0)
@@ -1458,7 +1459,16 @@ class MusicAnalyzer:
             if rms_envelope_db is None or rms_envelope_time is None:
                 continue
             
-            # Collect all envelopes from patterns
+            # Get independent envelope peak indices to exclude (mutual exclusivity)
+            independent_peak_indices = set()
+            worst_case_envelopes = band_data.get("worst_case_envelopes", [])
+            for env in worst_case_envelopes:
+                peak_time_seconds = env.get("peak_time_seconds")
+                if peak_time_seconds is not None:
+                    peak_idx = int(peak_time_seconds * self.sample_rate)
+                    independent_peak_indices.add(peak_idx)
+            
+            # Collect all envelopes from patterns (excluding independent peaks)
             pattern_envelopes = []
             
             for pattern_num in range(1, patterns_detected + 1):
@@ -1474,6 +1484,10 @@ class MusicAnalyzer:
                 for peak_idx, peak_time in zip(peak_indices, peak_times):
                     # Ensure peak_idx is within bounds
                     if peak_idx < 0 or peak_idx >= len(rms_envelope_db):
+                        continue
+                    
+                    # Exclude peaks that are in independent analysis (mutual exclusivity)
+                    if peak_idx in independent_peak_indices:
                         continue
                     
                     start_idx = max(0, peak_idx - half_window)
@@ -1561,7 +1575,8 @@ class MusicAnalyzer:
             from src.config import config as global_config
             config = global_config.get('envelope_analysis', {})
         
-        num_envelopes = config.get('envelope_plots_num_envelopes', 3)
+        # Independent plots show top 3 worst envelopes
+        num_envelopes = 3
         window_ms = config.get('envelope_plots_window_ms', 200.0)
         ylim_min = config.get('envelope_plots_ylim_min', -30)
         ylim_max = config.get('envelope_plots_ylim_max', 0)
@@ -1589,8 +1604,8 @@ class MusicAnalyzer:
             if rms_envelope_db is None or rms_envelope_time is None:
                 continue
             
-            # Take top N independent envelopes
-            top_envelopes = worst_case_envelopes[:num_envelopes]
+            # Take top N independent envelopes (ensure we get worst 3)
+            top_envelopes = worst_case_envelopes[:min(num_envelopes, len(worst_case_envelopes))]
             
             # Create plot
             fig, ax = plt.subplots(figsize=(14, 8))
