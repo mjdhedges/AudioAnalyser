@@ -57,6 +57,30 @@ peak_saturation_threshold_db = -3.0 # Heavily compressed regions threshold
 # Transient analysis
 transient_threshold_db = 3.0       # Significant level change threshold
 
+# Envelope analysis parameters
+[envelope_analysis]
+# RMS envelope calculation (shared with RMS envelope plots)
+rms_envelope_window_ms = 10.0
+
+# Peak detection
+peak_detection_min_height_db = -40
+peak_detection_min_distance_ms = 50.0
+
+# Worst-case envelope analysis (for one-off events like film LFE)
+worst_case_num_envelopes = 1  # Find 1-10 worst envelopes
+worst_case_sort_by = "peak_value"  # Options: "peak_value", "decay_time", "energy"
+
+# Pattern analysis (for repeating beats)
+pattern_min_repetitions = 3  # Minimum repeats to call it a pattern
+pattern_max_patterns_per_band = 1  # Number of patterns to detect (start with 1)
+pattern_similarity_threshold = 0.85  # Correlation threshold (0-1)
+pattern_timing_tolerance_percent = 10.0  # Timing variation tolerance
+
+# Envelope characteristics
+attack_threshold_db = -20  # Below peak to detect attack start
+peak_hold_threshold_db = -1.0  # Within threshold for peak hold
+decay_thresholds_db = [-3.0, -6.0, -9.0, -12.0]  # Decay measurement points
+
 # Peak distribution ranges (separate arrays for bounds and labels)
 peak_distribution_ranges_min = [-0.1, -1.0, -3.0, -6.0, -12.0, -60.0]
 peak_distribution_ranges_max = [0.0, -0.1, -1.0, -3.0, -6.0, -12.0]
