@@ -1003,6 +1003,84 @@ class MusicAnalyzer:
         
         return decay_times
 
+    def _analyze_worst_case_envelopes(self, envelope_db: np.ndarray,
+                                     peak_indices: np.ndarray,
+                                     peak_values_db: np.ndarray,
+                                     num_envelopes: int,
+                                     sort_by: str,
+                                     attack_threshold_db: float,
+                                     peak_hold_threshold_db: float,
+                                     decay_thresholds_db: List[float]) -> List[Dict]:
+        """Analyze worst-case envelopes efficiently using partition-based selection.
+        
+        Args:
+            envelope_db: RMS envelope in dBFS
+            peak_indices: Array of peak sample indices
+            peak_values_db: Array of peak values in dBFS
+            num_envelopes: Number of worst-case envelopes to find
+            sort_by: Sorting criterion ("peak_value", "decay_time", "energy")
+            attack_threshold_db: Attack detection threshold
+            peak_hold_threshold_db: Peak hold threshold
+            decay_thresholds_db: Decay thresholds
+            
+        Returns:
+            List of worst-case envelope dictionaries with characteristics
+        """
+        if len(peak_indices) == 0:
+            return []
+        
+        num_envelopes = min(num_envelopes, len(peak_indices))
+        
+        # Select top N peaks based on criterion
+        if sort_by == "peak_value":
+            # Sort by peak value (highest first)
+            if num_envelopes < len(peak_indices):
+                # Use partition for efficiency (faster than full sort for small N)
+                top_indices = np.argpartition(peak_values_db, -num_envelopes)[-num_envelopes:]
+                top_indices = top_indices[np.argsort(peak_values_db[top_indices])[::-1]]
+            else:
+                top_indices = np.argsort(peak_values_db)[::-1]
+        elif sort_by == "decay_time":
+            # This requires calculating decay first - for now, use peak value
+            # TODO: Implement decay_time sorting if needed
+            top_indices = np.argsort(peak_values_db)[::-1][:num_envelopes]
+        else:  # "energy" or default
+            # Use peak value as proxy for energy
+            top_indices = np.argsort(peak_values_db)[::-1][:num_envelopes]
+        
+        worst_case_envelopes = []
+        
+        for rank, idx in enumerate(top_indices[:num_envelopes], 1):
+            peak_idx = peak_indices[idx]
+            peak_value_db = peak_values_db[idx]
+            peak_time_seconds = peak_idx / self.sample_rate
+            
+            # Calculate envelope characteristics
+            attack_time_ms = self._find_attack_time(
+                envelope_db, peak_idx, peak_value_db, attack_threshold_db
+            )
+            
+            peak_hold_time_ms = self._find_peak_hold_time(
+                envelope_db, peak_idx, peak_value_db, peak_hold_threshold_db
+            )
+            
+            decay_times = self._find_decay_times(
+                envelope_db, peak_idx, peak_value_db, decay_thresholds_db
+            )
+            
+            envelope_data = {
+                "rank": rank,
+                "peak_value_db": float(peak_value_db),
+                "peak_time_seconds": float(peak_time_seconds),
+                "attack_time_ms": float(attack_time_ms),
+                "peak_hold_time_ms": float(peak_hold_time_ms),
+                "decay_times": decay_times
+            }
+            
+            worst_case_envelopes.append(envelope_data)
+        
+        return worst_case_envelopes
+
     def export_analysis_results(self, analysis_results: Dict, 
                               output_path: str) -> None:
         """Export analysis results to CSV file.
