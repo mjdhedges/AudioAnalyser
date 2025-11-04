@@ -1354,22 +1354,6 @@ class MusicAnalyzer:
             
             band_results = {}
             
-            # Worst-case analysis (if enabled)
-            if worst_case_num > 0 and len(peak_indices) > 0:
-                worst_case_envelopes = self._analyze_worst_case_envelopes(
-                    rms_envelope_db,
-                    peak_indices,
-                    peak_values_db,
-                    worst_case_num,
-                    worst_case_sort_by,
-                    attack_threshold_db,
-                    peak_hold_threshold_db,
-                    decay_thresholds_db
-                )
-                band_results["worst_case_envelopes"] = worst_case_envelopes
-            else:
-                band_results["worst_case_envelopes"] = []
-            
             # Pattern analysis (if enabled) - run FIRST to identify pattern peaks
             pattern_peak_indices = set()
             if pattern_max_patterns > 0 and len(peak_indices) >= pattern_min_reps:
@@ -1421,6 +1405,244 @@ class MusicAnalyzer:
         
         logger.info("Envelope statistics analysis complete")
         return results
+
+    def create_pattern_envelope_plots(self, envelope_statistics: Dict,
+                                      center_frequencies: List[float],
+                                      output_dir: Optional[str] = None,
+                                      config: Optional[Dict] = None) -> None:
+        """Create plots showing top N envelopes from repeating patterns for each band.
+        
+        Args:
+            envelope_statistics: Results from analyze_envelope_statistics
+            center_frequencies: List of center frequencies
+            output_dir: Optional directory to save plots
+            config: Optional configuration dictionary
+        """
+        logger.info("Creating pattern envelope plots...")
+        
+        if config is None:
+            from src.config import config as global_config
+            config = global_config.get('envelope_analysis', {})
+        
+        num_envelopes = config.get('envelope_plots_num_envelopes', 3)
+        window_ms = config.get('envelope_plots_window_ms', 200.0)
+        ylim_min = config.get('envelope_plots_ylim_min', -30)
+        ylim_max = config.get('envelope_plots_ylim_max', 0)
+        
+        window_samples = int(window_ms * self.sample_rate / 1000)
+        half_window = window_samples // 2
+        
+        extended_frequencies = [0] + center_frequencies
+        
+        for band_idx, freq in enumerate(extended_frequencies):
+            freq_label = f"{freq:.3f}" if freq > 0 else "Full Spectrum"
+            band_data = envelope_statistics.get(freq_label)
+            
+            if band_data is None:
+                continue
+            
+            pattern_analysis = band_data.get("pattern_analysis", {})
+            patterns_detected = pattern_analysis.get("patterns_detected", 0)
+            
+            if patterns_detected == 0:
+                continue
+            
+            rms_envelope_db = band_data.get("rms_envelope_db")
+            rms_envelope_time = band_data.get("rms_envelope_time")
+            
+            if rms_envelope_db is None or rms_envelope_time is None:
+                continue
+            
+            # Collect all envelopes from patterns
+            pattern_envelopes = []
+            
+            for pattern_num in range(1, patterns_detected + 1):
+                pattern_key = f"pattern_{pattern_num}"
+                if pattern_key not in pattern_analysis:
+                    continue
+                
+                pattern = pattern_analysis[pattern_key]
+                peak_indices = pattern.get("peak_indices", [])
+                peak_times = pattern.get("peak_times_seconds", [])
+                
+                # Extract envelope around each peak in this pattern
+                for peak_idx, peak_time in zip(peak_indices, peak_times):
+                    start_idx = max(0, peak_idx - half_window)
+                    end_idx = min(len(rms_envelope_db), peak_idx + half_window)
+                    
+                    if end_idx - start_idx < window_samples // 2:
+                        continue
+                    
+                    envelope_window = rms_envelope_db[start_idx:end_idx]
+                    time_window = rms_envelope_time[start_idx:end_idx]
+                    
+                    # Convert time to relative (ms from peak)
+                    peak_time_idx = peak_idx - start_idx
+                    time_relative_ms = (time_window - time_window[peak_time_idx]) * 1000.0
+                    
+                    peak_value_db = rms_envelope_db[peak_idx]
+                    
+                    pattern_envelopes.append({
+                        "envelope": envelope_window,
+                        "time_ms": time_relative_ms,
+                        "peak_value_db": peak_value_db,
+                        "peak_time_seconds": peak_time,
+                        "pattern_num": pattern_num
+                    })
+            
+            if len(pattern_envelopes) == 0:
+                continue
+            
+            # Sort by peak value and take top N
+            pattern_envelopes.sort(key=lambda x: x["peak_value_db"], reverse=True)
+            top_envelopes = pattern_envelopes[:num_envelopes]
+            
+            # Create plot
+            fig, ax = plt.subplots(figsize=(14, 8))
+            
+            colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
+            
+            for idx, env_data in enumerate(top_envelopes):
+                color = colors[idx % len(colors)]
+                label = f"Pattern {env_data['pattern_num']} - Peak: {env_data['peak_value_db']:.1f} dBFS @ {env_data['peak_time_seconds']:.1f}s"
+                
+                ax.plot(env_data["time_ms"], env_data["envelope"], 
+                       color=color, linewidth=2, label=label, alpha=0.8)
+                
+                # Mark peak
+                peak_idx_rel = np.argmax(env_data["envelope"])
+                ax.plot(env_data["time_ms"][peak_idx_rel], env_data["peak_value_db"],
+                       'o', color=color, markersize=8, markeredgecolor='black', markeredgewidth=1)
+            
+            ax.set_xlabel('Time (ms relative to peak)')
+            ax.set_ylabel('RMS Level (dBFS)')
+            ax.set_title(f'Top {len(top_envelopes)} Pattern Envelopes - {freq_label}')
+            ax.grid(True, alpha=0.3)
+            ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+            ax.set_ylim([ylim_min, ylim_max])
+            
+            plt.tight_layout()
+            
+            if output_dir:
+                output_path = Path(output_dir) / f"pattern_envelopes_{freq_label.replace(' ', '_').replace('.', '_')}.png"
+                plt.savefig(output_path, dpi=self.dpi, bbox_inches='tight')
+                logger.info(f"Pattern envelope plot saved: {output_path.name}")
+            
+            plt.close(fig)
+
+    def create_independent_envelope_plots(self, envelope_statistics: Dict,
+                                         center_frequencies: List[float],
+                                         output_dir: Optional[str] = None,
+                                         config: Optional[Dict] = None) -> None:
+        """Create plots showing top N independent (non-repeating) envelopes for each band.
+        
+        Args:
+            envelope_statistics: Results from analyze_envelope_statistics
+            center_frequencies: List of center frequencies
+            output_dir: Optional directory to save plots
+            config: Optional configuration dictionary
+        """
+        logger.info("Creating independent envelope plots...")
+        
+        if config is None:
+            from src.config import config as global_config
+            config = global_config.get('envelope_analysis', {})
+        
+        num_envelopes = config.get('envelope_plots_num_envelopes', 3)
+        window_ms = config.get('envelope_plots_window_ms', 200.0)
+        ylim_min = config.get('envelope_plots_ylim_min', -30)
+        ylim_max = config.get('envelope_plots_ylim_max', 0)
+        
+        window_samples = int(window_ms * self.sample_rate / 1000)
+        half_window = window_samples // 2
+        
+        extended_frequencies = [0] + center_frequencies
+        
+        for band_idx, freq in enumerate(extended_frequencies):
+            freq_label = f"{freq:.3f}" if freq > 0 else "Full Spectrum"
+            band_data = envelope_statistics.get(freq_label)
+            
+            if band_data is None:
+                continue
+            
+            worst_case_envelopes = band_data.get("worst_case_envelopes", [])
+            
+            if len(worst_case_envelopes) == 0:
+                continue
+            
+            rms_envelope_db = band_data.get("rms_envelope_db")
+            rms_envelope_time = band_data.get("rms_envelope_time")
+            
+            if rms_envelope_db is None or rms_envelope_time is None:
+                continue
+            
+            # Take top N independent envelopes
+            top_envelopes = worst_case_envelopes[:num_envelopes]
+            
+            # Create plot
+            fig, ax = plt.subplots(figsize=(14, 8))
+            
+            colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
+            
+            for idx, envelope_data in enumerate(top_envelopes):
+                color = colors[idx % len(colors)]
+                
+                peak_time_seconds = envelope_data["peak_time_seconds"]
+                peak_idx = int(peak_time_seconds * self.sample_rate)
+                peak_value_db = envelope_data["peak_value_db"]
+                
+                # Extract envelope window around peak
+                start_idx = max(0, peak_idx - half_window)
+                end_idx = min(len(rms_envelope_db), peak_idx + half_window)
+                
+                if end_idx - start_idx < window_samples // 2:
+                    continue
+                
+                envelope_window = rms_envelope_db[start_idx:end_idx]
+                time_window = rms_envelope_time[start_idx:end_idx]
+                
+                # Convert time to relative (ms from peak)
+                peak_time_idx = peak_idx - start_idx
+                time_relative_ms = (time_window - time_window[peak_time_idx]) * 1000.0
+                
+                label = (f"Rank {envelope_data['rank']} - Peak: {peak_value_db:.1f} dBFS @ "
+                        f"{peak_time_seconds:.1f}s")
+                
+                ax.plot(time_relative_ms, envelope_window, 
+                       color=color, linewidth=2, label=label, alpha=0.8)
+                
+                # Mark peak
+                ax.plot(0, peak_value_db, 'o', color=color, markersize=8, 
+                       markeredgecolor='black', markeredgewidth=1)
+                
+                # Mark decay thresholds
+                decay_times = envelope_data.get("decay_times", {})
+                for decay_db in [-3, -6, -9, -12]:
+                    decay_key = f"decay_{abs(decay_db)}db_ms"
+                    if decay_key in decay_times:
+                        decay_time_ms = decay_times[decay_key]
+                        decay_reached = decay_times.get(f"decay_{abs(decay_db)}db_reached", False)
+                        if decay_reached and decay_time_ms <= window_ms / 2:
+                            decay_level = peak_value_db + decay_db
+                            ax.plot(decay_time_ms, decay_level, 'x', color=color, 
+                                   markersize=6, alpha=0.7)
+            
+            ax.set_xlabel('Time (ms relative to peak)')
+            ax.set_ylabel('RMS Level (dBFS)')
+            ax.set_title(f'Top {len(top_envelopes)} Independent Envelopes - {freq_label}')
+            ax.grid(True, alpha=0.3)
+            ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+            ax.set_ylim([ylim_min, ylim_max])
+            ax.set_xlim([-window_ms/2, window_ms/2])
+            
+            plt.tight_layout()
+            
+            if output_dir:
+                output_path = Path(output_dir) / f"independent_envelopes_{freq_label.replace(' ', '_').replace('.', '_')}.png"
+                plt.savefig(output_path, dpi=self.dpi, bbox_inches='tight')
+                logger.info(f"Independent envelope plot saved: {output_path.name}")
+            
+            plt.close(fig)
 
     def export_analysis_results(self, analysis_results: Dict, 
                               output_path: str) -> None:
