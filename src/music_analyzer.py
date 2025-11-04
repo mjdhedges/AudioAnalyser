@@ -1589,12 +1589,10 @@ class MusicAnalyzer:
         
         # Independent plots show configurable number of worst envelopes
         num_envelopes = config.get('envelope_plots_num_independent_envelopes', 3)
-        window_ms = config.get('envelope_plots_window_ms', 200.0)
+        num_wavelengths = config.get('envelope_plots_num_wavelengths', 20)
+        fallback_window_ms = config.get('envelope_plots_window_ms', 200.0)
         ylim_min = config.get('envelope_plots_ylim_min', -30)
         ylim_max = config.get('envelope_plots_ylim_max', 0)
-        
-        window_samples = int(window_ms * self.sample_rate / 1000)
-        half_window = window_samples // 2
         
         extended_frequencies = [0] + center_frequencies
         
@@ -1615,6 +1613,18 @@ class MusicAnalyzer:
             
             if rms_envelope_db is None or rms_envelope_time is None:
                 continue
+            
+            # Calculate window size based on center frequency (in wavelengths)
+            # For Full Spectrum (freq = 0), use fallback absolute window
+            if freq > 0:
+                # Window in seconds = num_wavelengths / frequency
+                window_seconds = num_wavelengths / freq
+                window_ms = window_seconds * 1000.0
+            else:
+                window_ms = fallback_window_ms
+            
+            window_samples = int(window_ms * self.sample_rate / 1000)
+            half_window = window_samples // 2
             
             # Take top N independent envelopes (ensure we get worst 3)
             top_envelopes = worst_case_envelopes[:min(num_envelopes, len(worst_case_envelopes))]
