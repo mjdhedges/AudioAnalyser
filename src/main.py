@@ -82,6 +82,9 @@ def get_config_hash() -> str:
         'chunk_duration': config.get('analysis.chunk_duration_seconds', 2.0),
         'octave_frequencies': config.get('analysis.octave_center_frequencies', []),
         'filter_order': config.get('analysis.filter_order', 4),
+        'use_linkwitz_riley': config.get('analysis.use_linkwitz_riley', True),
+        'use_cascade_complementary': config.get('analysis.use_cascade_complementary', True),
+        'normalize_overlap': config.get('analysis.normalize_overlap', False),
         'dpi': config.get('plotting.dpi', 300),
     }
     
