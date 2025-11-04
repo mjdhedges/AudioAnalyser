@@ -1260,6 +1260,129 @@ class MusicAnalyzer:
         
         return result
 
+    def analyze_envelope_statistics(self, octave_bank: np.ndarray,
+                                    center_frequencies: List[float],
+                                    config: Optional[Dict] = None) -> Dict:
+        """Analyze envelope characteristics and repeating patterns for each octave band.
+        
+        This method performs two types of analysis:
+        1. Worst-case envelope analysis: Finds top N worst envelopes (for one-off events)
+        2. Pattern analysis: Detects repeating patterns with configurable minimum repetitions
+        
+        The RMS envelope is calculated ONCE per band and reused for all analysis to maximize
+        efficiency.
+        
+        Args:
+            octave_bank: Pre-computed octave bank (full track) - shape (samples, bands)
+            center_frequencies: List of center frequencies for octave bands
+            config: Optional configuration dictionary (defaults from config.toml if None)
+            
+        Returns:
+            Dictionary with envelope statistics per band
+        """
+        logger.info("Starting envelope statistics analysis...")
+        
+        # Get configuration with defaults
+        if config is None:
+            from src.config import config as global_config
+            config = global_config.get('envelope_analysis', {})
+        
+        window_ms = config.get('rms_envelope_window_ms', 10.0)
+        min_height_db = config.get('peak_detection_min_height_db', -40.0)
+        min_distance_ms = config.get('peak_detection_min_distance_ms', 50.0)
+        worst_case_num = config.get('worst_case_num_envelopes', 1)
+        worst_case_sort_by = config.get('worst_case_sort_by', 'peak_value')
+        pattern_min_reps = config.get('pattern_min_repetitions', 3)
+        pattern_max_patterns = config.get('pattern_max_patterns_per_band', 1)
+        pattern_similarity = config.get('pattern_similarity_threshold', 0.85)
+        attack_threshold_db = config.get('attack_threshold_db', -20.0)
+        peak_hold_threshold_db = config.get('peak_hold_threshold_db', -1.0)
+        decay_thresholds_db = config.get('decay_thresholds_db', [-3.0, -6.0, -9.0, -12.0])
+        
+        # Calculate minimum distance in samples
+        min_distance_samples = int(min_distance_ms * self.sample_rate / 1000)
+        
+        # Extended frequencies list (includes Full Spectrum at index 0)
+        extended_frequencies = [0] + center_frequencies
+        num_bands = octave_bank.shape[1]
+        
+        results = {}
+        
+        # Process each band
+        for band_idx in range(num_bands):
+            freq = extended_frequencies[band_idx]
+            freq_label = f"{freq:.3f}" if freq > 0 else "Full Spectrum"
+            
+            logger.info(f"Analyzing envelope statistics for {freq_label}...")
+            
+            # Extract band signal
+            band_signal = octave_bank[:, band_idx]
+            
+            # Calculate RMS envelope ONCE (reused for all analysis)
+            rms_envelope_linear = self._calculate_rms_envelope(band_signal, window_ms)
+            
+            # Convert to dBFS
+            rms_envelope_db = 20 * np.log10(
+                rms_envelope_linear * self.original_peak + 1e-10
+            )
+            
+            # Replace -inf with very low value for peak detection
+            rms_envelope_db_clean = np.copy(rms_envelope_db)
+            rms_envelope_db_clean[rms_envelope_db_clean == -np.inf] = -120.0
+            
+            # Detect peaks using scipy
+            peak_indices, peak_properties = sp_signal.find_peaks(
+                rms_envelope_db_clean,
+                height=min_height_db,
+                distance=min_distance_samples
+            )
+            
+            peak_values_db = rms_envelope_db_clean[peak_indices]
+            
+            band_results = {}
+            
+            # Worst-case analysis (if enabled)
+            if worst_case_num > 0 and len(peak_indices) > 0:
+                worst_case_envelopes = self._analyze_worst_case_envelopes(
+                    rms_envelope_db,
+                    peak_indices,
+                    peak_values_db,
+                    worst_case_num,
+                    worst_case_sort_by,
+                    attack_threshold_db,
+                    peak_hold_threshold_db,
+                    decay_thresholds_db
+                )
+                band_results["worst_case_envelopes"] = worst_case_envelopes
+            else:
+                band_results["worst_case_envelopes"] = []
+            
+            # Pattern analysis (if enabled)
+            if pattern_max_patterns > 0 and len(peak_indices) >= pattern_min_reps:
+                pattern_analysis = self._analyze_repeating_patterns(
+                    rms_envelope_db,
+                    peak_indices,
+                    peak_values_db,
+                    pattern_min_reps,
+                    pattern_max_patterns,
+                    pattern_similarity,
+                    window_ms * 2  # Use 2x window for pattern extraction
+                )
+                band_results["pattern_analysis"] = pattern_analysis
+            else:
+                band_results["pattern_analysis"] = {"patterns_detected": 0}
+            
+            # Store RMS envelope for potential reuse (optional - can be removed to save memory)
+            # band_results["rms_envelope_db"] = rms_envelope_db  # Commented for memory efficiency
+            
+            results[freq_label] = band_results
+            
+            # Memory cleanup
+            del rms_envelope_linear, rms_envelope_db, rms_envelope_db_clean
+        
+        logger.info("Envelope statistics analysis complete")
+        return results
+
     def export_analysis_results(self, analysis_results: Dict, 
                               output_path: str) -> None:
         """Export analysis results to CSV file.
