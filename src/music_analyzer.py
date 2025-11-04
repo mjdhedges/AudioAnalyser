@@ -1408,6 +1408,16 @@ class MusicAnalyzer:
             # Pattern analysis (if enabled) - run FIRST to identify pattern peaks
             pattern_peak_indices = set()
             if pattern_max_patterns > 0 and len(peak_indices) >= pattern_min_reps:
+                # Calculate pattern extraction window based on center frequency
+                if freq > 0:
+                    # Use frequency-relative window (in wavelengths)
+                    num_wavelengths = 20  # Match plotting window
+                    period = 1.0 / freq
+                    pattern_window_ms = (num_wavelengths * period) * 1000.0
+                else:
+                    # Full Spectrum fallback
+                    pattern_window_ms = fallback_window_ms * 2
+                
                 pattern_analysis = self._analyze_repeating_patterns(
                     rms_envelope_db,
                     peak_indices,
@@ -1415,7 +1425,7 @@ class MusicAnalyzer:
                     pattern_min_reps,
                     pattern_max_patterns,
                     pattern_similarity,
-                    window_ms * 2  # Use 2x window for pattern extraction
+                    pattern_window_ms
                 )
                 band_results["pattern_analysis"] = pattern_analysis
                 
