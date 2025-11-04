@@ -82,7 +82,8 @@ peak_hold_threshold_db = -1.0  # Within threshold for peak hold
 decay_thresholds_db = [-3.0, -6.0, -9.0, -12.0]  # Decay measurement points
 
 # Envelope visualization
-envelope_plots_num_envelopes = 3  # Number of top envelopes to plot per band
+envelope_plots_num_pattern_envelopes = 10  # Number of pattern envelopes to plot per band
+envelope_plots_num_independent_envelopes = 3  # Number of independent (worst-case) envelopes to plot per band
 envelope_plots_window_ms = 200.0  # Time window around peak to show (ms)
 envelope_plots_ylim_min = -30  # Minimum Y-axis limit (dBFS)
 envelope_plots_ylim_max = 0  # Maximum Y-axis limit (dBFS)

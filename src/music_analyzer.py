@@ -1432,8 +1432,8 @@ class MusicAnalyzer:
             from src.config import config as global_config
             config = global_config.get('envelope_analysis', {})
         
-        # Pattern plots show top 10 envelopes
-        num_envelopes = 10
+        # Pattern plots show configurable number of envelopes
+        num_envelopes = config.get('envelope_plots_num_pattern_envelopes', 10)
         window_ms = config.get('envelope_plots_window_ms', 200.0)
         ylim_min = config.get('envelope_plots_ylim_min', -30)
         ylim_max = config.get('envelope_plots_ylim_max', 0)
@@ -1577,8 +1577,8 @@ class MusicAnalyzer:
             from src.config import config as global_config
             config = global_config.get('envelope_analysis', {})
         
-        # Independent plots show top 3 worst envelopes
-        num_envelopes = 3
+        # Independent plots show configurable number of worst envelopes
+        num_envelopes = config.get('envelope_plots_num_independent_envelopes', 3)
         window_ms = config.get('envelope_plots_window_ms', 200.0)
         ylim_min = config.get('envelope_plots_ylim_min', -30)
         ylim_max = config.get('envelope_plots_ylim_max', 0)
