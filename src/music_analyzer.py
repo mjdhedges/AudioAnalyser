@@ -1084,6 +1084,7 @@ class MusicAnalyzer:
                 "rank": rank,
                 "peak_value_db": float(peak_value_db),
                 "peak_time_seconds": float(peak_time_seconds),
+                "peak_idx": int(peak_idx),  # Store for mutual exclusivity checking
                 "attack_time_ms": float(attack_time_ms),
                 "peak_hold_time_ms": float(peak_hold_time_ms),
                 "decay_times": decay_times
@@ -1465,9 +1466,8 @@ class MusicAnalyzer:
             independent_peak_indices = set()
             worst_case_envelopes = band_data.get("worst_case_envelopes", [])
             for env in worst_case_envelopes:
-                peak_time_seconds = env.get("peak_time_seconds")
-                if peak_time_seconds is not None:
-                    peak_idx = int(peak_time_seconds * self.sample_rate)
+                peak_idx = env.get("peak_idx")
+                if peak_idx is not None:
                     independent_peak_indices.add(peak_idx)
             
             # Collect all envelopes from patterns (excluding independent peaks)
