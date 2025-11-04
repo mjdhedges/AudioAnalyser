@@ -341,6 +341,14 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, c
             output_path=str(track_output_dir / "octave_crest_factor_time.png")
         )
         
+        # Envelope statistics analysis (worst-case and pattern detection)
+        logger.info("Performing envelope statistics analysis...")
+        envelope_stats = analyzer.analyze_envelope_statistics(
+            octave_bank,
+            octave_filter.OCTAVE_CENTER_FREQUENCIES,
+            config=config.get('envelope_analysis', {})
+        )
+        
         # MEMORY CLEANUP: Close all matplotlib figures and free memory immediately
         import matplotlib.pyplot as plt
         import gc
