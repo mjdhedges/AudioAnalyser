@@ -1081,6 +1081,185 @@ class MusicAnalyzer:
         
         return worst_case_envelopes
 
+    def _compare_envelope_shapes(self, pattern1: np.ndarray,
+                                 pattern2: np.ndarray) -> float:
+        """Compare two envelope patterns using correlation.
+        
+        Patterns are normalized to 0-1 range before comparison.
+        
+        Args:
+            pattern1: First envelope pattern
+            pattern2: Second envelope pattern
+            
+        Returns:
+            Correlation coefficient (0-1, higher = more similar)
+        """
+        # Normalize both patterns to 0-1 range
+        p1_min, p1_max = np.min(pattern1), np.max(pattern1)
+        p2_min, p2_max = np.min(pattern2), np.max(pattern2)
+        
+        if p1_max - p1_min < 1e-10 or p2_max - p2_min < 1e-10:
+            # Constant patterns - return 1.0 if both constant, 0.0 otherwise
+            return 1.0 if abs(p1_max - p2_max) < 1e-10 else 0.0
+        
+        p1_norm = (pattern1 - p1_min) / (p1_max - p1_min)
+        p2_norm = (pattern2 - p2_min) / (p2_max - p2_min)
+        
+        # Ensure same length (interpolate if needed)
+        if len(p1_norm) != len(p2_norm):
+            from scipy.interpolate import interp1d
+            min_len = min(len(p1_norm), len(p2_norm))
+            x1 = np.linspace(0, 1, len(p1_norm))
+            x2 = np.linspace(0, 1, len(p2_norm))
+            x_common = np.linspace(0, 1, min_len)
+            
+            f1 = interp1d(x1, p1_norm, kind='linear', bounds_error=False, fill_value='extrapolate')
+            f2 = interp1d(x2, p2_norm, kind='linear', bounds_error=False, fill_value='extrapolate')
+            
+            p1_norm = f1(x_common)
+            p2_norm = f2(x_common)
+        
+        # Calculate correlation
+        correlation = np.corrcoef(p1_norm, p2_norm)[0, 1]
+        
+        # Handle NaN (shouldn't happen, but safety check)
+        if np.isnan(correlation):
+            return 0.0
+        
+        return float(correlation)
+
+    def _analyze_repeating_patterns(self, envelope_db: np.ndarray,
+                                   peak_indices: np.ndarray,
+                                   peak_values_db: np.ndarray,
+                                   min_repetitions: int,
+                                   max_patterns: int,
+                                   similarity_threshold: float,
+                                   window_ms: float) -> Dict:
+        """Analyze repeating patterns using optimized correlation matching.
+        
+        Args:
+            envelope_db: RMS envelope in dBFS
+            peak_indices: Array of peak sample indices
+            peak_values_db: Array of peak values in dBFS
+            min_repetitions: Minimum number of repetitions to consider a pattern
+            max_patterns: Maximum number of patterns to detect
+            similarity_threshold: Correlation threshold for pattern matching
+            window_ms: Window size for pattern extraction
+            
+        Returns:
+            Dictionary with pattern analysis results
+        """
+        if len(peak_indices) < min_repetitions:
+            return {"patterns_detected": 0}
+        
+        window_samples = int(window_ms * self.sample_rate / 1000)
+        half_window = window_samples // 2
+        
+        # Extract envelope windows around all peaks (vectorized)
+        patterns = []
+        valid_peak_indices = []
+        
+        for peak_idx in peak_indices:
+            start_idx = max(0, peak_idx - half_window)
+            end_idx = min(len(envelope_db), peak_idx + half_window)
+            
+            if end_idx - start_idx >= window_samples // 2:  # Minimum pattern size
+                pattern = envelope_db[start_idx:end_idx]
+                patterns.append(pattern)
+                valid_peak_indices.append(peak_idx)
+        
+        if len(patterns) < min_repetitions:
+            return {"patterns_detected": 0}
+        
+        # Normalize patterns to 0-1 for comparison
+        normalized_patterns = []
+        for pattern in patterns:
+            p_min, p_max = np.min(pattern), np.max(pattern)
+            if p_max - p_min > 1e-10:
+                normalized = (pattern - p_min) / (p_max - p_min)
+            else:
+                normalized = np.zeros_like(pattern)
+            normalized_patterns.append(normalized)
+        
+        # Find pattern groups using correlation
+        pattern_groups = []
+        used_indices = set()
+        
+        for i, pattern in enumerate(normalized_patterns):
+            if i in used_indices:
+                continue
+            
+            # Find similar patterns
+            group = [i]
+            for j in range(i + 1, len(normalized_patterns)):
+                if j in used_indices:
+                    continue
+                
+                correlation = np.corrcoef(pattern, normalized_patterns[j])[0, 1]
+                if not np.isnan(correlation) and correlation >= similarity_threshold:
+                    group.append(j)
+                    used_indices.add(j)
+            
+            if len(group) >= min_repetitions:
+                pattern_groups.append(group)
+                used_indices.add(i)
+        
+        if len(pattern_groups) == 0:
+            return {"patterns_detected": 0}
+        
+        # Sort groups by size (largest first) and take top max_patterns
+        pattern_groups.sort(key=len, reverse=True)
+        pattern_groups = pattern_groups[:max_patterns]
+        
+        result = {"patterns_detected": len(pattern_groups)}
+        
+        # Analyze each pattern group
+        for pattern_num, group in enumerate(pattern_groups, 1):
+            group_peak_indices = [valid_peak_indices[i] for i in group]
+            group_peak_times = [idx / self.sample_rate for idx in group_peak_indices]
+            
+            # Calculate inter-peak intervals
+            intervals = np.diff(sorted(group_peak_times))
+            
+            if len(intervals) == 0:
+                continue
+            
+            mean_interval = float(np.mean(intervals))
+            std_interval = float(np.std(intervals))
+            median_interval = float(np.median(intervals))
+            min_interval = float(np.min(intervals))
+            max_interval = float(np.max(intervals))
+            
+            # Calculate coefficient of variation for regularity
+            cv = std_interval / mean_interval if mean_interval > 0 else np.inf
+            pattern_regularity_score = float(1.0 / (1.0 + cv))
+            
+            # Classify confidence
+            if cv < 0.1:
+                confidence = "high"
+            elif cv < 0.3:
+                confidence = "medium"
+            else:
+                confidence = "low"
+            
+            # Calculate BPM
+            beats_per_minute = 60.0 / mean_interval if mean_interval > 0 else 0.0
+            
+            result[f"pattern_{pattern_num}"] = {
+                "num_repetitions": len(group),
+                "mean_interval_seconds": mean_interval,
+                "std_interval_seconds": std_interval,
+                "median_interval_seconds": median_interval,
+                "min_interval_seconds": min_interval,
+                "max_interval_seconds": max_interval,
+                "pattern_regularity_score": pattern_regularity_score,
+                "pattern_confidence": confidence,
+                "beats_per_minute": beats_per_minute,
+                "peak_times_seconds": sorted(group_peak_times)
+            }
+        
+        return result
+
     def export_analysis_results(self, analysis_results: Dict, 
                               output_path: str) -> None:
         """Export analysis results to CSV file.
