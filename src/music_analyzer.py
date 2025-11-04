@@ -1532,6 +1532,7 @@ class MusicAnalyzer:
             ax.grid(True, alpha=0.3)
             ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
             ax.set_ylim([ylim_min, ylim_max])
+            ax.set_xlim([-window_ms/2, window_ms/2])
             
             plt.tight_layout()
             
