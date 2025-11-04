@@ -1,0 +1,23 @@
+metric,value,unit,notes
+test_file,Tracks\Test Signals\SineSweep 20Hz to 20kHz.wav,,Input test signal
+sample_rate,44100,Hz,Audio sample rate
+duration,30.000,seconds,Signal duration
+num_samples,1323000,samples,Total samples
+num_octave_bands,11,,Number of octave bands
+filter_type,Butterworth 4th order,,Filter design
+filter_method,filtfilt (zero-phase),,Zero-phase = linear phase equivalent
+phase_response_type,Zero-phase (Linear Phase Equivalent),,"filtfilt provides zero-phase filtering, equivalent to linear phase for waveform preservation"
+,,,
+original_crest_factor,1.414819,,Peak/RMS ratio
+original_crest_factor_db,3.014017,dB,Crest factor in dB
+reconstructed_crest_factor,1.704690,,Peak/RMS ratio
+reconstructed_crest_factor_db,4.632908,dB,Crest factor in dB
+crest_factor_difference,0.289871,,Recon - Original
+crest_factor_difference_db,1.618891,dB,Recon - Original in dB
+crest_factor_preservation_percent,79.5118,%,Preservation percentage
+,,,
+signal_correlation,0.999340,,Normalized cross-correlation
+magnitude_diff_mean,1.341351,dB,Mean magnitude difference
+magnitude_diff_max,3.032994,dB,Max magnitude difference
+magnitude_diff_median,1.513747,dB,Median magnitude difference
+magnitude_diff_std,0.691095,dB,Std dev of magnitude difference

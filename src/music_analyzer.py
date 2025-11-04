@@ -294,16 +294,33 @@ class MusicAnalyzer:
                        label=f'Max Crest Peak ({full_spectrum_peak:.1f} dBFS @ {max_time:.0f}s)')
 
     def create_histogram_plots(self, analysis_results: Dict, 
-                             output_dir: Optional[str] = None) -> None:
+                             output_dir: Optional[str] = None,
+                             octave_bank: Optional[np.ndarray] = None) -> None:
         """Create histogram plots for each octave band.
         
         Args:
             analysis_results: Results from octave band analysis
             output_dir: Optional directory to save plots
+            octave_bank: Octave bank array to slice from (required if band_data not in results)
         """
         logger.info("Creating histogram plots...")
         
-        band_data = analysis_results["band_data"]
+        # Get band_data or use octave_bank
+        band_data = analysis_results.get("band_data")
+        if band_data is None and octave_bank is not None:
+            # Reconstruct from octave_bank
+            center_freqs = analysis_results["center_frequencies"]
+            extended_freqs = [0] + center_freqs if center_freqs[0] != 0 else center_freqs
+            num_bands = len(extended_freqs)
+            # Create a band_data-like structure
+            band_data = {}
+            for i in range(num_bands):
+                freq_label = f"{extended_freqs[i]:.3f}" if i > 0 else "Full Spectrum"
+                band_data[freq_label] = octave_bank[:, i]
+        elif band_data is None:
+            logger.error("band_data not in results and octave_bank not provided!")
+            return
+        
         num_bands = len(band_data)
         
         # Create subplots
@@ -357,17 +374,34 @@ class MusicAnalyzer:
 
     def create_histogram_plots_log_db(self, analysis_results: Dict, 
                                      output_dir: Optional[str] = None,
-                                     config: Optional[Dict] = None) -> None:
+                                     config: Optional[Dict] = None,
+                                     octave_bank: Optional[np.ndarray] = None) -> None:
         """Create histogram plots for each octave band with log dB X-axis.
         
         Args:
             analysis_results: Results from octave band analysis
             output_dir: Optional directory to save plots
             config: Optional configuration dictionary
+            octave_bank: Octave bank array to slice from (required if band_data not in results)
         """
         logger.info("Creating log dB histogram plots...")
         
-        band_data = analysis_results["band_data"]
+        # Get band_data or use octave_bank
+        band_data = analysis_results.get("band_data")
+        if band_data is None and octave_bank is not None:
+            # Reconstruct from octave_bank
+            center_freqs = analysis_results["center_frequencies"]
+            extended_freqs = [0] + center_freqs if center_freqs[0] != 0 else center_freqs
+            num_bands = len(extended_freqs)
+            # Create a band_data-like structure
+            band_data = {}
+            for i in range(num_bands):
+                freq_label = f"{extended_freqs[i]:.3f}" if i > 0 else "Full Spectrum"
+                band_data[freq_label] = octave_bank[:, i]
+        elif band_data is None:
+            logger.error("band_data not in results and octave_bank not provided!")
+            return
+        
         num_bands = len(band_data)
         
         # Create subplots

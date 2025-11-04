@@ -321,12 +321,14 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, c
         )
         analyzer.create_histogram_plots(
             analysis_results,
-            output_dir=str(track_output_dir)
+            output_dir=str(track_output_dir),
+            octave_bank=octave_bank
         )
         analyzer.create_histogram_plots_log_db(
             analysis_results,
             output_dir=str(track_output_dir),
-            config=config.get_plotting_config()
+            config=config.get_plotting_config(),
+            octave_bank=octave_bank
         )
         analyzer.create_crest_factor_time_plot(
             time_analysis,

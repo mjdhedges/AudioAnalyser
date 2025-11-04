@@ -1,0 +1,15 @@
+metric,value,unit,description
+filter_type,Butterworth,,Filter design type
+normalize_overlap,False,,Geometric mean crossover alignment
+num_bands,11,,Number of octave bands
+,,,
+max_ripple,0.0000,dB,Maximum ripple across all frequencies
+mean_ripple,0.0000,dB,Mean ripple magnitude
+std_ripple,0.0000,dB,Standard deviation of ripple
+,,,
+peak_gain,0.0000,dB,Peak gain of summed response
+valley_gain,0.0000,dB,Valley (minimum) gain of summed response
+peak_valley_diff,0.0000,dB,Difference between peak and valley
+,,,
+passband_max_ripple,0.0000,dB,Max ripple in passband region
+passband_mean_ripple,0.0000,dB,Mean ripple in passband region

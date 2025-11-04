@@ -1,0 +1,13 @@
+band_index,center_frequency_hz,crest_factor,crest_factor_db,band_label
+0,0,1.414819,3.014017,Full Spectrum
+1,16.0,12.161414,21.699681,Octave Band 1
+2,31.25,4.745232,13.525148,Octave Band 2
+3,62.5,4.706143,13.453302,Octave Band 3
+4,125,4.706162,13.453338,Octave Band 4
+5,250,4.706161,13.453336,Octave Band 5
+6,500,4.706140,13.453297,Octave Band 6
+7,1000,4.706055,13.453139,Octave Band 7
+8,2000,4.705703,13.452491,Octave Band 8
+9,4000,4.704366,13.450022,Octave Band 9
+10,8000,4.699517,13.441065,Octave Band 10
+11,16000,5.427386,14.691815,Octave Band 11

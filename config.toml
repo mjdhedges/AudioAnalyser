@@ -13,9 +13,8 @@ output_dir = "analysis"
 
 # Octave band analysis parameters
 octave_center_frequencies = [16.0, 31.25, 62.5, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0]
-filter_order = 4
-low_frequency_filter_order = 2  # For frequencies < 1% of Nyquist
-low_frequency_threshold = 0.01   # Threshold for using lower order filter
+filter_order = 4  # All bands use 4th order Butterworth for consistent steepness
+# Note: 4th order provides -24dB/octave rolloff, adequate precision at all frequencies
 
 # Plotting parameters
 [plotting]
