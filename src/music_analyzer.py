@@ -883,6 +883,126 @@ class MusicAnalyzer:
         
         return rms_envelope
 
+    def _find_attack_time(self, envelope_db: np.ndarray, peak_idx: int,
+                         peak_value_db: float, attack_threshold_db: float) -> float:
+        """Find attack time using vectorized backward search.
+        
+        Args:
+            envelope_db: RMS envelope in dBFS
+            peak_idx: Index of peak sample
+            peak_value_db: Peak value in dBFS
+            attack_threshold_db: Threshold below peak to detect attack start
+            
+        Returns:
+            Attack time in milliseconds
+        """
+        threshold = peak_value_db - attack_threshold_db
+        
+        # Search backward from peak using vectorized boolean indexing
+        search_start = max(0, peak_idx - int(10 * self.sample_rate))  # Limit search to 10s
+        search_region = envelope_db[search_start:peak_idx + 1]
+        
+        # Find first sample below threshold (searching backward)
+        below_threshold = search_region < threshold
+        below_indices = np.where(below_threshold)[0]
+        
+        if len(below_indices) > 0:
+            # Last index before peak that's below threshold
+            attack_start_idx = search_start + below_indices[-1] + 1
+        else:
+            # Attack started at beginning of search region
+            attack_start_idx = search_start
+        
+        attack_samples = peak_idx - attack_start_idx
+        attack_time_ms = (attack_samples / self.sample_rate) * 1000.0
+        
+        return max(0.0, attack_time_ms)
+
+    def _find_peak_hold_time(self, envelope_db: np.ndarray, peak_idx: int,
+                            peak_value_db: float, hold_threshold_db: float) -> float:
+        """Find peak hold time using vectorized forward/backward search.
+        
+        Args:
+            envelope_db: RMS envelope in dBFS
+            peak_idx: Index of peak sample
+            peak_value_db: Peak value in dBFS
+            hold_threshold_db: Threshold for peak hold (within this of peak)
+            
+        Returns:
+            Peak hold time in milliseconds
+        """
+        threshold = peak_value_db - hold_threshold_db
+        
+        # Search backward from peak
+        search_back = max(0, peak_idx - int(5 * self.sample_rate))  # Limit to 5s
+        back_region = envelope_db[search_back:peak_idx + 1]
+        back_mask = back_region >= threshold
+        back_indices = np.where(back_mask)[0]
+        
+        if len(back_indices) > 0:
+            hold_start_idx = search_back + back_indices[0]
+        else:
+            hold_start_idx = peak_idx
+        
+        # Search forward from peak
+        search_forward = min(len(envelope_db), peak_idx + int(5 * self.sample_rate))
+        forward_region = envelope_db[peak_idx:search_forward]
+        forward_mask = forward_region >= threshold
+        forward_indices = np.where(forward_mask)[0]
+        
+        if len(forward_indices) > 0:
+            hold_end_idx = peak_idx + forward_indices[-1]
+        else:
+            hold_end_idx = peak_idx
+        
+        hold_samples = hold_end_idx - hold_start_idx
+        hold_time_ms = (hold_samples / self.sample_rate) * 1000.0
+        
+        return max(0.0, hold_time_ms)
+
+    def _find_decay_times(self, envelope_db: np.ndarray, peak_idx: int,
+                         peak_value_db: float,
+                         decay_thresholds_db: List[float]) -> Dict[str, float]:
+        """Find decay times to multiple thresholds in single pass.
+        
+        Args:
+            envelope_db: RMS envelope in dBFS
+            peak_idx: Index of peak sample
+            peak_value_db: Peak value in dBFS
+            decay_thresholds_db: List of decay thresholds in dB (negative values)
+            
+        Returns:
+            Dictionary with decay times in milliseconds and reach flags
+        """
+        # Limit search to reasonable distance (e.g., 30 seconds)
+        search_end = min(len(envelope_db), peak_idx + int(30 * self.sample_rate))
+        decay_region = envelope_db[peak_idx:search_end]
+        
+        # Calculate absolute thresholds for each decay level
+        absolute_thresholds = [peak_value_db + threshold_db for threshold_db in decay_thresholds_db]
+        
+        decay_times = {}
+        
+        # Single pass: find first sample below each threshold
+        for i, (threshold_db, abs_threshold) in enumerate(zip(decay_thresholds_db, absolute_thresholds)):
+            # Vectorized search: find first sample <= threshold
+            below_mask = decay_region <= abs_threshold
+            below_indices = np.where(below_mask)[0]
+            
+            if len(below_indices) > 0:
+                decay_samples = below_indices[0]
+                decay_time_ms = (decay_samples / self.sample_rate) * 1000.0
+                decay_reached = True
+            else:
+                # Decay never reached - use track duration as fallback
+                decay_time_ms = ((search_end - peak_idx) / self.sample_rate) * 1000.0
+                decay_reached = False
+            
+            decay_times[f"decay_{abs(int(threshold_db))}db_ms"] = decay_time_ms
+            decay_times[f"decay_{abs(int(threshold_db))}db_reached"] = decay_reached
+        
+        return decay_times
+
     def export_analysis_results(self, analysis_results: Dict, 
                               output_path: str) -> None:
         """Export analysis results to CSV file.
