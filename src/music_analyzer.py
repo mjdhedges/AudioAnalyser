@@ -1010,7 +1010,8 @@ class MusicAnalyzer:
                                      sort_by: str,
                                      attack_threshold_db: float,
                                      peak_hold_threshold_db: float,
-                                     decay_thresholds_db: List[float]) -> List[Dict]:
+                                     decay_thresholds_db: List[float],
+                                     exclude_peak_indices: Optional[set] = None) -> List[Dict]:
         """Analyze worst-case envelopes efficiently using partition-based selection.
         
         Args:
@@ -1022,10 +1023,21 @@ class MusicAnalyzer:
             attack_threshold_db: Attack detection threshold
             peak_hold_threshold_db: Peak hold threshold
             decay_thresholds_db: Decay thresholds
+            exclude_peak_indices: Optional set of peak indices to exclude (e.g., pattern peaks)
             
         Returns:
             List of worst-case envelope dictionaries with characteristics
         """
+        if len(peak_indices) == 0:
+            return []
+        
+        # Filter out excluded peaks (non-repeating only)
+        if exclude_peak_indices is not None:
+            exclude_set = exclude_peak_indices
+            filtered_mask = np.array([idx not in exclude_set for idx in peak_indices])
+            peak_indices = peak_indices[filtered_mask]
+            peak_values_db = peak_values_db[filtered_mask]
+        
         if len(peak_indices) == 0:
             return []
         
@@ -1255,7 +1267,8 @@ class MusicAnalyzer:
                 "pattern_regularity_score": pattern_regularity_score,
                 "pattern_confidence": confidence,
                 "beats_per_minute": beats_per_minute,
-                "peak_times_seconds": sorted(group_peak_times)
+                "peak_times_seconds": sorted(group_peak_times),
+                "peak_indices": group_peak_indices  # Store peak indices for filtering
             }
         
         return result
@@ -1357,7 +1370,8 @@ class MusicAnalyzer:
             else:
                 band_results["worst_case_envelopes"] = []
             
-            # Pattern analysis (if enabled)
+            # Pattern analysis (if enabled) - run FIRST to identify pattern peaks
+            pattern_peak_indices = set()
             if pattern_max_patterns > 0 and len(peak_indices) >= pattern_min_reps:
                 pattern_analysis = self._analyze_repeating_patterns(
                     rms_envelope_db,
@@ -1369,16 +1383,41 @@ class MusicAnalyzer:
                     window_ms * 2  # Use 2x window for pattern extraction
                 )
                 band_results["pattern_analysis"] = pattern_analysis
+                
+                # Collect all peak indices that are part of patterns
+                patterns_detected = pattern_analysis.get("patterns_detected", 0)
+                for pattern_num in range(1, patterns_detected + 1):
+                    pattern_key = f"pattern_{pattern_num}"
+                    if pattern_key in pattern_analysis:
+                        pattern_peak_indices.update(pattern_analysis[pattern_key].get("peak_indices", []))
             else:
                 band_results["pattern_analysis"] = {"patterns_detected": 0}
             
-            # Store RMS envelope for potential reuse (optional - can be removed to save memory)
-            # band_results["rms_envelope_db"] = rms_envelope_db  # Commented for memory efficiency
+            # Worst-case analysis (if enabled) - exclude pattern peaks (non-repeating only)
+            if worst_case_num > 0 and len(peak_indices) > 0:
+                worst_case_envelopes = self._analyze_worst_case_envelopes(
+                    rms_envelope_db,
+                    peak_indices,
+                    peak_values_db,
+                    worst_case_num,
+                    worst_case_sort_by,
+                    attack_threshold_db,
+                    peak_hold_threshold_db,
+                    decay_thresholds_db,
+                    exclude_peak_indices=pattern_peak_indices if pattern_peak_indices else None
+                )
+                band_results["worst_case_envelopes"] = worst_case_envelopes
+            else:
+                band_results["worst_case_envelopes"] = []
+            
+            # Store RMS envelope for visualization (needed for plotting)
+            band_results["rms_envelope_db"] = rms_envelope_db
+            band_results["rms_envelope_time"] = np.arange(len(rms_envelope_db)) / self.sample_rate
             
             results[freq_label] = band_results
             
-            # Memory cleanup
-            del rms_envelope_linear, rms_envelope_db, rms_envelope_db_clean
+            # Memory cleanup (keep rms_envelope_db for visualization)
+            del rms_envelope_linear, rms_envelope_db_clean
         
         logger.info("Envelope statistics analysis complete")
         return results
