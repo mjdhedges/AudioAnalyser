@@ -1530,7 +1530,9 @@ class MusicAnalyzer:
                     max_pattern_window_ms = 500.0
                     worst_case_window_ms = min(worst_case_window_ms, max_pattern_window_ms)
                 else:
-                    worst_case_window_ms = fallback_window_ms
+                    # For Full Spectrum, use same window as pattern analysis (fallback_window_ms * 2)
+                    # This ensures consistent window sizes between analysis and plotting
+                    worst_case_window_ms = fallback_window_ms * 2
                 
                 worst_case_envelopes = self._analyze_worst_case_envelopes(
                     rms_envelope_db,
@@ -1609,6 +1611,7 @@ class MusicAnalyzer:
             
             # Calculate window size based on center frequency (in wavelengths)
             # For Full Spectrum (freq = 0), use fallback absolute window
+            # IMPORTANT: Use same window size as pattern analysis stored windows
             window_was_capped = band_data.get("window_was_capped", False)
             if freq > 0:
                 # Window in seconds = num_wavelengths / frequency
@@ -1620,7 +1623,9 @@ class MusicAnalyzer:
                 if window_ms > max_pattern_window_ms:
                     window_was_capped = True
             else:
-                window_ms = fallback_window_ms
+                # For Full Spectrum, match pattern analysis window (fallback_window_ms * 2)
+                # This ensures stored windows from pattern analysis match plotting window
+                window_ms = fallback_window_ms * 2
             
             window_samples = int(window_ms * self.sample_rate / 1000)
             half_window = window_samples // 2
@@ -1787,6 +1792,7 @@ class MusicAnalyzer:
             
             # Calculate window size based on center frequency (in wavelengths)
             # For Full Spectrum (freq = 0), use fallback absolute window
+            # IMPORTANT: Use same window size as worst-case analysis stored windows
             window_was_capped = band_data.get("window_was_capped", False)
             if freq > 0:
                 # Window in seconds = num_wavelengths / frequency
@@ -1798,7 +1804,9 @@ class MusicAnalyzer:
                 if window_ms > max_pattern_window_ms:
                     window_was_capped = True
             else:
-                window_ms = fallback_window_ms
+                # For Full Spectrum, match worst-case analysis window (fallback_window_ms * 2)
+                # This ensures stored windows from worst-case analysis match plotting window
+                window_ms = fallback_window_ms * 2
             
             window_samples = int(window_ms * self.sample_rate / 1000)
             half_window = window_samples // 2
