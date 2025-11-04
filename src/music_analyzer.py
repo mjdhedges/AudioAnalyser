@@ -1225,10 +1225,15 @@ class MusicAnalyzer:
         
         result = {"patterns_detected": len(pattern_groups)}
         
-        # Analyze each pattern group
-        for pattern_num, group in enumerate(pattern_groups, 1):
-            group_peak_indices = [valid_peak_indices[i] for i in group]
-            group_peak_times = [idx / self.sample_rate for idx in group_peak_indices]
+            # Analyze each pattern group
+            for pattern_num, group in enumerate(pattern_groups, 1):
+                group_peak_indices = [valid_peak_indices[i] for i in group]
+                group_peak_times = [idx / self.sample_rate for idx in group_peak_indices]
+                
+                # Sort by time for consistent ordering
+                sorted_pairs = sorted(zip(group_peak_times, group_peak_indices))
+                group_peak_times = [t for t, _ in sorted_pairs]
+                group_peak_indices = [idx for _, idx in sorted_pairs]
             
             # Calculate inter-peak intervals
             intervals = np.diff(sorted(group_peak_times))
@@ -1517,9 +1522,8 @@ class MusicAnalyzer:
                 ax.plot(env_data["time_ms"], env_data["envelope"], 
                        color=color, linewidth=2, label=label, alpha=0.8)
                 
-                # Mark peak
-                peak_idx_rel = np.argmax(env_data["envelope"])
-                ax.plot(env_data["time_ms"][peak_idx_rel], env_data["peak_value_db"],
+                # Mark peak (should be at time 0)
+                ax.plot(0, env_data["peak_value_db"],
                        'o', color=color, markersize=8, markeredgecolor='black', markeredgewidth=1)
             
             ax.set_xlabel('Time (ms relative to peak)')
