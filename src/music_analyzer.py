@@ -1383,12 +1383,14 @@ class MusicAnalyzer:
                 band_results["pattern_analysis"] = {"patterns_detected": 0}
             
             # Worst-case analysis (if enabled) - exclude pattern peaks (non-repeating only)
-            if worst_case_num > 0 and len(peak_indices) > 0:
+            # Always analyze at least 3 worst-case envelopes for visualization
+            worst_case_num_vis = max(worst_case_num, 3)
+            if worst_case_num_vis > 0 and len(peak_indices) > 0:
                 worst_case_envelopes = self._analyze_worst_case_envelopes(
                     rms_envelope_db,
                     peak_indices,
                     peak_values_db,
-                    worst_case_num,
+                    worst_case_num_vis,
                     worst_case_sort_by,
                     attack_threshold_db,
                     peak_hold_threshold_db,
