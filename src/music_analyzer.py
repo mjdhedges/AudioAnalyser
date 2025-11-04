@@ -1044,7 +1044,8 @@ class MusicAnalyzer:
                                      attack_threshold_db: float,
                                      peak_hold_threshold_db: float,
                                      decay_thresholds_db: List[float],
-                                     exclude_peak_indices: Optional[set] = None) -> List[Dict]:
+                                     exclude_peak_indices: Optional[set] = None,
+                                     window_ms: Optional[float] = None) -> List[Dict]:
         """Analyze worst-case envelopes efficiently using partition-based selection.
         
         Args:
@@ -1786,10 +1787,16 @@ class MusicAnalyzer:
             
             # Calculate window size based on center frequency (in wavelengths)
             # For Full Spectrum (freq = 0), use fallback absolute window
+            window_was_capped = band_data.get("window_was_capped", False)
             if freq > 0:
                 # Window in seconds = num_wavelengths / frequency
                 window_seconds = num_wavelengths / freq
                 window_ms = window_seconds * 1000.0
+                
+                # Check if this frequency would exceed pattern analysis cap
+                max_pattern_window_ms = 500.0
+                if window_ms > max_pattern_window_ms:
+                    window_was_capped = True
             else:
                 window_ms = fallback_window_ms
             
