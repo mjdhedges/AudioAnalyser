@@ -1,153 +1,507 @@
+# ============================================================================
 # Music Analyser Configuration File
-# This file defines default parameters for audio analysis
-# Parameters can be overridden via command line arguments
+# ============================================================================
+# This file defines default parameters for audio analysis.
+# Parameters can be overridden via command line arguments.
+# All time values are in seconds unless specified as milliseconds (ms).
+# All level values are in dBFS (decibels relative to full scale) unless otherwise noted.
+# ============================================================================
+
+# ============================================================================
+# AUDIO PROCESSING & ANALYSIS SETTINGS
+# ============================================================================
+# Core parameters for audio loading, resampling, and chunk processing
+# ============================================================================
 
 [analysis]
-# Time-domain analysis parameters
-chunk_duration_seconds = 2.0
+# Sample rate for audio processing (Hz)
+# Audio files will be resampled to this rate if different
+# Common values: 44100 (CD quality), 48000 (professional), 96000 (high-res)
 sample_rate = 44100
 
-# Default directories
+# Duration of each analysis chunk in seconds
+# Audio is processed in chunks for memory efficiency
+# Smaller chunks = less memory but more processing overhead
+# Larger chunks = more memory but faster overall
+chunk_duration_seconds = 2.0
+
+# Default input directory for audio tracks
+# Can be overridden via command line --tracks-dir option
 tracks_dir = "Tracks"
+
+# Default output directory for analysis results
+# Can be overridden via command line --output-dir option
 output_dir = "analysis"
 
-# Octave band analysis parameters
+
+# ============================================================================
+# OCTAVE BAND FILTERING SETTINGS
+# ============================================================================
+# Parameters for frequency-domain analysis using octave band filters
+# ============================================================================
+
+# Center frequencies for octave band analysis (Hz)
+# Each band covers frequencies from center/sqrt(2) to center*sqrt(2)
+# Standard 1/1 octave bands from 16 Hz to 16 kHz
+# Full Spectrum (0 Hz) is automatically included for comparison
 octave_center_frequencies = [16.0, 31.25, 62.5, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0]
-filter_order = 4  # All bands use 4th order Butterworth for consistent steepness
-# Note: 4th order provides -24dB/octave rolloff, adequate precision at all frequencies
 
-# Plotting parameters
-[plotting]
-# Figure sizes
-octave_spectrum_figsize = [12, 8]
-crest_factor_figsize = [12, 8]
-histogram_figsize = [15, 10]
-crest_factor_time_figsize = [14, 10]
-octave_crest_factor_time_figsize = [14, 12]
+# Butterworth filter order for octave band filtering
+# Higher order = steeper rolloff, better isolation between bands
+# 4th order provides -24 dB/octave rolloff (adequate precision at all frequencies)
+# Options: 2, 4, 6, 8 (higher = more CPU intensive)
+filter_order = 4
 
-# Axis limits
-octave_spectrum_xlim = [15, 20000]
-octave_spectrum_ylim = [-60, 3]
-crest_factor_xlim = [15, 20000]
-crest_factor_ylim_min = 0
-crest_factor_ylim_max = 30
-octave_crest_factor_time_ylim = [0, 40]
 
-# Histogram parameters
-histogram_bins = 51
-histogram_range = [-1, 1]
-log_histogram_bins = 51
-log_histogram_noise_floor_db = -60
-log_histogram_max_db = 0
-log_histogram_max_bin_size_db = 3.0
+# ============================================================================
+# ENVELOPE ANALYSIS SETTINGS
+# ============================================================================
+# Parameters for time-domain envelope analysis and pattern detection
+# Used for analyzing attack, decay, and repeating patterns in audio
+# ============================================================================
 
-# DPI and quality
-dpi = 300
-batch_dpi = 150  # Lower DPI for faster batch processing
-high_quality_dpi = 300  # For single-file analysis
-bbox_inches = "tight"
-
-# Advanced statistics parameters
-[advanced_stats]
-# Peak analysis thresholds
-hot_peaks_threshold_db = -1.0      # Near-clipping events threshold
-clip_events_threshold_db = -0.1    # Actual clipping events threshold
-peak_saturation_threshold_db = -3.0 # Heavily compressed regions threshold
-
-# Transient analysis
-transient_threshold_db = 3.0       # Significant level change threshold
-
-# Envelope analysis parameters
 [envelope_analysis]
-# RMS envelope calculation (shared with RMS envelope plots)
+
+# ----------------------------------------------------------------------------
+# RMS Envelope Calculation
+# ----------------------------------------------------------------------------
+
+# RMS envelope window size in milliseconds
+# Larger window = smoother envelope, less detail
+# Smaller window = more detailed envelope, more noise
+# Used for calculating instantaneous RMS level over time
 rms_envelope_window_ms = 10.0
 
-# Peak detection
+# ----------------------------------------------------------------------------
+# Peak Detection
+# ----------------------------------------------------------------------------
+
+# Minimum peak height in dBFS for detection
+# Peaks below this threshold are ignored
+# Lower values detect more peaks (including quiet ones)
+# Higher values only detect loud peaks
 peak_detection_min_height_db = -40
+
+# Minimum distance between detected peaks in milliseconds
+# Prevents detecting multiple peaks from the same event
+# Increase to detect fewer, more distinct peaks
+# Decrease to detect closely-spaced peaks
 peak_detection_min_distance_ms = 50.0
 
-# Worst-case envelope analysis (for one-off events like film LFE)
-worst_case_num_envelopes = 1  # Find 1-10 worst envelopes
-worst_case_sort_by = "peak_value"  # Options: "peak_value", "decay_time", "energy"
+# ----------------------------------------------------------------------------
+# Worst-Case Envelope Analysis (One-Off Events)
+# ----------------------------------------------------------------------------
+# Identifies non-repeating extreme envelopes (e.g., film LFE explosions)
+# These are independent events that don't form repeating patterns
 
-# Pattern analysis (for repeating beats)
-pattern_min_repetitions = 3  # Minimum repeats to call it a pattern
-pattern_max_patterns_per_band = 1  # Number of patterns to detect (start with 1)
-pattern_similarity_threshold = 0.85  # Correlation threshold (0-1)
-pattern_timing_tolerance_percent = 10.0  # Timing variation tolerance
+# Number of worst-case envelopes to find per octave band
+# These are the most extreme non-repeating events
+# Range: 1-10 (more = slower analysis)
+worst_case_num_envelopes = 1
 
-# Envelope characteristics
-attack_threshold_db = -20  # Below peak to detect attack start
-peak_hold_threshold_db = -1.0  # Within threshold for peak hold
-decay_thresholds_db = [-3.0, -6.0, -9.0, -12.0]  # Decay measurement points
+# Sorting criterion for worst-case envelope selection
+# Options:
+#   "peak_value" - Sort by peak level (highest peaks first)
+#   "decay_time" - Sort by decay time (longest decays first)
+#   "energy" - Sort by total energy content
+worst_case_sort_by = "peak_value"
 
-# Envelope visualization
-envelope_plots_num_pattern_envelopes = 10  # Number of pattern envelopes to plot per band
-envelope_plots_num_independent_envelopes = 3  # Number of independent (worst-case) envelopes to plot per band
-envelope_plots_window_ms = 200.0  # Time window around peak to show (ms)
-envelope_plots_ylim_min = -30  # Minimum Y-axis limit (dBFS)
-envelope_plots_ylim_max = 0  # Maximum Y-axis limit (dBFS)
+# ----------------------------------------------------------------------------
+# Pattern Analysis (Repeating Patterns)
+# ----------------------------------------------------------------------------
+# Identifies repeating envelope patterns (e.g., kick drum beats, rhythm)
 
-# Peak distribution ranges (separate arrays for bounds and labels)
+# Minimum number of repetitions required to classify as a pattern
+# Patterns must repeat at least this many times
+# Higher values = stricter pattern detection (fewer false positives)
+# Lower values = more lenient (may detect non-patterns)
+pattern_min_repetitions = 3
+
+# Maximum number of patterns to detect per octave band
+# Each band can have multiple distinct patterns
+# Start with 1 pattern, increase if multiple rhythms exist
+pattern_max_patterns_per_band = 1
+
+# Correlation threshold for pattern matching (0.0 to 1.0)
+# Higher values = stricter similarity requirement
+# 0.85 = patterns must be 85% similar to be grouped together
+# Lower values allow more variation in pattern shape
+pattern_similarity_threshold = 0.85
+
+# Timing variation tolerance as percentage
+# Allows patterns to have slight timing variations (e.g., human feel)
+# 10% = patterns can vary by ±10% in timing and still match
+# Higher values = more tolerant of timing variations
+pattern_timing_tolerance_percent = 10.0
+
+# ----------------------------------------------------------------------------
+# Envelope Characteristics Measurement
+# ----------------------------------------------------------------------------
+
+# Attack detection threshold in dB below peak
+# Attack time is measured from this level to peak
+# -20 dB = measure attack from 20 dB below peak
+attack_threshold_db = -20
+
+# Peak hold threshold in dB below peak
+# Peak hold time measures how long signal stays within this threshold
+# -1.0 dB = signal must stay within 1 dB of peak
+peak_hold_threshold_db = -1.0
+
+# Decay measurement points in dB below peak
+# Measures time to decay to each threshold level
+# Values are relative to peak (e.g., -3 dB = 3 dB below peak)
+# If decay doesn't reach a threshold, that measurement is omitted
+decay_thresholds_db = [-3.0, -6.0, -9.0, -12.0]
+
+# ----------------------------------------------------------------------------
+# Envelope Visualization
+# ----------------------------------------------------------------------------
+
+# Number of pattern envelopes to plot per octave band
+# Shows the top N repeating pattern envelopes on pattern plots
+# More envelopes = more detailed visualization but busier plots
+envelope_plots_num_pattern_envelopes = 10
+
+# Number of independent (worst-case) envelopes to plot per octave band
+# Shows the top N non-repeating worst-case envelopes on independent plots
+# More envelopes = compare more extreme events
+envelope_plots_num_independent_envelopes = 3
+
+# Time window around peak to display in plots (milliseconds)
+# Shows envelope from -window/2 to +window/2 around each peak
+# Larger window = more context but less detail
+# Smaller window = more detail but less context
+envelope_plots_window_ms = 200.0
+
+# Y-axis minimum limit for envelope plots (dBFS)
+# Lower values show more of the decay tail
+envelope_plots_ylim_min = -30
+
+# Y-axis maximum limit for envelope plots (dBFS)
+# Upper values show clipping region better
+envelope_plots_ylim_max = 0
+
+
+# ============================================================================
+# PLOTTING & VISUALIZATION SETTINGS
+# ============================================================================
+# Parameters for generating analysis plots and charts
+# ============================================================================
+
+[plotting]
+
+# ----------------------------------------------------------------------------
+# Figure Sizes (width, height in inches)
+# ----------------------------------------------------------------------------
+
+# Size for octave spectrum plots (frequency response)
+octave_spectrum_figsize = [12, 8]
+
+# Size for crest factor plots (peak-to-average ratio)
+crest_factor_figsize = [12, 8]
+
+# Size for histogram plots (level distribution)
+histogram_figsize = [15, 10]
+
+# Size for crest factor vs time plots
+crest_factor_time_figsize = [14, 10]
+
+# Size for octave crest factor vs time plots
+octave_crest_factor_time_figsize = [14, 12]
+
+# ----------------------------------------------------------------------------
+# Axis Limits
+# ----------------------------------------------------------------------------
+
+# Octave spectrum plot: X-axis frequency range (Hz)
+octave_spectrum_xlim = [15, 20000]
+
+# Octave spectrum plot: Y-axis level range (dBFS)
+octave_spectrum_ylim = [-60, 3]
+
+# Crest factor plot: X-axis frequency range (Hz)
+crest_factor_xlim = [15, 20000]
+
+# Crest factor plot: Y-axis minimum value
+crest_factor_ylim_min = 0
+
+# Crest factor plot: Y-axis maximum value
+crest_factor_ylim_max = 30
+
+# Octave crest factor vs time: Y-axis range
+octave_crest_factor_time_ylim = [0, 40]
+
+# ----------------------------------------------------------------------------
+# Histogram Parameters
+# ----------------------------------------------------------------------------
+
+# Number of bins for linear histogram (level distribution)
+# More bins = finer detail but more noise
+histogram_bins = 51
+
+# Range for linear histogram (dBFS)
+# Shows level distribution from min to max
+histogram_range = [-1, 1]
+
+# Number of bins for logarithmic histogram (dB scale)
+log_histogram_bins = 51
+
+# Noise floor for logarithmic histogram (dBFS)
+# Values below this are excluded from log histogram
+log_histogram_noise_floor_db = -60
+
+# Maximum level for logarithmic histogram (dBFS)
+log_histogram_max_db = 0
+
+# Maximum bin size for logarithmic histogram (dB)
+# Controls granularity of log histogram bins
+log_histogram_max_bin_size_db = 3.0
+
+# ----------------------------------------------------------------------------
+# Output Quality
+# ----------------------------------------------------------------------------
+
+# Dots per inch for plot output (general setting)
+# Higher DPI = better quality but larger file sizes
+# 300 DPI is print quality, 150 DPI is screen quality
+dpi = 300
+
+# DPI for batch processing (faster, lower quality)
+# Used when processing multiple files
+batch_dpi = 150
+
+# DPI for single-file analysis (higher quality)
+# Used when processing individual files
+high_quality_dpi = 300
+
+# Bounding box for saved plots
+# "tight" removes excess whitespace around plots
+bbox_inches = "tight"
+
+
+# ============================================================================
+# ADVANCED STATISTICS SETTINGS
+# ============================================================================
+# Parameters for statistical analysis and peak classification
+# ============================================================================
+
+[advanced_stats]
+
+# ----------------------------------------------------------------------------
+# Peak Classification Thresholds
+# ----------------------------------------------------------------------------
+
+# Hot peaks threshold (dBFS)
+# Peaks above this are considered "hot" (near clipping)
+# Used for identifying loud but not clipping events
+hot_peaks_threshold_db = -1.0
+
+# Clipping events threshold (dBFS)
+# Peaks above this are considered actual clipping
+# Very close to 0 dBFS (full scale)
+clip_events_threshold_db = -0.1
+
+# Peak saturation threshold (dBFS)
+# Regions above this are considered heavily compressed/saturated
+# Indicates dynamic range reduction
+peak_saturation_threshold_db = -3.0
+
+# ----------------------------------------------------------------------------
+# Transient Analysis
+# ----------------------------------------------------------------------------
+
+# Transient detection threshold (dB)
+# Significant level changes above this threshold are detected as transients
+# Used for identifying sudden changes in audio level
+transient_threshold_db = 3.0
+
+# ----------------------------------------------------------------------------
+# Peak Distribution Ranges
+# ----------------------------------------------------------------------------
+# Defines level ranges for categorizing peaks
+# Used for statistical analysis of peak distribution
+
+# Minimum levels for each category (dBFS)
 peak_distribution_ranges_min = [-0.1, -1.0, -3.0, -6.0, -12.0, -60.0]
+
+# Maximum levels for each category (dBFS)
 peak_distribution_ranges_max = [0.0, -0.1, -1.0, -3.0, -6.0, -12.0]
+
+# Labels for each category (must match number of ranges)
 peak_distribution_ranges_labels = ["clipping", "hot", "loud", "moderate", "quiet", "very_quiet"]
 
-# Frequency band definitions
-bass_frequencies = [31.25, 62.5, 125.0]      # Bass energy calculation
-mid_frequencies = [250.0, 500.0, 1000.0, 2000.0]  # Mid energy calculation
-treble_frequencies = [4000.0, 8000.0, 16000.0]     # Treble energy calculation
+# ----------------------------------------------------------------------------
+# Frequency Band Definitions
+# ----------------------------------------------------------------------------
+# Used for calculating energy in different frequency ranges
 
-# File handling parameters
+# Bass frequencies (Hz) - low frequency energy
+bass_frequencies = [31.25, 62.5, 125.0]
+
+# Mid frequencies (Hz) - mid frequency energy
+mid_frequencies = [250.0, 500.0, 1000.0, 2000.0]
+
+# Treble frequencies (Hz) - high frequency energy
+treble_frequencies = [4000.0, 8000.0, 16000.0]
+
+
+# ============================================================================
+# FILE HANDLING SETTINGS
+# ============================================================================
+# Parameters for input/output file management
+# ============================================================================
+
 [file_handling]
-# Supported audio formats
+
+# Supported audio file formats (extensions without dot)
+# Files with these extensions will be processed
 supported_formats = ["wav", "flac", "mp3", "aiff", "m4a"]
 
-# Output directory structure
+# Create subdirectories in output directory
+# If true, each track gets its own subdirectory
+# If false, all files go directly into output directory
 create_subdirectories = true
+
+# Use track name for output directory
+# If true, creates subdirectory named after track (without extension)
+# If false, uses generic naming
 use_track_name_for_output = true
 
-# CSV export parameters
+
+# ============================================================================
+# CSV EXPORT SETTINGS
+# ============================================================================
+# Parameters for exporting analysis results to CSV files
+# ============================================================================
+
 [export]
-# CSV sections to include
+
+# Include track metadata section in CSV
+# Metadata includes: filename, duration, sample rate, channels, etc.
 include_track_metadata = true
+
+# Include advanced statistics section in CSV
+# Includes: peak analysis, transient analysis, frequency band energy
 include_advanced_statistics = true
+
+# Include octave band analysis section in CSV
+# Includes: RMS levels, crest factors, peak levels per octave band
 include_octave_band_analysis = true
+
+# Include time domain analysis section in CSV
+# Includes: RMS, peak, crest factor vs time data
 include_time_domain_analysis = true
+
+# Include time domain summary section in CSV
+# Includes: statistical summary of time-domain metrics
 include_time_domain_summary = true
+
+# Include histogram data section in CSV
+# Includes: level distribution histograms (linear and log)
 include_histogram_data = true
+
+# Include extreme chunks analysis section in CSV
+# Includes: identification of chunks with extreme characteristics
 include_extreme_chunks_analysis = true
 
 # Note: Octave crest factor time data is excluded for efficiency
 # as it would require recalculating octave analysis for every chunk
 
-# Logging parameters
-[logging]
-level = "INFO"
-format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-include_debug_info = false
 
-# Performance parameters
+# ============================================================================
+# PERFORMANCE & CACHING SETTINGS
+# ============================================================================
+# Parameters for optimizing performance and memory usage
+# ============================================================================
+
 [performance]
-# Memory management
+
+# ----------------------------------------------------------------------------
+# Memory Management
+# ----------------------------------------------------------------------------
+
+# Maximum chunk size in megabytes before memory optimization kicks in
+# Larger values allow bigger chunks but use more memory
 max_chunk_size_mb = 100
+
+# Enable memory optimization strategies
+# Reduces memory usage at cost of slight CPU overhead
 enable_memory_optimization = true
-use_float32 = true  # Use float32 instead of float64 for 50% memory reduction
 
-# Parallel processing for octave bank creation (4-8x speedup on multi-core)
+# Use float32 instead of float64 for audio data
+# Reduces memory usage by 50% with minimal quality loss
+# Recommended for large files or batch processing
+use_float32 = true
+
+# ----------------------------------------------------------------------------
+# Parallel Processing
+# ----------------------------------------------------------------------------
+
+# Enable parallel processing for octave bank creation
+# Processes multiple octave bands simultaneously
+# Provides 4-8x speedup on multi-core systems
 enable_parallel_processing = true
-max_workers = 4  # Set to CPU count or leave blank for auto-detection
 
-# Caching for octave banks (near-instant re-analysis)
-# DISABLED: Creates 500MB+ cache files per track - not practical
+# Maximum number of worker threads for parallel processing
+# Set to CPU count or leave blank for auto-detection
+# More workers = faster but more memory usage
+max_workers = 4
+
+# ----------------------------------------------------------------------------
+# Caching
+# ----------------------------------------------------------------------------
+
+# Enable caching for octave bank analysis
+# Creates cache files for faster re-analysis of same tracks
+# DISABLED by default: Creates 500MB+ cache files per track
+# Enable only if frequently re-analyzing same tracks
 enable_octave_cache = false
+
+# Directory for octave bank cache files
 cache_dir = "cache/octave_banks"
 
-# Result caching for plots and CSV (skip if unchanged)
+# Enable result caching for plots and CSV files
+# Skips regeneration if source file and config haven't changed
+# Significantly speeds up re-analysis
 enable_result_cache = true
+
+# Directory for result cache metadata
 result_cache_dir = "cache/results"
 
-# Batch processing parallelism
-# REDUCED: 4 workers = 2GB+ RAM per batch (too high for large tracks)
+# ----------------------------------------------------------------------------
+# Batch Processing
+# ----------------------------------------------------------------------------
+
+# Enable parallel batch processing
+# Processes multiple tracks simultaneously
+# REDUCED by default: 4 workers = 2GB+ RAM per batch (too high for large tracks)
 enable_parallel_batch = true
-max_batch_workers = 2  # Use 1-2 workers for reasonable memory usage
+
+# Maximum number of workers for batch processing
+# Use 1-2 workers for reasonable memory usage
+# More workers = faster batch processing but much more RAM
+max_batch_workers = 2
+
+
+# ============================================================================
+# LOGGING SETTINGS
+# ============================================================================
+# Parameters for logging and debug output
+# ============================================================================
+
+[logging]
+
+# Logging level
+# Options: "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
+# DEBUG = very verbose, INFO = normal, WARNING+ = only problems
+level = "INFO"
+
+# Log message format
+# Format string for log output
+# %(asctime)s = timestamp, %(name)s = logger name, %(levelname)s = level, %(message)s = message
+format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# Include debug information in logs
+# Adds extra context to log messages (e.g., file paths, array shapes)
+include_debug_info = false
