@@ -1113,6 +1113,21 @@ class MusicAnalyzer:
                 envelope_db, peak_idx, peak_value_db, decay_thresholds_db
             )
             
+            # Extract envelope window for plotting if window_ms provided
+            envelope_window = None
+            time_window_ms = None
+            if window_ms is not None:
+                window_samples = int(window_ms * self.sample_rate / 1000)
+                half_window = window_samples // 2
+                start_idx = max(0, peak_idx - half_window)
+                end_idx = min(len(envelope_db), peak_idx + half_window)
+                if end_idx - start_idx >= window_samples // 2:
+                    envelope_window = envelope_db[start_idx:end_idx]
+                    # Convert to relative time (ms from peak)
+                    peak_time_idx = peak_idx - start_idx
+                    time_window_ms = ((np.arange(len(envelope_window)) - peak_time_idx) / 
+                                     self.sample_rate * 1000.0)
+            
             envelope_data = {
                 "rank": rank,
                 "peak_value_db": float(peak_value_db),
@@ -1120,7 +1135,9 @@ class MusicAnalyzer:
                 "peak_idx": int(peak_idx),  # Store for mutual exclusivity checking
                 "attack_time_ms": float(attack_time_ms),
                 "peak_hold_time_ms": float(peak_hold_time_ms),
-                "decay_times": decay_times
+                "decay_times": decay_times,
+                "envelope_window": envelope_window,  # Store for plotting reuse
+                "time_window_ms": time_window_ms  # Store relative time window
             }
             
             worst_case_envelopes.append(envelope_data)
@@ -1325,6 +1342,24 @@ class MusicAnalyzer:
             # Calculate BPM
             beats_per_minute = 60.0 / mean_interval if mean_interval > 0 else 0.0
             
+            # Store envelope windows for plotting (extract once, reuse in plots)
+            envelope_windows = []
+            time_windows_ms = []
+            for peak_idx in group_peak_indices:
+                start_idx = max(0, peak_idx - half_window)
+                end_idx = min(len(envelope_db), peak_idx + half_window)
+                if end_idx - start_idx >= window_samples // 2:
+                    window_data = envelope_db[start_idx:end_idx]
+                    # Convert to relative time (ms from peak)
+                    peak_time_idx = peak_idx - start_idx
+                    time_relative_ms = ((np.arange(len(window_data)) - peak_time_idx) / 
+                                       self.sample_rate * 1000.0)
+                    envelope_windows.append(window_data)
+                    time_windows_ms.append(time_relative_ms)
+                else:
+                    envelope_windows.append(None)
+                    time_windows_ms.append(None)
+            
             result[f"pattern_{pattern_num}"] = {
                 "num_repetitions": len(group),
                 "mean_interval_seconds": mean_interval,
@@ -1336,7 +1371,9 @@ class MusicAnalyzer:
                 "pattern_confidence": confidence,
                 "beats_per_minute": beats_per_minute,
                 "peak_times_seconds": group_peak_times,
-                "peak_indices": group_peak_indices  # Store peak indices for filtering
+                "peak_indices": group_peak_indices,  # Store peak indices for filtering
+                "envelope_windows": envelope_windows,  # Store extracted windows for plotting
+                "time_windows_ms": time_windows_ms  # Store relative time windows
             }
         
         return result
@@ -1484,6 +1521,16 @@ class MusicAnalyzer:
             # Always analyze at least 3 worst-case envelopes for visualization
             worst_case_num_vis = max(worst_case_num, 3)
             if worst_case_num_vis > 0 and len(peak_indices) > 0:
+                # Calculate plotting window for worst-case envelopes (same as pattern analysis)
+                if freq > 0:
+                    num_wavelengths = config.get('envelope_plots_num_wavelengths', 50)
+                    period = 1.0 / freq
+                    worst_case_window_ms = (num_wavelengths * period) * 1000.0
+                    max_pattern_window_ms = 500.0
+                    worst_case_window_ms = min(worst_case_window_ms, max_pattern_window_ms)
+                else:
+                    worst_case_window_ms = fallback_window_ms
+                
                 worst_case_envelopes = self._analyze_worst_case_envelopes(
                     rms_envelope_db,
                     peak_indices,
@@ -1493,7 +1540,8 @@ class MusicAnalyzer:
                     attack_threshold_db,
                     peak_hold_threshold_db,
                     decay_thresholds_db,
-                    exclude_peak_indices=pattern_peak_indices if pattern_peak_indices else None
+                    exclude_peak_indices=pattern_peak_indices if pattern_peak_indices else None,
+                    window_ms=worst_case_window_ms
                 )
                 band_results["worst_case_envelopes"] = worst_case_envelopes
             else:
@@ -1596,8 +1644,12 @@ class MusicAnalyzer:
                 peak_indices = pattern.get("peak_indices", [])
                 peak_times = pattern.get("peak_times_seconds", [])
                 
+                # Use stored envelope windows if available (from pattern analysis)
+                stored_windows = pattern.get("envelope_windows", None)
+                stored_time_windows = pattern.get("time_windows_ms", None)
+                
                 # Extract envelope around each peak in this pattern
-                for peak_idx, peak_time in zip(peak_indices, peak_times):
+                for idx, (peak_idx, peak_time) in enumerate(zip(peak_indices, peak_times)):
                     # Ensure peak_idx is within bounds
                     if peak_idx < 0 or peak_idx >= len(rms_envelope_db):
                         continue
@@ -1606,21 +1658,27 @@ class MusicAnalyzer:
                     if peak_idx in independent_peak_indices:
                         continue
                     
-                    start_idx = max(0, peak_idx - half_window)
-                    end_idx = min(len(rms_envelope_db), peak_idx + half_window)
-                    
-                    if end_idx - start_idx < window_samples // 2:
-                        continue
-                    
-                    envelope_window = rms_envelope_db[start_idx:end_idx]
-                    time_window = rms_envelope_time[start_idx:end_idx]
-                    
-                    # Convert time to relative (ms from peak)
-                    peak_time_idx = peak_idx - start_idx
-                    if peak_time_idx < 0 or peak_time_idx >= len(time_window):
-                        continue
-                    
-                    time_relative_ms = (time_window - time_window[peak_time_idx]) * 1000.0
+                    # Reuse stored window if available, otherwise extract
+                    if stored_windows is not None and idx < len(stored_windows) and stored_windows[idx] is not None:
+                        envelope_window = stored_windows[idx]
+                        time_relative_ms = stored_time_windows[idx]
+                    else:
+                        # Fallback: extract window (shouldn't happen if pattern analysis stored windows)
+                        start_idx = max(0, peak_idx - half_window)
+                        end_idx = min(len(rms_envelope_db), peak_idx + half_window)
+                        
+                        if end_idx - start_idx < window_samples // 2:
+                            continue
+                        
+                        envelope_window = rms_envelope_db[start_idx:end_idx]
+                        time_window = rms_envelope_time[start_idx:end_idx]
+                        
+                        # Convert time to relative (ms from peak)
+                        peak_time_idx = peak_idx - start_idx
+                        if peak_time_idx < 0 or peak_time_idx >= len(time_window):
+                            continue
+                        
+                        time_relative_ms = (time_window - time_window[peak_time_idx]) * 1000.0
                     
                     peak_value_db = rms_envelope_db[peak_idx]
                     
@@ -1753,19 +1811,24 @@ class MusicAnalyzer:
                 peak_idx = int(peak_time_seconds * self.sample_rate)
                 peak_value_db = envelope_data["peak_value_db"]
                 
-                # Extract envelope window around peak
-                start_idx = max(0, peak_idx - half_window)
-                end_idx = min(len(rms_envelope_db), peak_idx + half_window)
-                
-                if end_idx - start_idx < window_samples // 2:
-                    continue
-                
-                envelope_window = rms_envelope_db[start_idx:end_idx]
-                time_window = rms_envelope_time[start_idx:end_idx]
-                
-                # Convert time to relative (ms from peak)
-                peak_time_idx = peak_idx - start_idx
-                time_relative_ms = (time_window - time_window[peak_time_idx]) * 1000.0
+                # Reuse stored envelope window if available, otherwise extract
+                if "envelope_window" in envelope_data and envelope_data["envelope_window"] is not None:
+                    envelope_window = envelope_data["envelope_window"]
+                    time_relative_ms = envelope_data["time_window_ms"]
+                else:
+                    # Fallback: extract window (shouldn't happen if worst-case analysis stored windows)
+                    start_idx = max(0, peak_idx - half_window)
+                    end_idx = min(len(rms_envelope_db), peak_idx + half_window)
+                    
+                    if end_idx - start_idx < window_samples // 2:
+                        continue
+                    
+                    envelope_window = rms_envelope_db[start_idx:end_idx]
+                    time_window = rms_envelope_time[start_idx:end_idx]
+                    
+                    # Convert time to relative (ms from peak)
+                    peak_time_idx = peak_idx - start_idx
+                    time_relative_ms = (time_window - time_window[peak_time_idx]) * 1000.0
                 
                 label = (f"Rank {envelope_data['rank']} - Peak: {peak_value_db:.1f} dBFS @ "
                         f"{peak_time_seconds:.1f}s")
