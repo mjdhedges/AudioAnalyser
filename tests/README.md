@@ -24,7 +24,7 @@ This directory contains test suites for the Music Analyser project.
 - **`test_audio_processor.py`** - Tests for audio file loading and processing
 - **`test_music_analyzer.py`** - Tests for music analysis functionality
 - **`test_main.py`** - Tests for CLI interface
-- **`test_envelope_methods.py`** - Tests for envelope detection methods
+- **`test_peak_envelope.py`** - Tests for peak envelope processor implementation
 
 ## Quality Test Criteria
 
