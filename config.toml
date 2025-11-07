@@ -93,20 +93,22 @@ filter_order = 4
 
 # Envelope detection method
 # Options:
-#   "rectification_lpf" - Rectification + Low-Pass Filter (recommended, band-relative)
-#   "rms_window" - RMS window method (legacy, fixed window size)
-envelope_method = "rectification_lpf"
+#   "peak_envelope" - Peak envelope follower (recommended, creates line linking wave peaks)
+#   "rms_window" - RMS window method (legacy, fixed window size, fallback only)
+envelope_method = "peak_envelope"
 
-# LPF cutoff multiplier for rectification + LPF method
-# LPF cutoff = multiplier × center_frequency
-# Lower values (1.0-2.0) = smoother but slower response
-# Higher values (4.0-5.0) = faster response but more ripple
-# 4.0 removes rectification ripple effectively while maintaining good peak tracking
-envelope_lpf_multiplier = 4.0
+# Wavelength multiplier for peak envelope release time
+# Attack time = 0ms (instantaneous rise to catch peaks immediately)
+# Release time = multiplier × wavelength (period = 1/frequency)
+# Default 1.0 = release time equals one wavelength (one period)
+# Lower values (0.5) = faster release, envelope decays more quickly
+# Higher values (2.0) = slower release, smoother envelope decay
+# Creates a line that links the peak of every wave cycle
+envelope_wavelength_multiplier = 1.0
 
 # Fallback RMS window size for Full Spectrum band (milliseconds)
 # Used when center_frequency = 0 Hz (Full Spectrum)
-# Only applies when using "rms_window" method or Full Spectrum with "rectification_lpf"
+# Only applies when using "rms_window" method or Full Spectrum with "peak_envelope"
 rms_envelope_window_ms = 10.0
 
 # ----------------------------------------------------------------------------

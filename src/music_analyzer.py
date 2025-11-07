@@ -844,61 +844,99 @@ class MusicAnalyzer:
         
         plt.close(fig)
 
-    def _calculate_rms_envelope(self, signal: np.ndarray,
-                                center_freq: float = 0.0,
-                                method: str = 'rectification_lpf',
-                                lpf_multiplier: float = 4.0,
-                                fallback_window_ms: float = 10.0) -> np.ndarray:
-        """Calculate envelope using rectification + low-pass filter method.
+    def _calculate_peak_envelope(self, signal: np.ndarray,
+                                 center_freq: float = 0.0,
+                                 wavelength_multiplier: float = 1.0,
+                                 fallback_window_ms: float = 10.0) -> np.ndarray:
+        """Calculate peak envelope using standard peak follower with wavelength-based timing.
         
-        This method uses full-wave rectification followed by a low-pass filter
-        at Nx the center frequency. This is band-relative and effectively removes
-        rectification ripple while preserving envelope shape.
+        This method implements a peak envelope follower that creates a line linking
+        the peak of every wave. It uses exponential attack and release times based on
+        the wavelength (period) of the center frequency.
+        
+        Attack time is 0ms (instantaneous rise to catch peaks immediately), while release time
+        follows the full wavelength for smooth decay. Release time is scaled by wavelength_multiplier.
         
         Args:
             signal: Audio signal array (normalized)
             center_freq: Center frequency of the octave band (Hz). Use 0 for Full Spectrum.
-            method: Envelope detection method ('rectification_lpf' or 'rms_window')
-            lpf_multiplier: LPF cutoff multiplier (default 4.0 = 4x center frequency)
+            wavelength_multiplier: Multiplier for attack/release time (default 1.0 = 1x wavelength)
+            fallback_window_ms: Fallback window size in ms for Full Spectrum (center_freq=0)
+            
+        Returns:
+            Peak envelope array in linear scale (same length as input, maintains peak levels)
+        """
+        # Rectify signal (take absolute value)
+        rectified = np.abs(signal)
+        
+        # Calculate period and attack/release time in samples
+        if center_freq > 0:
+            # Calculate period = 1 / frequency (seconds)
+            period = 1.0 / center_freq
+            # Convert to samples: period_samples = (wavelength_multiplier × period) × sample_rate
+            period_samples = (wavelength_multiplier * period) * self.sample_rate
+            # Ensure minimum of 1 sample
+            period_samples = max(1.0, period_samples)
+        else:
+            # Full Spectrum (0 Hz) - use fallback window as period
+            period_samples = (fallback_window_ms / 1000.0) * self.sample_rate
+            period_samples = max(1.0, period_samples)
+        
+        # Calculate release coefficient for exponential decay
+        # Attack: 0ms (instantaneous rise to catch peaks immediately)
+        # Release: wavelength-based decay for smooth release
+        # Using standard exponential: coeff = 1 - exp(-1 / time_constant)
+        release_time_samples = period_samples  # Wavelength-based release
+        release_coeff = 1.0 - np.exp(-1.0 / release_time_samples)
+        
+        # Initialize envelope array
+        envelope = np.zeros_like(rectified)
+        
+        # Process sample-by-sample with peak follower algorithm
+        # Start with first sample
+        envelope[0] = rectified[0]
+        
+        for i in range(1, len(rectified)):
+            if rectified[i] > envelope[i - 1]:
+                # Rising: 0ms attack (instantaneous rise to catch peaks)
+                envelope[i] = rectified[i]
+            else:
+                # Falling: use release coefficient (wavelength-based decay)
+                envelope[i] = envelope[i - 1] + (rectified[i] - envelope[i - 1]) * release_coeff
+        
+        return envelope
+
+    def _calculate_rms_envelope(self, signal: np.ndarray,
+                                center_freq: float = 0.0,
+                                method: str = 'peak_envelope',
+                                wavelength_multiplier: float = 1.0,
+                                fallback_window_ms: float = 10.0) -> np.ndarray:
+        """Calculate envelope using peak envelope follower (primary method).
+        
+        This method uses a standard peak envelope follower with wavelength-based
+        attack and release times. This creates a line linking peaks of every wave
+        and maintains correct peak levels.
+        
+        Args:
+            signal: Audio signal array (normalized)
+            center_freq: Center frequency of the octave band (Hz). Use 0 for Full Spectrum.
+            method: Envelope detection method ('peak_envelope' or 'rms_window' for legacy)
+            wavelength_multiplier: Multiplier for attack/release time (default 1.0 = 1x wavelength)
             fallback_window_ms: Fallback window size in ms for Full Spectrum (center_freq=0)
             
         Returns:
             Envelope array in linear scale (same length as input)
         """
-        if method == 'rectification_lpf':
-            # Method 1: Rectification + Low-Pass Filter
-            # Rectify: take absolute value (full-wave rectification)
-            rectified = np.abs(signal)
-            
-            if center_freq > 0:
-                # Calculate LPF cutoff: multiplier × center frequency
-                lpf_cutoff = lpf_multiplier * center_freq
-                nyquist = self.sample_rate / 2.0
-                
-                # Ensure cutoff is below Nyquist
-                lpf_cutoff = min(lpf_cutoff, nyquist * 0.95)
-                
-                # Design Butterworth low-pass filter (4th order for steep rolloff)
-                sos = sp_signal.butter(4, lpf_cutoff, btype='low', 
-                                      fs=self.sample_rate, output='sos')
-                
-                # Apply filter to rectified signal
-                envelope = sp_signal.sosfilt(sos, rectified)
-            else:
-                # Full Spectrum (0 Hz) - use fallback RMS window method
-                window_samples = int(fallback_window_ms * self.sample_rate / 1000)
-                window_samples = max(1, min(window_samples, len(signal) // 2))
-                
-                window = np.ones(window_samples, dtype=signal.dtype) / window_samples
-                signal_squared = signal ** 2
-                rms_squared = sp_signal.fftconvolve(signal_squared, window, mode='same')
-                rms_squared = np.maximum(rms_squared, 0.0)
-                envelope = np.sqrt(rms_squared)
-            
-            return envelope
-        
+        if method == 'peak_envelope':
+            # Primary method: Peak envelope follower
+            return self._calculate_peak_envelope(
+                signal,
+                center_freq=center_freq,
+                wavelength_multiplier=wavelength_multiplier,
+                fallback_window_ms=fallback_window_ms
+            )
         else:
-            # Legacy RMS window method (for backwards compatibility)
+            # Legacy RMS window method (for backwards compatibility / Full Spectrum fallback)
             window_samples = int(fallback_window_ms * self.sample_rate / 1000)
             
             if window_samples < 1:
@@ -921,7 +959,7 @@ class MusicAnalyzer:
         """Find attack time using vectorized backward search.
         
         Args:
-            envelope_db: RMS envelope in dBFS
+            envelope_db: Peak envelope in dBFS
             peak_idx: Index of peak sample
             peak_value_db: Peak value in dBFS
             attack_threshold_db: Threshold below peak to detect attack start
@@ -956,7 +994,7 @@ class MusicAnalyzer:
         """Find peak hold time using vectorized forward/backward search.
         
         Args:
-            envelope_db: RMS envelope in dBFS
+            envelope_db: Peak envelope in dBFS
             peak_idx: Index of peak sample
             peak_value_db: Peak value in dBFS
             hold_threshold_db: Threshold for peak hold (within this of peak)
@@ -999,7 +1037,7 @@ class MusicAnalyzer:
         """Find decay times to multiple thresholds in single pass.
         
         Args:
-            envelope_db: RMS envelope in dBFS
+            envelope_db: Peak envelope in dBFS
             peak_idx: Index of peak sample
             peak_value_db: Peak value in dBFS
             decay_thresholds_db: List of decay thresholds in dB (negative values)
@@ -1049,7 +1087,7 @@ class MusicAnalyzer:
         """Analyze worst-case envelopes efficiently using partition-based selection.
         
         Args:
-            envelope_db: RMS envelope in dBFS
+            envelope_db: Peak envelope in dBFS
             peak_indices: Array of peak sample indices
             peak_values_db: Array of peak values in dBFS
             num_envelopes: Number of worst-case envelopes to find
@@ -1210,7 +1248,7 @@ class MusicAnalyzer:
         """Analyze repeating patterns using optimized correlation matching.
         
         Args:
-            envelope_db: RMS envelope in dBFS
+            envelope_db: Peak envelope in dBFS
             peak_indices: Array of peak sample indices
             peak_values_db: Array of peak values in dBFS
             min_repetitions: Minimum number of repetitions to consider a pattern
@@ -1388,8 +1426,8 @@ class MusicAnalyzer:
         1. Worst-case envelope analysis: Finds top N worst envelopes (for one-off events)
         2. Pattern analysis: Detects repeating patterns with configurable minimum repetitions
         
-        The RMS envelope is calculated ONCE per band and reused for all analysis to maximize
-        efficiency.
+        The peak envelope is calculated ONCE per band and reused for all analysis to maximize
+        efficiency. The peak envelope creates a line linking peaks of every wave cycle.
         
         Args:
             octave_bank: Pre-computed octave bank (full track) - shape (samples, bands)
@@ -1407,8 +1445,8 @@ class MusicAnalyzer:
             config = global_config.get('envelope_analysis', {})
         
         # Envelope calculation method
-        envelope_method = config.get('envelope_method', 'rectification_lpf')
-        lpf_multiplier = config.get('envelope_lpf_multiplier', 4.0)
+        envelope_method = config.get('envelope_method', 'peak_envelope')
+        wavelength_multiplier = config.get('envelope_wavelength_multiplier', 1.0)
         fallback_window_ms = config.get('rms_envelope_window_ms', 10.0)
         
         # Peak detection and analysis parameters
@@ -1443,12 +1481,12 @@ class MusicAnalyzer:
             band_signal = octave_bank[:, band_idx]
             
             # Calculate envelope ONCE (reused for all analysis)
-            # Use rectification + LPF method (band-relative)
+            # Use peak envelope follower method (band-relative, wavelength-based)
             rms_envelope_linear = self._calculate_rms_envelope(
                 band_signal,
                 center_freq=freq,
                 method=envelope_method,
-                lpf_multiplier=lpf_multiplier,
+                wavelength_multiplier=wavelength_multiplier,
                 fallback_window_ms=fallback_window_ms
             )
             
@@ -1550,8 +1588,8 @@ class MusicAnalyzer:
             else:
                 band_results["worst_case_envelopes"] = []
             
-            # Store RMS envelope for visualization (needed for plotting)
-            band_results["rms_envelope_db"] = rms_envelope_db
+            # Store peak envelope for visualization (needed for plotting)
+            band_results["rms_envelope_db"] = rms_envelope_db  # Variable name kept for compatibility
             band_results["rms_envelope_time"] = np.arange(len(rms_envelope_db)) / self.sample_rate
             band_results["window_was_capped"] = window_was_capped  # Store cap status for plotting
             
@@ -1576,6 +1614,13 @@ class MusicAnalyzer:
             config: Optional configuration dictionary
         """
         logger.info("Creating pattern envelope plots...")
+        
+        # Create subdirectory for pattern envelope plots
+        if output_dir:
+            pattern_dir = Path(output_dir) / "pattern_envelopes"
+            pattern_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            pattern_dir = None
         
         if config is None:
             from src.config import config as global_config
@@ -1738,8 +1783,8 @@ class MusicAnalyzer:
             
             plt.tight_layout()
             
-            if output_dir:
-                output_path = Path(output_dir) / f"pattern_envelopes_{freq_label.replace(' ', '_').replace('.', '_')}.png"
+            if pattern_dir:
+                output_path = pattern_dir / f"pattern_envelopes_{freq_label.replace(' ', '_').replace('.', '_')}.png"
                 plt.savefig(output_path, dpi=self.dpi, bbox_inches='tight')
                 logger.info(f"Pattern envelope plot saved: {output_path.name}")
             
@@ -1758,6 +1803,13 @@ class MusicAnalyzer:
             config: Optional configuration dictionary
         """
         logger.info("Creating independent envelope plots...")
+        
+        # Create subdirectory for independent envelope plots
+        if output_dir:
+            independent_dir = Path(output_dir) / "independent_envelopes"
+            independent_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            independent_dir = None
         
         if config is None:
             from src.config import config as global_config
@@ -1884,8 +1936,8 @@ class MusicAnalyzer:
             
             plt.tight_layout()
             
-            if output_dir:
-                output_path = Path(output_dir) / f"independent_envelopes_{freq_label.replace(' ', '_').replace('.', '_')}.png"
+            if independent_dir:
+                output_path = independent_dir / f"independent_envelopes_{freq_label.replace(' ', '_').replace('.', '_')}.png"
                 plt.savefig(output_path, dpi=self.dpi, bbox_inches='tight')
                 logger.info(f"Independent envelope plot saved: {output_path.name}")
             
