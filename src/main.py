@@ -21,6 +21,7 @@ from src.audio_processor import AudioProcessor
 from src.music_analyzer import MusicAnalyzer
 from src.octave_filter import OctaveBandFilter
 from src.config import config, Config
+from src.channel_mapping import get_channel_name, get_channel_folder_name
 
 
 def determine_content_type(track_path: Path) -> str:
@@ -185,9 +186,203 @@ def save_result_cache(track_path: Path, output_dir: Path, config_hash: str) -> N
         logger.warning(f"Failed to save cache metadata: {e}")
 
 
+def _process_single_channel(
+    channel_data: np.ndarray,
+    channel_index: int,
+    channel_name: str,
+    channel_folder_name: str,
+    total_channels: int,
+    track_path: Path,
+    track_output_dir: Path,
+    channel_output_dir: Path,
+    audio_processor: AudioProcessor,
+    octave_filter: OctaveBandFilter,
+    sample_rate: int,
+    chunk_duration: float,
+    config: Config,
+    content_type: str,
+    original_peak: float
+) -> bool:
+    """Process a single channel through the full analysis pipeline.
+    
+    Args:
+        channel_data: Single channel audio data (1D array)
+        channel_index: Zero-based channel index
+        channel_name: Channel name for CSV (e.g., "FL", "Channel 1 Left")
+        channel_folder_name: Channel folder name for directory (e.g., "Channel 1 Left", "Channel 1 FL")
+        total_channels: Total number of channels
+        track_path: Path to the audio file
+        track_output_dir: Base track output directory
+        channel_output_dir: Channel-specific output directory
+        audio_processor: AudioProcessor instance
+        octave_filter: OctaveBandFilter instance
+        sample_rate: Sample rate in Hz
+        chunk_duration: Duration of analysis chunks in seconds
+        config: Configuration object
+        content_type: Content type (Music/Film/Test Signal)
+        original_peak: Original peak level for dBFS calculation
+        
+    Returns:
+        True if processing was successful, False otherwise
+    """
+    try:
+        logger.info(f"Processing channel {channel_index + 1}/{total_channels}: {channel_name}")
+        
+        # Initialize analyzer with original peak for dBFS calculations
+        use_batch_dpi = config.get('performance.enable_parallel_batch', False) or \
+                       config.get('performance.enable_result_cache', False)
+        plot_dpi = config.get('plotting.batch_dpi', 150) if use_batch_dpi else \
+                   config.get('plotting.dpi', 300)
+        
+        analyzer = MusicAnalyzer(sample_rate=sample_rate, original_peak=original_peak, dpi=plot_dpi)
+        
+        # Normalize channel audio
+        channel_data = audio_processor.normalize_audio(channel_data)
+        
+        # Get audio info for this channel
+        audio_info = audio_processor.get_audio_info(channel_data, sample_rate)
+        logger.info(f"Channel {channel_name} info: Duration={audio_info['duration_seconds']:.2f}s, "
+                   f"RMS={audio_info['rms']:.4f}, Max={audio_info['max_amplitude']:.4f}")
+        
+        # Create octave bank for this channel
+        use_cascade = config.get('analysis.use_cascade_complementary', True)
+        parallel_enabled = config.get('performance.enable_parallel_processing', False)
+        enable_cache = config.get('performance.enable_octave_cache', True)
+        
+        if parallel_enabled and not use_cascade:
+            logger.info(f"Creating octave bank for channel {channel_name} with parallel processing...")
+            num_workers = config.get('performance.max_workers', None)
+            octave_bank = octave_filter.create_octave_bank_parallel(channel_data, num_workers=num_workers)
+        else:
+            logger.info(f"Creating octave bank for channel {channel_name}...")
+            octave_bank = octave_filter.create_octave_bank(channel_data)
+        
+        # Perform comprehensive analysis
+        logger.info(f"Performing comprehensive analysis for channel {channel_name}...")
+        comprehensive_results = analyzer.analyze_comprehensive(
+            channel_data, 
+            octave_bank, 
+            octave_filter.OCTAVE_CENTER_FREQUENCIES,
+            chunk_duration=chunk_duration
+        )
+        
+        # Extract results
+        analysis_results = comprehensive_results["main_analysis"]
+        time_analysis = comprehensive_results["time_analysis"]
+        chunk_octave_analysis = comprehensive_results["chunk_octave_analysis"]
+        
+        # Generate plots
+        logger.info(f"Generating plots for channel {channel_name}...")
+        analyzer.create_octave_spectrum_plot(
+            analysis_results,
+            output_path=str(channel_output_dir / "octave_spectrum.png"),
+            time_analysis=time_analysis,
+            chunk_octave_analysis=chunk_octave_analysis
+        )
+        analyzer.create_crest_factor_plot(
+            analysis_results,
+            output_path=str(channel_output_dir / "crest_factor.png"),
+            time_analysis=time_analysis,
+            chunk_octave_analysis=chunk_octave_analysis
+        )
+        analyzer.create_histogram_plots(
+            analysis_results,
+            output_dir=str(channel_output_dir),
+            octave_bank=octave_bank
+        )
+        analyzer.create_histogram_plots_log_db(
+            analysis_results,
+            output_dir=str(channel_output_dir),
+            config=config.get_plotting_config(),
+            octave_bank=octave_bank
+        )
+        analyzer.create_crest_factor_time_plot(
+            time_analysis,
+            output_path=str(channel_output_dir / "crest_factor_time.png")
+        )
+        analyzer.create_octave_crest_factor_time_plot(
+            octave_bank,
+            time_analysis,
+            octave_filter.OCTAVE_CENTER_FREQUENCIES,
+            output_path=str(channel_output_dir / "octave_crest_factor_time.png")
+        )
+        
+        # Envelope statistics analysis
+        logger.info(f"Performing envelope statistics analysis for channel {channel_name}...")
+        envelope_stats = analyzer.analyze_envelope_statistics(
+            octave_bank,
+            octave_filter.OCTAVE_CENTER_FREQUENCIES,
+            config=config.get('envelope_analysis', {})
+        )
+        
+        # Create envelope visualization plots
+        logger.info(f"Creating envelope visualization plots for channel {channel_name}...")
+        analyzer.create_pattern_envelope_plots(
+            envelope_stats,
+            octave_filter.OCTAVE_CENTER_FREQUENCIES,
+            output_dir=str(channel_output_dir),
+            config=config.get('envelope_analysis', {})
+        )
+        analyzer.create_independent_envelope_plots(
+            envelope_stats,
+            octave_filter.OCTAVE_CENTER_FREQUENCIES,
+            output_dir=str(channel_output_dir),
+            config=config.get('envelope_analysis', {})
+        )
+        
+        # Memory cleanup
+        import matplotlib.pyplot as plt
+        import gc
+        plt.close('all')
+        gc.collect()
+        
+        # Export results to CSV
+        logger.info(f"Exporting results to CSV for channel {channel_name}...")
+        
+        # Prepare channel-specific metadata
+        track_metadata = {
+            "track_name": track_path.name,
+            "track_path": str(track_path),
+            "content_type": content_type,
+            "channel_index": channel_index,
+            "channel_name": channel_name,
+            "total_channels": total_channels,
+            "duration_seconds": audio_info["duration_seconds"],
+            "sample_rate": sample_rate,
+            "samples": len(channel_data),
+            "channels": 1,  # Single channel being processed
+            "original_peak": original_peak,
+            "original_peak_dbfs": 20 * np.log10(original_peak),
+            "analysis_date": pd.Timestamp.now().isoformat()
+        }
+        
+        analyzer.export_comprehensive_results(
+            analysis_results,
+            time_analysis,
+            track_metadata,
+            str(channel_output_dir / "analysis_results.csv"),
+            chunk_octave_analysis=chunk_octave_analysis,
+            audio_data=channel_data,
+            envelope_statistics=envelope_stats
+        )
+        
+        # Memory cleanup
+        del channel_data, octave_bank, comprehensive_results
+        
+        logger.info(f"Analysis complete for channel {channel_name}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error processing channel {channel_name}: {e}")
+        return False
+
+
 def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, chunk_duration: float, 
                          use_cache: bool = True) -> bool:
-    """Analyze a single audio track.
+    """Analyze a single audio track, processing each channel separately.
+    
+    For mono files, processes single channel. For stereo/multi-channel files,
+    processes each channel separately and stores results in channel-specific subfolders.
     
     Args:
         track_path: Path to the audio file
@@ -220,7 +415,6 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, c
         audio_processor = AudioProcessor(sample_rate=sample_rate)
         
         # Use cascade complementary Linkwitz-Riley filters for optimal crest factor preservation
-        # This approach ensures non-overlapping bands, linear phase, and better phase coherence
         use_linkwitz_riley = config.get('analysis.use_linkwitz_riley', True)
         use_cascade = config.get('analysis.use_cascade_complementary', True)
         normalize_overlap = config.get('analysis.normalize_overlap', False)
@@ -235,209 +429,79 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, c
         if use_cascade:
             logger.info("Using cascade complementary filter approach for optimal crest factor preservation")
         
-        # Load and preprocess audio (now uses float32 by default for 50% memory savings)
+        # Load audio file (preserves multi-channel)
         logger.info("Loading audio file...")
         audio_data, sr = audio_processor.load_audio(track_path)
         
-        # Convert to mono if stereo
-        audio_data = audio_processor.stereo_to_mono(audio_data)
+        # Get audio info to determine channel count
+        audio_info = audio_processor.get_audio_info(audio_data, sr)
+        num_channels = audio_info["channels"]
+        channel_layout = audio_info["channel_layout"]
         
-        # Store original peak level before normalization for dBFS calculation
+        logger.info(f"Audio info: {channel_layout}, {num_channels} channel(s), "
+                   f"Duration={audio_info['duration_seconds']:.2f}s")
+        
+        # Store original peak level before normalization (across all channels)
         original_peak = np.max(np.abs(audio_data))
         
-        # Initialize analyzer with original peak for dBFS calculations
-        # Use lower DPI for batch processing if enabled
-        use_batch_dpi = config.get('performance.enable_parallel_batch', False) or \
-                       config.get('performance.enable_result_cache', False)
-        plot_dpi = config.get('plotting.batch_dpi', 150) if use_batch_dpi else \
-                   config.get('plotting.dpi', 300)
+        # Extract channels
+        channels = audio_processor.extract_channels(audio_data)
         
-        analyzer = MusicAnalyzer(sample_rate=sample_rate, original_peak=original_peak, dpi=plot_dpi)
-        
-        # Normalize audio
-        audio_data = audio_processor.normalize_audio(audio_data)
-        
-        # Get audio info
-        audio_info = audio_processor.get_audio_info(audio_data, sr)
-        logger.info(f"Audio info: Duration={audio_info['duration_seconds']:.2f}s, "
-                   f"RMS={audio_info['rms']:.4f}, Max={audio_info['max_amplitude']:.4f}")
-        
-        # Try to load cached octave bank or create new one
-        # Note: Cache is invalidated when filter settings change (use_cascade, use_linkwitz_riley)
-        # This ensures cached banks match current filter configuration
-        enable_cache = use_cache and config.get('performance.enable_octave_cache', True)
-        cache_dir = Path(config.get('performance.cache_dir', 'cache/octave_banks'))
-        
-        if enable_cache:
-            # Include filter settings in cache key to invalidate when settings change
-            filter_config_hash = f"lr_{use_linkwitz_riley}_cascade_{use_cascade}_norm_{normalize_overlap}"
-            cache_file_base = get_cache_path(track_path, cache_dir)
-            cache_file = cache_file_base.parent / f"{cache_file_base.stem}_{filter_config_hash}{cache_file_base.suffix}"
-            
-            # Check if cache exists and is valid
-            if cache_file.exists():
-                # Check if source file hasn't been modified since caching
-                if cache_file.stat().st_mtime > track_path.stat().st_mtime:
-                    try:
-                        logger.info(f"Loading cached octave bank: {cache_file.name}")
-                        octave_bank = np.load(cache_file, mmap_mode='r')  # Memory-mapped for efficiency
-                        logger.info(f"Loaded octave bank from cache ({octave_bank.shape[1]} bands)")
-                    except Exception as e:
-                        logger.warning(f"Failed to load cache: {e}, creating new octave bank")
-                        octave_bank = None
-                else:
-                    logger.info("Cache expired (source file modified), creating new octave bank")
-                    octave_bank = None
-            else:
-                logger.debug(f"Cache not found for filter config {filter_config_hash}, creating new octave bank")
-                octave_bank = None
-        else:
-            octave_bank = None
-        
-        # Create octave bank if not loaded from cache
-        if octave_bank is None:
-            import multiprocessing
-            parallel_enabled = config.get('performance.enable_parallel_processing', False)
-            
-            # Note: Cascade complementary approach is sequential by design and cannot be parallelized
-            # Parallel processing only applies to parallel filter bank approach
-            if parallel_enabled and not use_cascade:
-                logger.info("Creating octave bank with parallel processing...")
-                num_workers = config.get('performance.max_workers', None)
-                octave_bank = octave_filter.create_octave_bank_parallel(audio_data, num_workers=num_workers)
-            else:
-                if parallel_enabled and use_cascade:
-                    logger.info("Parallel processing disabled for cascade complementary approach (sequential by design)")
-                logger.info("Creating octave bank...")
-                octave_bank = octave_filter.create_octave_bank(audio_data)
-            
-            # Save to cache (cache_file already includes filter config hash)
-            if enable_cache:
-                try:
-                    cache_file.parent.mkdir(parents=True, exist_ok=True)
-                    np.save(cache_file, octave_bank)
-                    logger.info(f"Cached octave bank to: {cache_file.name}")
-                except Exception as e:
-                    logger.warning(f"Failed to cache octave bank: {e}")
-        
-        # Perform comprehensive analysis (efficient - runs octave analysis only once)
-        logger.info("Performing comprehensive analysis...")
-        comprehensive_results = analyzer.analyze_comprehensive(
-            audio_data, 
-            octave_bank, 
-            octave_filter.OCTAVE_CENTER_FREQUENCIES,
-            chunk_duration=chunk_duration
-        )
-        
-        # Extract results for backward compatibility
-        analysis_results = comprehensive_results["main_analysis"]
-        time_analysis = comprehensive_results["time_analysis"]
-        chunk_octave_analysis = comprehensive_results["chunk_octave_analysis"]
-        
-        # Generate plots
-        logger.info("Generating plots...")
-        analyzer.create_octave_spectrum_plot(
-            analysis_results,
-            output_path=str(track_output_dir / "octave_spectrum.png"),
-            time_analysis=time_analysis,
-            chunk_octave_analysis=chunk_octave_analysis
-        )
-        analyzer.create_crest_factor_plot(
-            analysis_results,
-            output_path=str(track_output_dir / "crest_factor.png"),
-            time_analysis=time_analysis,
-            chunk_octave_analysis=chunk_octave_analysis
-        )
-        analyzer.create_histogram_plots(
-            analysis_results,
-            output_dir=str(track_output_dir),
-            octave_bank=octave_bank
-        )
-        analyzer.create_histogram_plots_log_db(
-            analysis_results,
-            output_dir=str(track_output_dir),
-            config=config.get_plotting_config(),
-            octave_bank=octave_bank
-        )
-        analyzer.create_crest_factor_time_plot(
-            time_analysis,
-            output_path=str(track_output_dir / "crest_factor_time.png")
-        )
-        analyzer.create_octave_crest_factor_time_plot(
-            octave_bank,
-            time_analysis,
-            octave_filter.OCTAVE_CENTER_FREQUENCIES,
-            output_path=str(track_output_dir / "octave_crest_factor_time.png")
-        )
-        
-        # Envelope statistics analysis (worst-case and pattern detection)
-        logger.info("Performing envelope statistics analysis...")
-        envelope_stats = analyzer.analyze_envelope_statistics(
-            octave_bank,
-            octave_filter.OCTAVE_CENTER_FREQUENCIES,
-            config=config.get('envelope_analysis', {})
-        )
-        
-        # Create envelope visualization plots
-        logger.info("Creating envelope visualization plots...")
-        analyzer.create_pattern_envelope_plots(
-            envelope_stats,
-            octave_filter.OCTAVE_CENTER_FREQUENCIES,
-            output_dir=str(track_output_dir),
-            config=config.get('envelope_analysis', {})
-        )
-        analyzer.create_independent_envelope_plots(
-            envelope_stats,
-            octave_filter.OCTAVE_CENTER_FREQUENCIES,
-            output_dir=str(track_output_dir),
-            config=config.get('envelope_analysis', {})
-        )
-        
-        # MEMORY CLEANUP: Close all matplotlib figures and free memory immediately
-        import matplotlib.pyplot as plt
-        import gc
-        plt.close('all')  # Close all figures
-        gc.collect()  # Force garbage collection
-        
-        # Export results to CSV
-        logger.info("Exporting results to CSV...")
-        
-        # Determine content type based on folder structure
+        # Determine content type
         content_type = determine_content_type(track_path)
         
-        # Prepare comprehensive export data
-        track_metadata = {
-            "track_name": track_path.name,
-            "track_path": str(track_path),
-            "content_type": content_type,
-            "duration_seconds": audio_info["duration_seconds"],
-            "sample_rate": sr,
-            "samples": len(audio_data),
-            "channels": audio_info.get("channels", 1),
-            "original_peak": original_peak,
-            "original_peak_dbfs": 20 * np.log10(original_peak),
-            "analysis_date": pd.Timestamp.now().isoformat()
-        }
+        # Process each channel separately
+        success_count = 0
+        for channel_data, channel_index in channels:
+            # Get channel name (simple name for CSV) and folder name (for directory)
+            channel_name = get_channel_name(channel_index, num_channels)
+            channel_folder_name = get_channel_folder_name(channel_index, num_channels)
+            
+            # Create channel-specific output directory
+            if num_channels == 1:
+                # Mono: use track directory directly (backward compatibility)
+                channel_output_dir = track_output_dir
+            else:
+                # Multi-channel: create channel subfolder
+                channel_output_dir = track_output_dir / channel_folder_name
+                channel_output_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Process this channel
+            success = _process_single_channel(
+                channel_data=channel_data,
+                channel_index=channel_index,
+                channel_name=channel_name,
+                channel_folder_name=channel_folder_name,
+                total_channels=num_channels,
+                track_path=track_path,
+                track_output_dir=track_output_dir,
+                channel_output_dir=channel_output_dir,
+                audio_processor=audio_processor,
+                octave_filter=octave_filter,
+                sample_rate=sample_rate,
+                chunk_duration=chunk_duration,
+                config=config,
+                content_type=content_type,
+                original_peak=original_peak
+            )
+            
+            if success:
+                success_count += 1
         
-        analyzer.export_comprehensive_results(
-            analysis_results,
-            time_analysis,
-            track_metadata,
-            str(track_output_dir / "analysis_results.csv"),
-            chunk_octave_analysis=chunk_octave_analysis,
-            audio_data=audio_data,
-            envelope_statistics=envelope_stats
-        )
+        # Memory cleanup
+        del audio_data
         
-        # Memory cleanup - explicitly delete large arrays to reduce memory footprint
-        del audio_data, octave_bank, comprehensive_results
-        logger.info(f"Analysis complete for {track_path.name}")
-        
-        # Save cache metadata
-        if enable_result_cache:
-            save_result_cache(track_path, output_dir, config_hash)
-        
-        return True
+        if success_count == num_channels:
+            logger.info(f"Analysis complete for {track_path.name} ({success_count} channel(s) processed)")
+            
+            # Save cache metadata
+            if enable_result_cache:
+                save_result_cache(track_path, output_dir, config_hash)
+            
+            return True
+        else:
+            logger.warning(f"Analysis partially complete: {success_count}/{num_channels} channels processed successfully")
+            return False
         
     except Exception as e:
         logger.error(f"Error analyzing {track_path.name}: {e}")
