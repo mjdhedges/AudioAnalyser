@@ -4,7 +4,10 @@ A Python implementation of octave band music analysis, based on the MATLAB `musi
 
 ## Features
 
-- **Audio Processing**: Load and preprocess various audio formats (WAV, FLAC, MP3, etc.)
+- **Audio Processing**: Load and preprocess various audio formats (WAV, FLAC, MP3, MKV, etc.)
+- **Multi-Channel Support**: Process stereo and surround audio with separate analysis per channel
+- **MKV/TrueHD Support**: Extract and decode Dolby TrueHD audio from MKV containers (requires ffmpeg)
+- **RP22 Channel Naming**: Automatic channel identification using RP22 standard (FL, FC, FR, SL, SR, etc.)
 - **Octave Band Filtering**: Apply octave band filters at standard frequencies (16Hz to 16kHz) including cinema/LFE analysis
 - **Advanced Statistics**: Comprehensive analysis including clipping detection, dynamic range, spectral characteristics
 - **Visualization**: Generate octave spectrum plots, crest factor analysis, and amplitude distribution histograms
@@ -18,6 +21,7 @@ A Python implementation of octave band music analysis, based on the MATLAB `musi
 ### Prerequisites
 - Python 3.8 or higher
 - Git
+- **ffmpeg** (required for MKV/TrueHD support): Download from [https://ffmpeg.org/download.html](https://ffmpeg.org/download.html)
 
 ### Installation
 
@@ -155,6 +159,69 @@ Tracks/
 
 This enables easy filtering of analysis results by content type in the CSV export.
 
+### Multi-Channel Audio Analysis
+
+The analyzer supports multi-channel audio processing with automatic channel identification:
+
+#### Stereo Files
+- **Channel 1 Left**: Left channel analysis in `Channel 1 Left/` folder
+- **Channel 2 Right**: Right channel analysis in `Channel 2 Right/` folder
+
+#### Multi-Channel Files (RP22 Standard)
+Multi-channel audio uses RP22 standard channel naming:
+
+**Primary Channels:**
+- **FL** - Front Left
+- **FC** - Front Center
+- **FR** - Front Right
+- **SL** - Surround Left
+- **SR** - Surround Right
+- **SBL** - Surround Back Left
+- **SBR** - Surround Back Right
+- **LFE** - Low Frequency Effects
+
+**Extended Channels:**
+- **FWL/FWR** - Front Wide Left/Right
+- **SL1/SR1, SL2/SR2** - Surround Left/Right 1 & 2
+- **FCL/FCR** - Front Center Left/Right
+- **SC** - Surround Center
+- **SCL/SCR** - Surround Center Left/Right
+- **TFL/TFR** - Top Front Left/Right
+- **TBL/TBR** - Top Back Left/Right
+- **TML/TMR** - Top Middle Left/Right
+- **TMC** - Top Middle Center
+- **HFC/HFR/HBL/HBR** - Height Front/Back Center/Left/Right
+
+Each channel is analyzed separately and results are stored in channel-specific folders (e.g., `Channel 1 FL/`, `Channel 2 FC/`).
+
+#### MKV Container and TrueHD Support
+
+The analyzer can extract and decode Dolby TrueHD audio from MKV video containers:
+
+**Requirements:**
+- ffmpeg must be installed and available in PATH
+- Enable MKV support in `config.toml`: `[mkv_support] enable = true`
+
+**Features:**
+- Automatic TrueHD stream detection
+- Excludes Dolby Atmos metadata streams (configurable)
+- Decodes TrueHD to PCM for analysis
+- Preserves multi-channel channel order
+- Temporary file cleanup after extraction
+
+**Configuration:**
+```toml
+[mkv_support]
+enable = true              # Enable MKV/TrueHD support
+exclude_atmos = true       # Exclude Dolby Atmos metadata streams
+```
+
+**Usage:**
+```bash
+# Analyze MKV file with TrueHD audio
+python -m src.main --input "movie.mkv" --single
+```
+
 ### Programmatic Usage
 
 ```python
@@ -167,9 +234,14 @@ audio_processor = AudioProcessor(sample_rate=44100)
 octave_filter = OctaveBandFilter(sample_rate=44100)
 analyzer = MusicAnalyzer(sample_rate=44100)
 
-# Load and process audio
+# Load and process audio (preserves multi-channel)
 audio_data, sr = audio_processor.load_audio("song.flac")
-audio_data = audio_processor.stereo_to_mono(audio_data)
+
+# For multi-channel audio, extract individual channels
+channels = audio_processor.extract_channels(audio_data)
+for channel_data, channel_idx in channels:
+    # Process each channel separately
+    pass
 
 # Create octave bank
 octave_bank = octave_filter.create_octave_bank(audio_data)

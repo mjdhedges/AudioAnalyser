@@ -122,19 +122,39 @@ The Music Analyser is a Python application that performs comprehensive octave ba
 - `[advanced_stats]`: Thresholds for clipping detection, etc.
 - `[export]`: CSV export options
 - `[performance]`: Optimization settings (caching, parallel processing)
+- `[multi_channel]`: Multi-channel processing settings (enable/disable)
+- `[mkv_support]`: MKV container and TrueHD audio extraction settings
 
 ### 3. Audio Processor (`src/audio_processor.py`)
 
 **Responsibilities:**
-- Load audio files (librosa with float32 optimization)
-- Convert stereo to mono
-- Normalize audio data
-- Extract audio metadata
+- Load audio files (librosa/soundfile with float32 optimization)
+- Preserve multi-channel audio (no automatic mono conversion)
+- Extract individual channels from multi-channel audio
+- Normalize audio data (global normalization for multi-channel)
+- Extract audio metadata (channel count, layout)
+- MKV container detection and TrueHD audio extraction
 
 **Key Features:**
 - Float32 by default (50% memory reduction)
-- Handles multiple audio formats (WAV, FLAC, MP3, etc.)
+- Handles multiple audio formats (WAV, FLAC, MP3, MKV, etc.)
 - Preserves original peak for dBFS calculations
+- Multi-channel support: preserves channel structure (samples × channels)
+- MKV/TrueHD support: extracts and decodes Dolby TrueHD from MKV containers
+
+**Multi-Channel Processing:**
+- `load_audio()`: Preserves multi-channel shape (samples,) for mono or (samples, channels) for multi-channel
+- `extract_channels()`: Returns list of (channel_data, channel_index) tuples
+- `get_audio_info()`: Returns channel count and layout (mono/stereo/multi-channel)
+- `normalize_audio()`: Global normalization across all channels to maintain relative levels
+
+**MKV/TrueHD Support:**
+- `_is_mkv_file()`: Detects MKV containers by file extension
+- `_probe_mkv_audio_streams()`: Uses ffprobe to identify audio streams and codecs
+- `_extract_truehd_from_mkv()`: Uses ffmpeg to extract and decode TrueHD to PCM
+- Automatic TrueHD stream detection (excludes Dolby Atmos metadata)
+- Temporary file management with automatic cleanup
+- Requires ffmpeg/ffprobe in PATH
 
 ### 4. Octave Band Filter (`src/octave_filter.py`)
 
@@ -158,23 +178,71 @@ The Music Analyser is a Python application that performs comprehensive octave ba
 - Memory-mapped loading for efficiency
 - Automatic invalidation on source file change
 
-### 5. Music Analyzer (`src/music_analyzer.py`)
+### 5. Channel Mapping (`src/channel_mapping.py`)
 
 **Responsibilities:**
-- Octave band statistical analysis
+- Map channel indices to RP22 standard channel names
+- Generate channel folder names for output organization
+- Support stereo and multi-channel layouts
+
+**Key Functions:**
+- `get_channel_name()`: Returns RP22 channel name (FL, FC, FR, etc.) or generic "Channel N"
+- `get_channel_folder_name()`: Returns formatted folder name (e.g., "Channel 1 FL")
+
+**Channel Naming:**
+- **Stereo**: Channel 1 Left, Channel 2 Right
+- **Multi-Channel**: RP22 standard names (FL, FC, FR, SL, SR, SBL, SBR, LFE, etc.)
+- Supports up to 32 channels with extended RP22 names (TFL, TFR, TBL, TBR, etc.)
+
+### 6. Music Analyzer (`src/music_analyzer.py`)
+
+**Responsibilities:**
+- Core octave band statistical analysis
 - Time-domain analysis (chunking)
-- Advanced statistics calculation
-- Plot generation
-- CSV export
+- Orchestration of analysis pipeline
+- Delegation to specialized modules via composition
 
 **Key Classes:**
-- `MusicAnalyzer`: Main analysis and visualization class
+- `MusicAnalyzer`: Main analysis class using composition pattern
+
+**Composition:**
+- `PlotGenerator`: Handles all visualization (delegated from `visualization.py`)
+- `EnvelopeAnalyzer`: Handles envelope processing (delegated from `envelope_analyzer.py`)
+- `DataExporter`: Handles CSV export (delegated from `data_export.py`)
 
 **Analysis Types:**
 1. **Octave Band Analysis**: HS RMS, peak, dynamic range, crest factor per band
 2. **Time-Domain Analysis**: Crest factor, peak, RMS over time chunks
 3. **Extreme Chunks**: Identification of min/max crest factor sections
-4. **Advanced Statistics**: Clipping detection, spectral characteristics, dynamics
+
+**Note:** The original methods are kept as wrappers for backward compatibility, delegating to the composed objects.
+
+### 7. Track Processor (`src/track_processor.py`)
+
+**Responsibilities:**
+- Single channel processing pipeline
+- Orchestration of analysis, plotting, and export for one channel
+- Channel-specific output directory management
+
+**Key Classes:**
+- `TrackProcessor`: Handles complete processing pipeline for a single channel
+
+**Processing Flow:**
+1. Normalize channel audio
+2. Create octave bank
+3. Perform comprehensive analysis
+4. Generate plots
+5. Analyze envelope statistics
+6. Export results to CSV
+
+### 8. Visualization (`src/visualization.py`)
+
+**Responsibilities:**
+- All plotting and visualization functionality
+- Matplotlib-based chart generation
+
+**Key Classes:**
+- `PlotGenerator`: Handles all visualization operations
 
 **Visualizations:**
 1. Octave spectrum plot
@@ -183,38 +251,47 @@ The Music Analyser is a Python application that performs comprehensive octave ba
 4. Octave band crest factor time plot
 5. Linear amplitude histograms
 6. Log dBFS amplitude histograms
+7. Pattern envelope plots (saved in `pattern_envelopes/` subfolder)
+8. Independent envelope plots (saved in `independent_envelopes/` subfolder)
 
 ## Data Flow
 
 ### Analysis Pipeline
 
 ```
-1. Audio File Input
+1. Audio File Input (WAV, FLAC, MP3, MKV, etc.)
    ↓
-2. Load Audio (float32)
+2. Detect File Type
+   ├─► MKV? → Extract TrueHD audio (ffmpeg)
+   └─► Other → Direct load
    ↓
-3. Convert to Mono
+3. Load Audio (float32, preserves multi-channel)
    ↓
-4. Normalize
+4. Detect Channel Count & Layout
+   ├─► Mono → Process directly
+   ├─► Stereo → Extract channels (Left, Right)
+   └─► Multi-Channel → Extract channels (RP22 naming)
    ↓
-5. Create Octave Bank (11 filtered bands + full spectrum)
-   ├─► Check disk cache
-   ├─► Parallel filtering (if enabled)
-   └─► Save to cache
+5. For Each Channel:
+   ├─► Normalize (global normalization)
+   ├─► Create Octave Bank (11 filtered bands + full spectrum)
+   │   ├─► Check disk cache
+   │   ├─► Parallel filtering (if enabled)
+   │   └─► Save to cache
+   ├─► Perform Comprehensive Analysis
+   │   ├─► Octave band statistics
+   │   ├─► Time-domain chunking
+   │   └─► Extreme chunk analysis
+   ├─► Generate Visualizations
+   │   ├─► Spectrum plots (vectorized calculation)
+   │   ├─► Time-domain plots
+   │   ├─► Histograms
+   │   ├─► Pattern envelopes
+   │   └─► Independent envelopes
+   ├─► Export CSV Data (with channel metadata)
+   └─► Save Results to Channel Folder
    ↓
-6. Perform Comprehensive Analysis
-   ├─► Octave band statistics
-   ├─► Time-domain chunking
-   └─► Extreme chunk analysis
-   ↓
-7. Generate Visualizations
-   ├─► Spectrum plots (vectorized calculation)
-   ├─► Time-domain plots
-   └─► Histograms
-   ↓
-8. Export CSV Data
-   ↓
-9. Save Results & Cache Metadata
+6. Save Cache Metadata
 ```
 
 ### Caching Strategy

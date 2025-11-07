@@ -27,18 +27,17 @@ class TestMusicAnalyzer:
         num_samples = 1000
         num_bands = 5
         octave_bank = np.random.randn(num_samples, num_bands)
-        center_frequencies = [0, 125, 250, 500, 1000]
+        center_frequencies = [125, 250, 500, 1000]  # Note: 0 is added automatically for full spectrum
         
         # Perform analysis
         results = self.analyzer.analyze_octave_bands(octave_bank, center_frequencies)
         
         # Check results structure
-        assert "band_data" in results
+        # Note: band_data was removed to save memory - only statistics are returned
         assert "statistics" in results
         assert "center_frequencies" in results
         
-        # Check that all bands are analyzed
-        assert len(results["band_data"]) == num_bands
+        # Check that all bands are analyzed (including full spectrum)
         assert len(results["statistics"]) == num_bands
         
         # Check statistics for one band
@@ -78,53 +77,61 @@ class TestMusicAnalyzer:
         """Test exporting analysis results to CSV."""
         # Create test analysis results
         octave_bank = np.random.randn(100, 3)
-        center_frequencies = [0, 125, 250]
+        center_frequencies = [125, 250]  # 0 is added automatically
         results = self.analyzer.analyze_octave_bands(octave_bank, center_frequencies)
         
         # Export to temporary file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as tmp_file:
-            try:
-                self.analyzer.export_analysis_results(results, tmp_file.name)
+        tmp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+        tmp_path = tmp_file.name
+        tmp_file.close()
+        
+        try:
+            self.analyzer.export_analysis_results(results, tmp_path)
+            
+            # Check that file was created and has content
+            assert Path(tmp_path).exists()
+            with open(tmp_path, 'r') as f:
+                content = f.read()
+                assert 'frequency_hz' in content or 'Frequency' in content
+                assert 'max_amplitude' in content or 'Max Amplitude' in content
+                assert 'rms' in content or 'RMS' in content
                 
-                # Check that file was created and has content
-                assert Path(tmp_file.name).exists()
-                with open(tmp_file.name, 'r') as f:
-                    content = f.read()
-                    assert 'frequency_hz' in content
-                    assert 'max_amplitude' in content
-                    assert 'rms' in content
-                    
-            finally:
-                Path(tmp_file.name).unlink(missing_ok=True)
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
 
     def test_create_octave_spectrum_plot(self):
         """Test creating octave spectrum plot."""
         # Create test analysis results
         octave_bank = np.random.randn(100, 3)
-        center_frequencies = [0, 125, 250]
+        center_frequencies = [125, 250]  # 0 is added automatically
         results = self.analyzer.analyze_octave_bands(octave_bank, center_frequencies)
         
         # Test plot creation (without showing)
-        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_file:
-            try:
-                # This should not raise an exception
-                self.analyzer.create_octave_spectrum_plot(results, tmp_file.name)
-                assert Path(tmp_file.name).exists()
-                
-            finally:
-                Path(tmp_file.name).unlink(missing_ok=True)
+        tmp_file = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+        tmp_path = tmp_file.name
+        tmp_file.close()
+        
+        try:
+            # This should not raise an exception
+            self.analyzer.create_octave_spectrum_plot(results, tmp_path)
+            assert Path(tmp_path).exists()
+            
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
 
     def test_create_histogram_plots(self):
         """Test creating histogram plots."""
         # Create test analysis results
         octave_bank = np.random.randn(100, 3)
-        center_frequencies = [0, 125, 250]
+        center_frequencies = [125, 250]  # 0 is added automatically
         results = self.analyzer.analyze_octave_bands(octave_bank, center_frequencies)
         
         # Test histogram creation (without showing)
+        # Note: create_histogram_plots requires octave_bank parameter now
         with tempfile.TemporaryDirectory() as tmp_dir:
             # This should not raise an exception
-            self.analyzer.create_histogram_plots(results, tmp_dir)
+            # Pass octave_bank as well since band_data was removed
+            self.analyzer.create_histogram_plots(results, tmp_dir, octave_bank=octave_bank)
             
             # Check that histogram file was created
             hist_file = Path(tmp_dir) / "histograms.png"

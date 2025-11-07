@@ -402,7 +402,7 @@ treble_frequencies = [4000.0, 8000.0, 16000.0]
 
 # Supported audio file formats (extensions without dot)
 # Files with these extensions will be processed
-supported_formats = ["wav", "flac", "mp3", "aiff", "m4a"]
+supported_formats = ["wav", "flac", "mp3", "aiff", "m4a", "mkv"]
 
 # Create subdirectories in output directory
 # If true, each track gets its own subdirectory
@@ -413,6 +413,39 @@ create_subdirectories = true
 # If true, creates subdirectory named after track (without extension)
 # If false, uses generic naming
 use_track_name_for_output = true
+
+
+# ============================================================================
+# MULTI-CHANNEL AUDIO SETTINGS
+# ============================================================================
+# Parameters for multi-channel audio processing
+# ============================================================================
+
+[multi_channel]
+
+# Enable multi-channel audio analysis
+# If true, processes each channel separately and creates channel-specific folders
+# If false, converts multi-channel to mono before analysis
+enable = true
+
+
+# ============================================================================
+# MKV CONTAINER AND TRUEHD SUPPORT
+# ============================================================================
+# Parameters for MKV container and Dolby TrueHD audio extraction
+# ============================================================================
+
+[mkv_support]
+
+# Enable MKV container and TrueHD audio support
+# Requires ffmpeg to be installed and available in PATH
+# If false, MKV files will be skipped or cause errors
+enable = true
+
+# Exclude Dolby Atmos metadata streams
+# If true, only extracts TrueHD core audio (excludes Atmos spatial metadata)
+# If false, attempts to extract all audio streams
+exclude_atmos = true
 
 
 # ============================================================================
