@@ -193,8 +193,14 @@ def save_result_cache(track_path: Path, output_dir: Path, config_hash: str) -> N
     except Exception as e:
         logger.warning(f"Failed to save cache metadata: {e}")
 
-def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, chunk_duration: float, 
-                         use_cache: bool = True) -> bool:
+def analyze_single_track(
+    track_path: Path,
+    output_dir: Path,
+    sample_rate: int,
+    chunk_duration: float,
+    use_cache: bool = True,
+    channel_filters: Optional[tuple[str, ...]] = None,
+) -> bool:
     """Analyze a single audio track, processing each channel separately.
     
     For mono files, processes single channel. For stereo/multi-channel files,
@@ -210,6 +216,17 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, c
     Returns:
         True if analysis was successful, False otherwise
     """
+    def _tokenize(values: list[str]) -> set[str]:
+        tokens: set[str] = set()
+        for value in values:
+            if not value:
+                continue
+            norm = value.lower().strip()
+            if norm:
+                tokens.add(norm)
+                tokens.add(''.join(ch for ch in norm if ch.isalnum()))
+        return tokens
+    
     try:
         # Create track-specific output directory
         track_name = track_path.stem  # Get filename without extension
@@ -285,8 +302,19 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, c
         # Initialize track processor
         track_processor = TrackProcessor(sample_rate=sample_rate, original_peak=original_peak)
         
+        # Prepare channel filters (if any)
+        filter_specs = []
+        if channel_filters:
+            for raw in channel_filters:
+                norm = raw.lower().strip()
+                forms = {norm, ''.join(ch for ch in norm if ch.isalnum())}
+                filter_specs.append({"raw": raw, "forms": forms})
+        
+        matched_filters: set[str] = set()
+        
         # Process each channel separately
         success_count = 0
+        processed_total = 0
         for channel_data, channel_index in channels:
             # Get channel name (simple name for CSV) and folder name (for directory)
             # Use FFmpeg channel layout if available for correct mapping
@@ -301,6 +329,30 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, c
                 # Multi-channel: create channel subfolder
                 channel_output_dir = track_output_dir / channel_folder_name
                 channel_output_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Apply channel filters if provided
+            if filter_specs:
+                candidate_tokens = _tokenize([
+                    channel_name,
+                    channel_folder_name,
+                    f"channel {channel_index + 1}",
+                    f"channel{channel_index + 1}",
+                    f"ch{channel_index + 1}",
+                    str(channel_index + 1),
+                ])
+                
+                matched = False
+                for spec in filter_specs:
+                    if spec["forms"] & candidate_tokens:
+                        matched = True
+                        matched_filters.add(spec["raw"])
+                if not matched:
+                    logger.info(
+                        f"Skipping channel {channel_name} ({channel_folder_name}) due to channel filter"
+                    )
+                    continue
+            
+            processed_total += 1
             
             # Process this channel
             success = track_processor.process_channel(
@@ -323,11 +375,25 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, c
             if success:
                 success_count += 1
         
+        if filter_specs:
+            unmatched = {spec["raw"] for spec in filter_specs if spec["raw"] not in matched_filters}
+            if unmatched:
+                logger.warning(
+                    f"Channel filters not matched for track {track_name}: {', '.join(sorted(unmatched))}"
+                )
+        
         # Memory cleanup
         del audio_data
         
-        if success_count == num_channels:
-            logger.info(f"Analysis complete for {track_path.name} ({success_count} channel(s) processed)")
+        if processed_total == 0:
+            logger.warning("No channels were processed (filters omitted all channels).")
+            return False
+        
+        if success_count == processed_total:
+            logger.info(
+                f"Analysis complete for {track_path.name} "
+                f"({success_count} channel(s) processed)"
+            )
             
             # Save cache metadata
             if enable_result_cache:
@@ -335,7 +401,10 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, c
             
             return True
         else:
-            logger.warning(f"Analysis partially complete: {success_count}/{num_channels} channels processed successfully")
+            logger.warning(
+                f"Analysis partially complete: {success_count}/{processed_total} "
+                f"channel(s) processed successfully"
+            )
             return False
         
     except Exception as e:
@@ -406,6 +475,26 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, c
     help='Generate combined group decay plot per track after analysis'
 )
 @click.option(
+    '--run-group-plots/--no-run-group-plots',
+    default=True,
+    help='Generate group crest-factor and octave spectrum plots'
+)
+@click.option(
+    '--run-lfe-deep-dive/--no-run-lfe-deep-dive',
+    default=True,
+    help='Generate LFE deep dive plots'
+)
+@click.option(
+    '--run-screen-deep-dive/--no-run-screen-deep-dive',
+    default=True,
+    help='Generate Screen deep dive plots'
+)
+@click.option(
+    '--run-surround-deep-dive/--no-run-surround-deep-dive',
+    default=True,
+    help='Generate Surround+Height deep dive plots'
+)
+@click.option(
     '--post-only',
     is_flag=True,
     default=False,
@@ -423,12 +512,33 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, c
     default=None,
     help='Duration in seconds for test mode (limit analysis length)'
 )
+@click.option(
+    '--channel',
+    'channel_filters',
+    multiple=True,
+    help='Only process specified channel names (e.g., FL, "Channel 4 LFE").'
+)
+@click.option(
+    '--skip-post/--run-post',
+    default=False,
+    help='Skip post-processing (group plots, deep dives, manifests).'
+)
+@click.option(
+    '--peak-hold-tau',
+    type=float,
+    help='Peak-hold time constant in seconds (overrides config).'
+)
 def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional[Path], 
          sample_rate: Optional[int], chunk_duration: Optional[float],
          dpi: Optional[int], log_level: Optional[str], config_path: Optional[Path],
          batch: bool, export_csv: bool,
-         generate_manifest: bool, generate_decay_plot: bool, post_only: bool,
-         test_start_time: Optional[float], test_duration: Optional[float]) -> None:
+         generate_manifest: bool, generate_decay_plot: bool,
+         run_group_plots: bool, run_lfe_deep_dive: bool,
+         run_screen_deep_dive: bool, run_surround_deep_dive: bool,
+         post_only: bool,
+         test_start_time: Optional[float], test_duration: Optional[float],
+         channel_filters: tuple[str, ...], skip_post: bool,
+         peak_hold_tau: Optional[float]) -> None:
     """Music Analyser - Analyze audio files using octave band filtering.
     
     This tool performs comprehensive octave band analysis on audio files,
@@ -458,8 +568,13 @@ def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional
             dpi=dpi,
             log_level=log_level,
             test_start_time=test_start_time,
-            test_duration=test_duration
+            test_duration=test_duration,
+            peak_hold_tau=peak_hold_tau,
         )
+        
+        if skip_post and post_only:
+            logger.error("--skip-post cannot be combined with --post-only mode.")
+            sys.exit(1)
         
         # Update logging level if specified
         if log_level:
@@ -586,12 +701,16 @@ def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional
                     _run_select_worst_channels(td)
                 if generate_decay_plot:
                     _run_group_decay_plot(td)
-                _run_group_crest_factor_time_plot(td)
-                _run_group_octave_spectrum_plot(td)
-                _run_lfe_full_channel_plot(td)
-                _run_lfe_octave_time_plot(td)
-                _run_screen_deep_dive_plot(td)
-                _run_surround_deep_dive_plot(td)
+                if run_group_plots:
+                    _run_group_crest_factor_time_plot(td)
+                    _run_group_octave_spectrum_plot(td)
+                if run_lfe_deep_dive:
+                    _run_lfe_full_channel_plot(td)
+                    _run_lfe_octave_time_plot(td)
+                if run_screen_deep_dive:
+                    _run_screen_deep_dive_plot(td)
+                if run_surround_deep_dive:
+                    _run_surround_deep_dive_plot(td)
             logger.info("Post-processing complete.")
             return
         
@@ -638,7 +757,12 @@ def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional
                     # Submit all tasks
                     future_to_track = {
                         executor.submit(
-                            analyze_single_track, track_path, output_dir, sample_rate, chunk_duration
+                            analyze_single_track,
+                            track_path,
+                            output_dir,
+                            sample_rate,
+                            chunk_duration,
+                            channel_filters=channel_filters,
                         ): (idx, track_path, total_tracks)
                         for idx, track_path in enumerate(sorted(audio_files), 1)
                     }
@@ -663,7 +787,13 @@ def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional
                     logger.info(f"\n{'='*60}")
                     logger.info(f"Processing track {idx}/{total_tracks} ({100*idx/total_tracks:.1f}%) - {track_path.name}")
                     
-                    if analyze_single_track(track_path, output_dir, sample_rate, chunk_duration):
+                    if analyze_single_track(
+                        track_path,
+                        output_dir,
+                        sample_rate,
+                        chunk_duration,
+                        channel_filters=channel_filters,
+                    ):
                         successful_analyses += 1
                     else:
                         failed_analyses += 1
@@ -675,18 +805,26 @@ def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional
             logger.info(f"Failed analyses: {failed_analyses} tracks")
             logger.info(f"Results saved to: {output_dir}")
             # Post-process generated track folders (if enabled)
-            if generate_manifest or generate_decay_plot:
+            if not skip_post:
                 logger.info("Starting post-processing for generated tracks...")
                 for td in _find_track_dirs(output_dir):
                     if generate_manifest:
                         _run_select_worst_channels(td)
                     if generate_decay_plot:
                         _run_group_decay_plot(td)
-                    _run_group_crest_factor_time_plot(td)
-                    _run_group_octave_spectrum_plot(td)
-                    _run_lfe_full_channel_plot(td)
-                _run_lfe_octave_time_plot(td)
+                    if run_group_plots:
+                        _run_group_crest_factor_time_plot(td)
+                        _run_group_octave_spectrum_plot(td)
+                    if run_lfe_deep_dive:
+                        _run_lfe_full_channel_plot(td)
+                        _run_lfe_octave_time_plot(td)
+                    if run_screen_deep_dive:
+                        _run_screen_deep_dive_plot(td)
+                    if run_surround_deep_dive:
+                        _run_surround_deep_dive_plot(td)
                 logger.info("Post-processing complete.")
+            elif skip_post:
+                logger.info("Skipping post-processing (--skip-post).")
             
         else:
             # Single file processing
@@ -696,25 +834,39 @@ def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional
             
             logger.info(f"Single file analysis: {input}")
             
-            if analyze_single_track(input, output_dir, sample_rate, chunk_duration):
+            if analyze_single_track(
+                input,
+                output_dir,
+                sample_rate,
+                chunk_duration,
+                channel_filters=channel_filters,
+            ):
                 logger.info("Analysis complete!")
                 logger.info(f"Results saved to: {output_dir}")
                 # Post-process this track folder (if enabled)
-                if generate_manifest or generate_decay_plot:
+                if not skip_post:
                     track_dir = output_dir / input.stem
                     if track_dir.exists():
                         if generate_manifest:
                             _run_select_worst_channels(track_dir)
                         if generate_decay_plot:
                             _run_group_decay_plot(track_dir)
-                        _run_group_crest_factor_time_plot(track_dir)
-                        _run_group_octave_spectrum_plot(track_dir)
-                        _run_lfe_full_channel_plot(track_dir)
-                        _run_lfe_octave_time_plot(track_dir, original_track_path=input)
-                        _run_screen_deep_dive_plot(track_dir, original_track_path=input)
-                        _run_surround_deep_dive_plot(track_dir, original_track_path=input)
+                        if run_group_plots:
+                            _run_group_crest_factor_time_plot(track_dir)
+                            _run_group_octave_spectrum_plot(track_dir)
+                        if run_lfe_deep_dive:
+                            _run_lfe_full_channel_plot(track_dir)
+                            _run_lfe_octave_time_plot(track_dir, original_track_path=input)
+                        if run_screen_deep_dive:
+                            _run_screen_deep_dive_plot(track_dir, original_track_path=input)
+                        if run_surround_deep_dive:
+                            _run_surround_deep_dive_plot(track_dir, original_track_path=input)
                     else:
-                        logger.warning(f"Expected track directory not found for post-processing: {track_dir}")
+                        logger.warning(
+                            f"Expected track directory not found for post-processing: {track_dir}"
+                        )
+                elif skip_post:
+                    logger.info("Skipping post-processing (--skip-post).")
             else:
                 logger.error("Analysis failed!")
                 sys.exit(1)

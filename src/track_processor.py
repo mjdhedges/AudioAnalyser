@@ -86,8 +86,19 @@ class TrackProcessor:
             plot_dpi = config.get('plotting.batch_dpi', 150) if use_batch_dpi else \
                        config.get('plotting.dpi', 300)
             
-            analyzer = MusicAnalyzer(sample_rate=self.sample_rate, original_peak=original_peak, dpi=plot_dpi)
-            plot_generator = PlotGenerator(sample_rate=self.sample_rate, original_peak=original_peak, dpi=plot_dpi)
+            peak_hold_tau = config.get('analysis.peak_hold_tau_seconds', 1.0)
+            analyzer = MusicAnalyzer(
+                sample_rate=self.sample_rate,
+                original_peak=original_peak,
+                dpi=plot_dpi,
+                peak_hold_tau=peak_hold_tau,
+            )
+            plot_generator = PlotGenerator(
+                sample_rate=self.sample_rate,
+                original_peak=original_peak,
+                dpi=plot_dpi,
+                peak_hold_tau=peak_hold_tau,
+            )
             envelope_analyzer = EnvelopeAnalyzer(sample_rate=self.sample_rate, original_peak=original_peak)
             data_exporter = DataExporter(sample_rate=self.sample_rate, original_peak=original_peak)
             

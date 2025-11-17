@@ -23,9 +23,9 @@ from src.data_export import DataExporter
 from src.envelope_analyzer import EnvelopeAnalyzer
 from src.visualization import PlotGenerator
 from src.signal_metrics import (
+    compute_peak_hold_envelope,
     compute_slow_rms_envelope,
     max_abs_over_window,
-    sampled_max_abs,
 )
 
 logger = logging.getLogger(__name__)
@@ -34,20 +34,33 @@ logger = logging.getLogger(__name__)
 class MusicAnalyzer:
     """Main class for music analysis operations."""
 
-    def __init__(self, sample_rate: int = 44100, original_peak: float = 1.0, dpi: int = 300) -> None:
+    def __init__(
+        self,
+        sample_rate: int = 44100,
+        original_peak: float = 1.0,
+        dpi: int = 300,
+        peak_hold_tau: float = 1.0,
+    ) -> None:
         """Initialize the music analyzer.
         
         Args:
             sample_rate: Sample rate for audio processing
             original_peak: Original peak level before normalization (for dBFS calculation)
             dpi: DPI for plot output (lower for faster batch processing)
+            peak_hold_tau: Time constant (seconds) for the crest-factor peak-hold envelope
         """
         self.sample_rate = sample_rate
         self.original_peak = original_peak
         self.dpi = dpi
+        self.peak_hold_tau = peak_hold_tau
         
         # Use composition for better separation of concerns
-        self.plot_generator = PlotGenerator(sample_rate=sample_rate, original_peak=original_peak, dpi=dpi)
+        self.plot_generator = PlotGenerator(
+            sample_rate=sample_rate,
+            original_peak=original_peak,
+            dpi=dpi,
+            peak_hold_tau=peak_hold_tau,
+        )
         self.envelope_analyzer = EnvelopeAnalyzer(sample_rate=sample_rate, original_peak=original_peak)
         self.data_exporter = DataExporter(sample_rate=sample_rate, original_peak=original_peak)
 
@@ -289,16 +302,22 @@ class MusicAnalyzer:
                 "total_duration": total_samples / self.sample_rate,
             }
         
-        peak_levels = sampled_max_abs(audio_data, window_samples, step_samples)
-        if peak_levels.size != num_windows:
-            peak_levels = np.zeros(num_windows, dtype=np.float64)
-        
+        peak_envelope = compute_peak_hold_envelope(
+            audio_data,
+            self.sample_rate,
+            tau=self.peak_hold_tau,
+        )
         slow_rms_envelope = compute_slow_rms_envelope(audio_data, self.sample_rate)
         start_indices = np.arange(num_windows) * step_samples
-        center_indices = start_indices + window_samples // 2
+        end_indices = start_indices + window_samples - 1
+        if peak_envelope.size > 0:
+            end_indices = np.clip(end_indices, 0, peak_envelope.size - 1)
+            peak_levels = peak_envelope[end_indices]
+        else:
+            peak_levels = np.zeros(num_windows, dtype=np.float64)
         if slow_rms_envelope.size > 0:
-            center_indices = np.clip(center_indices, 0, slow_rms_envelope.size - 1)
-            rms_levels = slow_rms_envelope[center_indices]
+            end_indices = np.clip(end_indices, 0, slow_rms_envelope.size - 1)
+            rms_levels = slow_rms_envelope[end_indices]
         else:
             rms_levels = np.zeros(num_windows, dtype=np.float64)
         
@@ -335,7 +354,7 @@ class MusicAnalyzer:
         rms_levels_dbfs = np.where(np.isfinite(rms_levels_dbfs), rms_levels_dbfs, -120.0)
         
         # Calculate time points (end of each 1s window)
-        time_points = start_indices / self.sample_rate + (window_duration / 2.0)
+        time_points = (end_indices + 1) / self.sample_rate
         
         results = {
             "time_points": np.array(time_points),

@@ -270,7 +270,7 @@ def generate_group_octave_spectrum_plot(track_dir: Path, output_dir: Path) -> Di
         ax1.set_title(f'Crest Factor by Octave Band - {track_name} - {group_name}')
         ax1.grid(True, alpha=0.3)
         ax1.legend(loc="best", fontsize=9)
-        ax1.set_ylim([0, 40])
+        ax1.set_ylim([0, 30])
         
         # Format bottom plot (Peak and RMS)
         ax2.set_xlabel('Frequency (Hz)')

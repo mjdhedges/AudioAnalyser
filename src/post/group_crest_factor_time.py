@@ -251,10 +251,7 @@ def generate_group_crest_factor_time_plot(track_dir: Path, output_dir: Path) -> 
         # Add 1 dB minor steps
         ax1.yaxis.set_minor_locator(plt.MultipleLocator(1))
         ax1.legend(loc="best", fontsize=10)
-        if all_crest_factors:
-            ax1.set_ylim([0, max(30, np.max(all_crest_factors) * 1.1)])
-        else:
-            ax1.set_ylim([0, 30])
+        ax1.set_ylim([0, 30])
         
         # Add statistics text box for crest factor
         if all_crest_factors:

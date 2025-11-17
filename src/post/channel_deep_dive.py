@@ -13,7 +13,7 @@ from src.audio_processor import AudioProcessor
 from src.config import config
 from src.octave_filter import OctaveBandFilter
 from src.plotting_utils import add_calibrated_spl_axis
-from src.signal_metrics import compute_slow_rms_envelope, sampled_max_abs
+from src.signal_metrics import compute_peak_hold_envelope, compute_slow_rms_envelope
 
 logger = logging.getLogger(__name__)
 
@@ -261,6 +261,8 @@ def generate_channel_deep_dive_plot(track_dir: Path, group_name: str, output_dir
         channel_peak_data = {}
         channel_rms_data = {}
         
+        peak_hold_tau = config.get('analysis.peak_hold_tau_seconds', 1.0)
+
         for channel_label, channel_info in channel_data_dict.items():
             octave_bank = channel_info["octave_bank"]
             channel_data = channel_info["channel_data"]
@@ -269,16 +271,18 @@ def generate_channel_deep_dive_plot(track_dir: Path, group_name: str, output_dir
             band_data = octave_bank[:, band_idx + 1]  # +1 to skip Full Spectrum
             slow_rms_env = compute_slow_rms_envelope(band_data, sample_rate)
             
-            peaks = sampled_max_abs(band_data, chunk_samples, chunk_samples)
-            if peaks.size != num_complete_chunks:
+            peak_env = compute_peak_hold_envelope(band_data, sample_rate, tau=peak_hold_tau)
+            end_indices = np.arange(num_complete_chunks) * chunk_samples + (chunk_samples - 1)
+            if peak_env.size > 0:
+                peak_indices = np.clip(end_indices, 0, peak_env.size - 1)
+                peaks = peak_env[peak_indices]
+            else:
                 peaks = np.zeros(num_complete_chunks, dtype=np.float64)
-            
-            indices = chunk_samples - 1 + np.arange(num_complete_chunks) * chunk_samples
-            rms_vals = (
-                slow_rms_env[indices]
-                if slow_rms_env.size > 0
-                else np.zeros(num_complete_chunks, dtype=np.float64)
-            )
+            if slow_rms_env.size > 0:
+                rms_indices = np.clip(end_indices, 0, slow_rms_env.size - 1)
+                rms_vals = slow_rms_env[rms_indices]
+            else:
+                rms_vals = np.zeros(num_complete_chunks, dtype=np.float64)
             
             original_peak = np.max(np.abs(channel_data))
             if original_peak > 0:
@@ -310,9 +314,7 @@ def generate_channel_deep_dive_plot(track_dir: Path, group_name: str, output_dir
             rms_level_dbfs_plot[~np.isfinite(rms_level_dbfs_plot)] = -120
             
             # Store data for this channel
-            channel_time_points = (
-                np.arange(len(crest_factor_db_plot)) * chunk_duration + (chunk_duration / 2.0)
-            )
+            channel_time_points = (np.arange(len(crest_factor_db_plot)) + 1) * chunk_duration
             channel_crest_data[channel_label] = (channel_time_points, crest_factor_db_plot)
             channel_peak_data[channel_label] = (channel_time_points, peak_level_dbfs_plot)
             channel_rms_data[channel_label] = (channel_time_points, rms_level_dbfs_plot)
@@ -333,7 +335,7 @@ def generate_channel_deep_dive_plot(track_dir: Path, group_name: str, output_dir
             )
         
         ax1.set_xlim(time_points.min(), time_points.max())
-        ax1.set_ylim([0, 40])
+        ax1.set_ylim([0, 30])
         ax1.set_ylabel("Crest Factor (dB)")
         ax1.set_title(f"{group_name} {freq_label} Octave Band Crest Factor Over Time - {track_name}")
         ax1.grid(True, alpha=0.3, which='major')

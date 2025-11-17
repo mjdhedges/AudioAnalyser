@@ -25,6 +25,10 @@ sample_rate = 44100
 # Larger chunks = more memory but faster overall
 chunk_duration_seconds = 2.0
 
+# Time constant (seconds) for the crest-factor peak-hold envelope (IEC SLOW style)
+# Increase to make the held peak decay more slowly; decrease for faster response
+peak_hold_tau_seconds = 2.0
+
 # Default input directory for audio tracks
 # Can be overridden via command line --tracks-dir option
 tracks_dir = "Tracks"

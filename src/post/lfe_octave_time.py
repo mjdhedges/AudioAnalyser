@@ -15,7 +15,7 @@ from src.audio_processor import AudioProcessor
 from src.config import config
 from src.octave_filter import OctaveBandFilter
 from src.plotting_utils import add_calibrated_spl_axis
-from src.signal_metrics import compute_slow_rms_envelope, sampled_max_abs
+from src.signal_metrics import compute_peak_hold_envelope, compute_slow_rms_envelope
 
 logger = logging.getLogger(__name__)
 
@@ -342,12 +342,14 @@ def generate_lfe_octave_time_plot(track_dir: Path, output_path: Path,
         logger.warning(f"Audio too short for 1-second block analysis: {num_samples} samples")
         return None
     
-    time_points = np.arange(num_complete_chunks) * chunk_duration + (chunk_duration / 2.0)
+    time_points = (np.arange(num_complete_chunks) + 1) * chunk_duration
     
     # Calculate crest factor, peak, and RMS for each target frequency
     freq_data: Dict[float, Dict[str, np.ndarray]] = {}
     
     window_samples = max(int(sample_rate * 1.0), 1)
+
+    peak_hold_tau = config.get('analysis.peak_hold_tau_seconds', 1.0)
 
     for target_freq, freq_idx in freq_indices.items():
         # Get octave band data (skip full spectrum at index 0)
@@ -355,15 +357,18 @@ def generate_lfe_octave_time_plot(track_dir: Path, output_path: Path,
         slow_rms_env = compute_slow_rms_envelope(band_data, sample_rate)
         
         # Calculate RMS and peak for each chunk using SLOW weighting
-        peaks = sampled_max_abs(band_data, chunk_samples, chunk_samples)
-        if peaks.size != num_complete_chunks:
+        peak_env = compute_peak_hold_envelope(band_data, sample_rate, tau=peak_hold_tau)
+        start_indices = np.arange(num_complete_chunks) * chunk_samples
+        end_indices = start_indices + chunk_samples - 1
+        if peak_env.size > 0:
+            peak_indices = np.clip(end_indices, 0, peak_env.size - 1)
+            peaks = peak_env[peak_indices]
+        else:
             peaks = np.zeros(num_complete_chunks, dtype=np.float64)
         
-        start_indices = np.arange(num_complete_chunks) * chunk_samples
-        center_indices = start_indices + chunk_samples // 2
         if slow_rms_env.size > 0:
-            center_indices = np.clip(center_indices, 0, slow_rms_env.size - 1)
-            rms_vals = slow_rms_env[center_indices]
+            rms_indices = np.clip(end_indices, 0, slow_rms_env.size - 1)
+            rms_vals = slow_rms_env[rms_indices]
         else:
             rms_vals = np.zeros(num_complete_chunks, dtype=np.float64)
         
@@ -417,7 +422,7 @@ def generate_lfe_octave_time_plot(track_dir: Path, output_path: Path,
             label="Crest Factor"
         )
         ax1.set_xlim(time_points.min(), time_points.max())
-        ax1.set_ylim([0, 40])
+        ax1.set_ylim([0, 30])
         
         ax1.set_ylabel("Crest Factor (dB)")
         ax1.set_title(f"LFE {freq_label} Octave Band Crest Factor Over Time - {track_name}")

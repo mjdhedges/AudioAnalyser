@@ -42,6 +42,41 @@ def compute_slow_rms_envelope(
     return np.sqrt(slow_squares)
 
 
+def compute_peak_hold_envelope(
+    signal: np.ndarray,
+    sample_rate: int,
+    tau: float = 1.0,
+) -> np.ndarray:
+    """Compute a peak-hold envelope with exponential decay.
+
+    Mimics the IEC SLOW behaviour for peak indication: instantaneous attack
+    followed by exponential decay with the specified time constant.
+
+    Args:
+        signal: Input audio samples.
+        sample_rate: Sampling rate in Hz.
+        tau: Time constant controlling the decay speed (seconds).
+
+    Returns:
+        Array of peak-hold envelope samples in linear amplitude units.
+    """
+    if signal.size == 0:
+        return np.array([], dtype=np.float64)
+
+    dt = 1.0 / float(sample_rate)
+    decay = np.exp(-dt / max(tau, dt))
+    abs_signal = np.abs(signal).astype(np.float64, copy=False)
+    envelope = np.empty(abs_signal.size, dtype=np.float64)
+    prev = 0.0
+
+    for idx, value in enumerate(abs_signal):
+        decayed = prev * decay
+        prev = value if value > decayed else decayed
+        envelope[idx] = prev
+
+    return envelope
+
+
 def max_abs_over_window(
     signal: np.ndarray,
     window_samples: int,

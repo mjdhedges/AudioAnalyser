@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from src.signal_metrics import (
+    compute_peak_hold_envelope,
     compute_slow_rms_envelope,
     max_abs_over_window,
     sampled_max_abs,
@@ -30,4 +31,15 @@ def test_sampled_max_abs_returns_sequence() -> None:
     peaks = sampled_max_abs(signal, window_samples=2, step_samples=2)
     assert peaks.size == 4
     assert np.allclose(peaks, [0.5, 1.0, 0.8, 0.6])
+
+
+def test_compute_peak_hold_envelope_has_attack_and_decay() -> None:
+    sample_rate = 10
+    signal = np.zeros(sample_rate * 2)
+    signal[5] = 1.0
+    envelope = compute_peak_hold_envelope(signal, sample_rate)
+
+    assert np.isclose(envelope[5], 1.0)
+    decay = np.exp(-1.0 / sample_rate)
+    assert np.isclose(envelope[6], decay, atol=1e-6)
 

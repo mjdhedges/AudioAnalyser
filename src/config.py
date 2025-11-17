@@ -52,6 +52,7 @@ class Config:
                 "sample_rate": 44100,
                 "tracks_dir": "Tracks",
                 "output_dir": "analysis",
+                "peak_hold_tau_seconds": 2.0,
                 "octave_center_frequencies": [16.0, 31.25, 62.5, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0],
                 "use_linkwitz_riley": True,
                 "use_cascade_complementary": True,
@@ -200,7 +201,8 @@ class Config:
             'dpi': 'plotting.dpi',
             'log_level': 'logging.level',
             'test_start_time': 'analysis.test_start_time',
-            'test_duration': 'analysis.test_duration'
+            'test_duration': 'analysis.test_duration',
+            'peak_hold_tau': 'analysis.peak_hold_tau_seconds',
         }
         
         for arg_name, config_path in arg_mapping.items():

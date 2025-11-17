@@ -21,8 +21,8 @@ from matplotlib.colors import LinearSegmentedColormap
 
 from src.plotting_utils import add_calibrated_spl_axis
 from src.signal_metrics import (
+    compute_peak_hold_envelope,
     compute_slow_rms_envelope,
-    sampled_max_abs,
 )
 
 logger = logging.getLogger(__name__)
@@ -31,17 +31,25 @@ logger = logging.getLogger(__name__)
 class PlotGenerator:
     """Handles all plotting and visualization operations."""
 
-    def __init__(self, sample_rate: int = 44100, original_peak: float = 1.0, dpi: int = 300) -> None:
+    def __init__(
+        self,
+        sample_rate: int = 44100,
+        original_peak: float = 1.0,
+        dpi: int = 300,
+        peak_hold_tau: float = 1.0,
+    ) -> None:
         """Initialize the plot generator.
         
         Args:
             sample_rate: Sample rate for audio processing
             original_peak: Original peak level before normalization (for dBFS calculation)
             dpi: DPI for plot output (lower for faster batch processing)
+            peak_hold_tau: Time constant (seconds) for the crest-factor peak-hold envelope
         """
         self.sample_rate = sample_rate
         self.original_peak = original_peak
         self.dpi = dpi
+        self.peak_hold_tau = peak_hold_tau
 
     def _format_title(self, base_title: str, track_name: Optional[str] = None, 
                      channel_name: Optional[str] = None) -> str:
@@ -469,7 +477,7 @@ class PlotGenerator:
         lc.set_array(segment_peak_values)
         line = ax1.add_collection(lc)
         ax1.set_xlim(time_points.min(), time_points.max())
-        ax1.set_ylim([0, max(30, np.max(crest_factors_db_plot) * 1.1)])
+        ax1.set_ylim([0, 30])
         
         ax1.set_ylabel('Crest Factor (dB)')
         ax1.set_title(self._format_title('Crest Factor vs Time (Color: Peak Level)', track_name, channel_name))
@@ -553,13 +561,22 @@ class PlotGenerator:
             num_windows = (len(band_all) - window_samples) // window_samples + 1
             
             if num_windows > 0:
-                peaks = sampled_max_abs(band_all, window_samples, window_samples)
-                indices = window_samples - 1 + np.arange(num_windows) * window_samples
-                rms_vals = (
-                    slow_rms_env[indices]
-                    if slow_rms_env.size > 0
-                    else np.zeros(num_windows, dtype=np.float64)
+                peak_env = compute_peak_hold_envelope(
+                    band_all,
+                    self.sample_rate,
+                    tau=self.peak_hold_tau,
                 )
+                indices = window_samples - 1 + np.arange(num_windows) * window_samples
+                if peak_env.size > 0:
+                    indices = np.clip(indices, 0, peak_env.size - 1)
+                    peaks = peak_env[indices]
+                else:
+                    peaks = np.zeros(num_windows, dtype=np.float64)
+                if slow_rms_env.size > 0:
+                    indices = np.clip(indices, 0, slow_rms_env.size - 1)
+                    rms_vals = slow_rms_env[indices]
+                else:
+                    rms_vals = np.zeros(num_windows, dtype=np.float64)
                 crest_values = np.divide(
                     peaks,
                     rms_vals,
@@ -608,7 +625,7 @@ class PlotGenerator:
         ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
         
         # Set fixed Y-axis limits for consistency across tracks
-        ax.set_ylim([0, 40])
+        ax.set_ylim([0, 30])
         
         plt.tight_layout()
         
