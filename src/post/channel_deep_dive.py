@@ -13,7 +13,7 @@ from src.audio_processor import AudioProcessor
 from src.config import config
 from src.octave_filter import OctaveBandFilter
 from src.plotting_utils import add_calibrated_spl_axis
-from src.signal_metrics import compute_slow_rms_envelope, max_abs_over_window
+from src.signal_metrics import compute_slow_rms_envelope, sampled_max_abs
 
 logger = logging.getLogger(__name__)
 
@@ -174,8 +174,8 @@ def generate_channel_deep_dive_plot(track_dir: Path, group_name: str, output_dir
     # Skip "Full Spectrum" (index 0), use all octave bands
     octave_bands = center_frequencies[1:]  # 16, 31.25, 62.5, 125, 250, 500, 1000, 2000, 4000, 8000, 16000
     
-    # Calculate time-domain analysis for 2-second blocks
-    chunk_duration = 2.0  # seconds
+    # Calculate time-domain analysis for 1-second blocks
+    chunk_duration = 1.0  # seconds
     chunk_samples = int(chunk_duration * sample_rate)
     
     # Color palette for channels (distinct colors for up to 8 channels)
@@ -222,13 +222,13 @@ def generate_channel_deep_dive_plot(track_dir: Path, group_name: str, output_dir
         
         # Calculate number of complete chunks
         num_samples = len(channel_data)
-        num_complete_chunks = num_samples // chunk_samples
+        num_complete_chunks = (num_samples - chunk_samples) // chunk_samples + 1
         
-        if num_complete_chunks == 0:
-            logger.warning(f"Audio too short for 2-second block analysis: {num_samples} samples")
+        if num_complete_chunks <= 0:
+            logger.warning(f"Audio too short for 1-second block analysis: {num_samples} samples")
             continue
         
-        time_points = np.arange(num_complete_chunks) * chunk_duration
+        time_points = np.arange(num_complete_chunks) * chunk_duration + (chunk_duration / 2.0)
         
         # Process each octave band and store data
         channel_label = channel_folder.replace("Channel ", "").strip()
@@ -261,59 +261,42 @@ def generate_channel_deep_dive_plot(track_dir: Path, group_name: str, output_dir
         channel_peak_data = {}
         channel_rms_data = {}
         
-        window_samples = max(int(sample_rate * 1.0), 1)
-
         for channel_label, channel_info in channel_data_dict.items():
             octave_bank = channel_info["octave_bank"]
             channel_data = channel_info["channel_data"]
             num_complete_chunks = channel_info["num_complete_chunks"]
             
-            band_data = octave_bank[band_idx + 1]  # +1 to skip Full Spectrum
+            band_data = octave_bank[:, band_idx + 1]  # +1 to skip Full Spectrum
             slow_rms_env = compute_slow_rms_envelope(band_data, sample_rate)
             
-            # Calculate crest factor, peak, and RMS for each 2-second chunk
-            crest_factors_db = []
-            peak_levels_dbfs = []
-            rms_levels_dbfs = []
+            peaks = sampled_max_abs(band_data, chunk_samples, chunk_samples)
+            if peaks.size != num_complete_chunks:
+                peaks = np.zeros(num_complete_chunks, dtype=np.float64)
             
-            for chunk_idx in range(num_complete_chunks):
-                start_idx = chunk_idx * chunk_samples
-                end_idx = min(start_idx + chunk_samples, len(band_data))
-                chunk = band_data[start_idx:end_idx]
-                
-                # Skip empty or very short chunks (but allow last partial chunk if it's reasonable)
-                if len(chunk) < 100:
-                    continue
-                
-                # Calculate peak and RMS
-                peak = max_abs_over_window(chunk, window_samples)
-                center_idx = min(end_idx - 1, start_idx + chunk_samples // 2)
-                rms = slow_rms_env[center_idx] if slow_rms_env.size else 0.0
-                
-                # Convert to dBFS (using original peak normalization)
-                original_peak = np.max(np.abs(channel_data))
-                if original_peak > 0:
-                    peak_dbfs = 20 * np.log10(peak / original_peak)
-                    rms_dbfs = 20 * np.log10(rms / original_peak)
-                else:
-                    peak_dbfs = -120.0
-                    rms_dbfs = -120.0
-                
-                # Calculate crest factor
-                if rms > 0:
-                    crest_factor = peak / rms
-                    crest_factor_db = 20 * np.log10(crest_factor)
-                else:
-                    crest_factor_db = 0.0
-                
-                crest_factors_db.append(crest_factor_db)
-                peak_levels_dbfs.append(peak_dbfs)
-                rms_levels_dbfs.append(rms_dbfs)
+            indices = chunk_samples - 1 + np.arange(num_complete_chunks) * chunk_samples
+            rms_vals = (
+                slow_rms_env[indices]
+                if slow_rms_env.size > 0
+                else np.zeros(num_complete_chunks, dtype=np.float64)
+            )
             
-            if not crest_factors_db:
-                continue
+            original_peak = np.max(np.abs(channel_data))
+            if original_peak > 0:
+                peak_levels_dbfs = 20 * np.log10(peaks / original_peak)
+                rms_levels_dbfs = 20 * np.log10(rms_vals / original_peak)
+            else:
+                peak_levels_dbfs = np.full(num_complete_chunks, -120.0)
+                rms_levels_dbfs = np.full(num_complete_chunks, -120.0)
             
-            # Clean data for plotting
+            crest_factors = np.divide(
+                peaks,
+                rms_vals,
+                out=np.ones_like(peaks),
+                where=rms_vals > 0,
+            )
+            crest_factors = np.maximum(crest_factors, 1.0)
+            crest_factors_db = 20 * np.log10(crest_factors)
+            
             crest_factor_db_plot = np.array(crest_factors_db)
             crest_factor_db_plot[~np.isfinite(crest_factor_db_plot)] = 0.0
             crest_factor_db_plot = np.maximum(crest_factor_db_plot, 0.0)
@@ -327,7 +310,9 @@ def generate_channel_deep_dive_plot(track_dir: Path, group_name: str, output_dir
             rms_level_dbfs_plot[~np.isfinite(rms_level_dbfs_plot)] = -120
             
             # Store data for this channel
-            channel_time_points = np.arange(len(crest_factors_db)) * chunk_duration
+            channel_time_points = (
+                np.arange(len(crest_factor_db_plot)) * chunk_duration + (chunk_duration / 2.0)
+            )
             channel_crest_data[channel_label] = (channel_time_points, crest_factor_db_plot)
             channel_peak_data[channel_label] = (channel_time_points, peak_level_dbfs_plot)
             channel_rms_data[channel_label] = (channel_time_points, rms_level_dbfs_plot)

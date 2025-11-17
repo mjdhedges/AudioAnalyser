@@ -20,7 +20,10 @@ from matplotlib.collections import LineCollection
 from matplotlib.colors import LinearSegmentedColormap
 
 from src.plotting_utils import add_calibrated_spl_axis
-from src.signal_metrics import compute_slow_rms_envelope, max_abs_over_window
+from src.signal_metrics import (
+    compute_slow_rms_envelope,
+    sampled_max_abs,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -530,8 +533,8 @@ class PlotGenerator:
         
         # Extract data from time analysis
         time_points = time_analysis["time_points"]
-        chunk_duration = 2.0  # seconds
-        chunk_samples = int(chunk_duration * self.sample_rate)
+        window_duration = 1.0  # seconds
+        window_samples = int(window_duration * self.sample_rate)
         
         # Use provided center frequencies (no need to create filter instance)
         center_freqs = center_frequencies
@@ -547,33 +550,32 @@ class PlotGenerator:
             # Get all samples for this frequency band (skip full spectrum at index 0)
             band_all = octave_bank[:, freq_idx + 1]
             slow_rms_env = compute_slow_rms_envelope(band_all, self.sample_rate)
+            num_windows = (len(band_all) - window_samples) // window_samples + 1
             
-            # Calculate how many complete chunks we can make
-            num_complete_chunks = len(band_all) // chunk_samples
-            
-            if num_complete_chunks > 0:
-                crest_values = np.zeros(num_complete_chunks, dtype=np.float64)
-                for chunk_idx in range(num_complete_chunks):
-                    start_idx = chunk_idx * chunk_samples
-                    end_idx = start_idx + chunk_samples
-                    chunk = band_all[start_idx:end_idx]
-                    peak = max_abs_over_window(chunk, window_samples)
-                    center_idx = min(end_idx - 1, start_idx + chunk_samples // 2)
-                    rms = slow_rms_env[center_idx] if slow_rms_env.size else 0.0
-                    crest = peak / rms if rms > 0 else 1.0
-                    crest_values[chunk_idx] = max(crest, 1.0)
-                
-                crest_db = 20 * np.log10(crest_values, where=crest_values > 0, out=np.zeros_like(crest_values))
+            if num_windows > 0:
+                peaks = sampled_max_abs(band_all, window_samples, window_samples)
+                indices = window_samples - 1 + np.arange(num_windows) * window_samples
+                rms_vals = (
+                    slow_rms_env[indices]
+                    if slow_rms_env.size > 0
+                    else np.zeros(num_windows, dtype=np.float64)
+                )
+                crest_values = np.divide(
+                    peaks,
+                    rms_vals,
+                    out=np.ones_like(peaks),
+                    where=rms_vals > 0,
+                )
+                crest_values = np.maximum(crest_values, 1.0)
+                crest_db = 20 * np.log10(crest_values)
                 crest_db = np.where(np.isfinite(crest_db), crest_db, 0.0)
-                
-                # Pad with zeros if we have incomplete chunks
                 if len(crest_db) < len(time_points):
                     padding = np.zeros(len(time_points) - len(crest_db))
                     crest_db = np.concatenate([crest_db, padding])
-                
+                elif len(crest_db) > len(time_points):
+                    crest_db = crest_db[: len(time_points)]
                 octave_crest_factors[freq] = crest_db.tolist()
             else:
-                # No complete chunks - fill with zeros
                 octave_crest_factors[freq] = [0.0] * len(time_points)
         
         # Create the plot

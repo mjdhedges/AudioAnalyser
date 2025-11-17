@@ -22,7 +22,11 @@ from scipy import signal as sp_signal
 from src.data_export import DataExporter
 from src.envelope_analyzer import EnvelopeAnalyzer
 from src.visualization import PlotGenerator
-from src.signal_metrics import compute_slow_rms_envelope, max_abs_over_window
+from src.signal_metrics import (
+    compute_slow_rms_envelope,
+    max_abs_over_window,
+    sampled_max_abs,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -246,8 +250,11 @@ class MusicAnalyzer:
             "chunk_octave_analysis": chunk_octave_analysis
         }
 
-    def _analyze_time_domain_chunks(self, audio_data: np.ndarray, 
-                                  chunk_duration: float = 2.0) -> Dict:
+    def _analyze_time_domain_chunks(
+        self,
+        audio_data: np.ndarray,
+        chunk_duration: float = 2.0,
+    ) -> Dict:
         """Analyze crest factor over time using sliding windows.
         
         Args:
@@ -257,17 +264,17 @@ class MusicAnalyzer:
         Returns:
             Dictionary with time-domain crest factor analysis
         """
-        logger.info(f"Analyzing crest factor over time with {chunk_duration}s chunks...")
+        logger.info(
+            "Analyzing crest factor over time with SLOW weighting and 1s resolution..."
+        )
         
-        # Calculate chunk size in samples
-        chunk_samples = int(chunk_duration * self.sample_rate)
         total_samples = len(audio_data)
+        window_duration = 1.0  # seconds (IEC SLOW peak comparison)
+        window_samples = max(int(window_duration * self.sample_rate), 1)
+        step_samples = window_samples
         
-        # Calculate number of chunks
-        num_chunks = total_samples // chunk_samples
-        
-        if num_chunks == 0:
-            # Return empty results if no complete chunks
+        num_windows = (total_samples - window_samples) // step_samples + 1
+        if num_windows <= 0:
             return {
                 "time_points": np.array([]),
                 "crest_factors": np.array([]),
@@ -276,26 +283,24 @@ class MusicAnalyzer:
                 "rms_levels": np.array([]),
                 "peak_levels_dbfs": np.array([]),
                 "rms_levels_dbfs": np.array([]),
-                "chunk_duration": chunk_duration,
+                "chunk_duration": window_duration,
+                "time_step_seconds": window_duration,
                 "num_chunks": 0,
-                "total_duration": total_samples / self.sample_rate
+                "total_duration": total_samples / self.sample_rate,
             }
         
-        num_complete_samples = num_chunks * chunk_samples
-        audio_trimmed = audio_data[:num_complete_samples]
-        slow_rms_envelope = compute_slow_rms_envelope(audio_trimmed, self.sample_rate)
-        window_samples = max(int(self.sample_rate * 1.0), 1)
+        peak_levels = sampled_max_abs(audio_data, window_samples, step_samples)
+        if peak_levels.size != num_windows:
+            peak_levels = np.zeros(num_windows, dtype=np.float64)
         
-        peak_levels = np.zeros(num_chunks, dtype=np.float64)
-        rms_levels = np.zeros(num_chunks, dtype=np.float64)
-        
-        for idx in range(num_chunks):
-            start_idx = idx * chunk_samples
-            end_idx = start_idx + chunk_samples
-            chunk = audio_trimmed[start_idx:end_idx]
-            peak_levels[idx] = max_abs_over_window(chunk, window_samples)
-            center_idx = min(end_idx - 1, start_idx + chunk_samples // 2)
-            rms_levels[idx] = slow_rms_envelope[center_idx] if slow_rms_envelope.size else 0.0
+        slow_rms_envelope = compute_slow_rms_envelope(audio_data, self.sample_rate)
+        start_indices = np.arange(num_windows) * step_samples
+        center_indices = start_indices + window_samples // 2
+        if slow_rms_envelope.size > 0:
+            center_indices = np.clip(center_indices, 0, slow_rms_envelope.size - 1)
+            rms_levels = slow_rms_envelope[center_indices]
+        else:
+            rms_levels = np.zeros(num_windows, dtype=np.float64)
         
         # Vectorized crest factor calculation
         # Avoid division by zero and ensure crest factor >= 1.0
@@ -329,9 +334,8 @@ class MusicAnalyzer:
         )
         rms_levels_dbfs = np.where(np.isfinite(rms_levels_dbfs), rms_levels_dbfs, -120.0)
         
-        # Calculate time points (centers of chunks)
-        chunk_indices = np.arange(num_chunks)
-        time_points = (chunk_indices * chunk_samples + chunk_samples / 2) / self.sample_rate
+        # Calculate time points (end of each 1s window)
+        time_points = start_indices / self.sample_rate + (window_duration / 2.0)
         
         results = {
             "time_points": np.array(time_points),
@@ -341,12 +345,15 @@ class MusicAnalyzer:
             "rms_levels": np.array(rms_levels),
             "peak_levels_dbfs": np.array(peak_levels_dbfs),
             "rms_levels_dbfs": np.array(rms_levels_dbfs),
-            "chunk_duration": chunk_duration,
-            "num_chunks": num_chunks,
-            "total_duration": total_samples / self.sample_rate
+            "chunk_duration": window_duration,
+            "time_step_seconds": window_duration,
+            "num_chunks": num_windows,
+            "total_duration": total_samples / self.sample_rate,
         }
         
-        logger.info(f"Time-domain analysis complete: {num_chunks} chunks over {results['total_duration']:.1f}s")
+        logger.info(
+            f"Time-domain analysis complete: {num_windows} points over {results['total_duration']:.1f}s"
+        )
         return results
 
     def analyze_crest_factor_over_time(self, audio_data: np.ndarray, 
@@ -374,7 +381,8 @@ class MusicAnalyzer:
         """
         crest_factors_db = time_analysis["crest_factors_db"]
         time_points = time_analysis["time_points"]
-        chunk_samples = int(chunk_duration * self.sample_rate)
+        window_duration = time_analysis.get("chunk_duration", chunk_duration)
+        chunk_samples = max(int(window_duration * self.sample_rate), 1)
         
         # Find valid (finite) crest factor values
         valid_mask = np.isfinite(crest_factors_db)

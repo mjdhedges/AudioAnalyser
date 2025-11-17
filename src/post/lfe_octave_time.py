@@ -15,7 +15,7 @@ from src.audio_processor import AudioProcessor
 from src.config import config
 from src.octave_filter import OctaveBandFilter
 from src.plotting_utils import add_calibrated_spl_axis
-from src.signal_metrics import compute_slow_rms_envelope, max_abs_over_window
+from src.signal_metrics import compute_slow_rms_envelope, sampled_max_abs
 
 logger = logging.getLogger(__name__)
 
@@ -332,19 +332,17 @@ def generate_lfe_octave_time_plot(track_dir: Path, output_path: Path,
         logger.warning(f"Could not find target frequencies in octave bank for {track_name}")
         return None
     
-    # Calculate time-domain analysis for 2-second blocks
-    chunk_duration = 2.0  # seconds
+    # Calculate time-domain analysis for 1-second blocks
+    chunk_duration = 1.0  # seconds
     chunk_samples = int(chunk_duration * sample_rate)
-    
-    # Calculate number of complete chunks
     num_samples = len(lfe_channel_data)
-    num_complete_chunks = num_samples // chunk_samples
+    num_complete_chunks = (num_samples - chunk_samples) // chunk_samples + 1
     
-    if num_complete_chunks == 0:
-        logger.warning(f"Audio too short for 2-second block analysis: {num_samples} samples")
+    if num_complete_chunks <= 0:
+        logger.warning(f"Audio too short for 1-second block analysis: {num_samples} samples")
         return None
     
-    time_points = np.arange(num_complete_chunks) * chunk_duration
+    time_points = np.arange(num_complete_chunks) * chunk_duration + (chunk_duration / 2.0)
     
     # Calculate crest factor, peak, and RMS for each target frequency
     freq_data: Dict[float, Dict[str, np.ndarray]] = {}
@@ -357,20 +355,22 @@ def generate_lfe_octave_time_plot(track_dir: Path, output_path: Path,
         slow_rms_env = compute_slow_rms_envelope(band_data, sample_rate)
         
         # Calculate RMS and peak for each chunk using SLOW weighting
-        peak_vals = np.zeros(num_complete_chunks, dtype=np.float64)
-        rms_vals = np.zeros(num_complete_chunks, dtype=np.float64)
-        for chunk_idx in range(num_complete_chunks):
-            start = chunk_idx * chunk_samples
-            end = start + chunk_samples
-            chunk = band_data[start:end]
-            peak_vals[chunk_idx] = max_abs_over_window(chunk, window_samples)
-            center = min(end - 1, start + chunk_samples // 2)
-            rms_vals[chunk_idx] = slow_rms_env[center] if slow_rms_env.size else 0.0
+        peaks = sampled_max_abs(band_data, chunk_samples, chunk_samples)
+        if peaks.size != num_complete_chunks:
+            peaks = np.zeros(num_complete_chunks, dtype=np.float64)
+        
+        start_indices = np.arange(num_complete_chunks) * chunk_samples
+        center_indices = start_indices + chunk_samples // 2
+        if slow_rms_env.size > 0:
+            center_indices = np.clip(center_indices, 0, slow_rms_env.size - 1)
+            rms_vals = slow_rms_env[center_indices]
+        else:
+            rms_vals = np.zeros(num_complete_chunks, dtype=np.float64)
         
         # Calculate crest factor
         crest_factors = np.divide(
-            peak_vals, rms_vals,
-            out=np.ones_like(peak_vals),
+            peaks, rms_vals,
+            out=np.ones_like(peaks),
             where=(rms_vals > 0)
         )
         crest_factors = np.maximum(crest_factors, 1.0)
@@ -379,7 +379,7 @@ def generate_lfe_octave_time_plot(track_dir: Path, output_path: Path,
         
         # Convert to dBFS (use actual peak from audio data)
         audio_peak = np.max(np.abs(lfe_channel_data))
-        peak_dbfs = 20 * np.log10(peak_vals * audio_peak + 1e-10)
+        peak_dbfs = 20 * np.log10(peaks * audio_peak + 1e-10)
         rms_dbfs = 20 * np.log10(rms_vals * audio_peak + 1e-10)
         
         # Handle invalid values
