@@ -15,6 +15,7 @@ from src.audio_processor import AudioProcessor
 from src.config import config
 from src.octave_filter import OctaveBandFilter
 from src.plotting_utils import add_calibrated_spl_axis
+from src.signal_metrics import compute_slow_rms_envelope, max_abs_over_window
 
 logger = logging.getLogger(__name__)
 
@@ -348,18 +349,23 @@ def generate_lfe_octave_time_plot(track_dir: Path, output_path: Path,
     # Calculate crest factor, peak, and RMS for each target frequency
     freq_data: Dict[float, Dict[str, np.ndarray]] = {}
     
+    window_samples = max(int(sample_rate * 1.0), 1)
+
     for target_freq, freq_idx in freq_indices.items():
         # Get octave band data (skip full spectrum at index 0)
         band_data = octave_bank[:, freq_idx + 1]
+        slow_rms_env = compute_slow_rms_envelope(band_data, sample_rate)
         
-        # Reshape into chunks
-        band_reshaped = band_data[:num_complete_chunks * chunk_samples].reshape(
-            num_complete_chunks, chunk_samples
-        )
-        
-        # Calculate RMS and peak for each chunk
-        rms_vals = np.sqrt(np.mean(band_reshaped**2, axis=1))
-        peak_vals = np.max(np.abs(band_reshaped), axis=1)
+        # Calculate RMS and peak for each chunk using SLOW weighting
+        peak_vals = np.zeros(num_complete_chunks, dtype=np.float64)
+        rms_vals = np.zeros(num_complete_chunks, dtype=np.float64)
+        for chunk_idx in range(num_complete_chunks):
+            start = chunk_idx * chunk_samples
+            end = start + chunk_samples
+            chunk = band_data[start:end]
+            peak_vals[chunk_idx] = max_abs_over_window(chunk, window_samples)
+            center = min(end - 1, start + chunk_samples // 2)
+            rms_vals[chunk_idx] = slow_rms_env[center] if slow_rms_env.size else 0.0
         
         # Calculate crest factor
         crest_factors = np.divide(

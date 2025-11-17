@@ -13,6 +13,7 @@ from src.audio_processor import AudioProcessor
 from src.config import config
 from src.octave_filter import OctaveBandFilter
 from src.plotting_utils import add_calibrated_spl_axis
+from src.signal_metrics import compute_slow_rms_envelope, max_abs_over_window
 
 logger = logging.getLogger(__name__)
 
@@ -260,12 +261,15 @@ def generate_channel_deep_dive_plot(track_dir: Path, group_name: str, output_dir
         channel_peak_data = {}
         channel_rms_data = {}
         
+        window_samples = max(int(sample_rate * 1.0), 1)
+
         for channel_label, channel_info in channel_data_dict.items():
             octave_bank = channel_info["octave_bank"]
             channel_data = channel_info["channel_data"]
             num_complete_chunks = channel_info["num_complete_chunks"]
             
             band_data = octave_bank[band_idx + 1]  # +1 to skip Full Spectrum
+            slow_rms_env = compute_slow_rms_envelope(band_data, sample_rate)
             
             # Calculate crest factor, peak, and RMS for each 2-second chunk
             crest_factors_db = []
@@ -282,8 +286,9 @@ def generate_channel_deep_dive_plot(track_dir: Path, group_name: str, output_dir
                     continue
                 
                 # Calculate peak and RMS
-                peak = np.max(np.abs(chunk))
-                rms = np.sqrt(np.mean(chunk ** 2))
+                peak = max_abs_over_window(chunk, window_samples)
+                center_idx = min(end_idx - 1, start_idx + chunk_samples // 2)
+                rms = slow_rms_env[center_idx] if slow_rms_env.size else 0.0
                 
                 # Convert to dBFS (using original peak normalization)
                 original_peak = np.max(np.abs(channel_data))

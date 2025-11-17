@@ -22,6 +22,7 @@ from scipy import signal as sp_signal
 from src.data_export import DataExporter
 from src.envelope_analyzer import EnvelopeAnalyzer
 from src.visualization import PlotGenerator
+from src.signal_metrics import compute_slow_rms_envelope, max_abs_over_window
 
 logger = logging.getLogger(__name__)
 
@@ -93,12 +94,14 @@ class MusicAnalyzer:
         Returns:
             Dictionary with statistical measures
         """
-        # Basic statistics
-        max_val = np.max(np.abs(signal))
+        # Basic statistics with SLOW weighting
+        slow_rms_envelope = compute_slow_rms_envelope(signal, self.sample_rate)
+        rms_val = float(np.mean(slow_rms_envelope)) if slow_rms_envelope.size > 0 else 0.0
+        window_samples = max(int(self.sample_rate * 1.0), 1)
+        max_val = max_abs_over_window(signal, window_samples)
         # Calculate dBFS relative to original track's full scale
         max_dbfs = 20 * np.log10(max_val * self.original_peak) if max_val > 0 else -np.inf
         
-        rms_val = np.sqrt(np.mean(signal**2))
         # Calculate RMS in dBFS relative to original track's full scale  
         rms_dbfs = 20 * np.log10(rms_val * self.original_peak) if rms_val > 0 else -np.inf
         
@@ -278,19 +281,21 @@ class MusicAnalyzer:
                 "total_duration": total_samples / self.sample_rate
             }
         
-        # VECTORIZED IMPLEMENTATION: Process all chunks at once using reshape and vectorized operations
-        # This is 10-20x faster than the Python loop approach
         num_complete_samples = num_chunks * chunk_samples
         audio_trimmed = audio_data[:num_complete_samples]
+        slow_rms_envelope = compute_slow_rms_envelope(audio_trimmed, self.sample_rate)
+        window_samples = max(int(self.sample_rate * 1.0), 1)
         
-        # Reshape into chunks: (num_chunks, chunk_samples)
-        chunks_reshaped = audio_trimmed.reshape(num_chunks, chunk_samples)
+        peak_levels = np.zeros(num_chunks, dtype=np.float64)
+        rms_levels = np.zeros(num_chunks, dtype=np.float64)
         
-        # Vectorized peak calculation for all chunks simultaneously
-        peak_levels = np.max(np.abs(chunks_reshaped), axis=1)
-        
-        # Vectorized RMS calculation for all chunks simultaneously
-        rms_levels = np.sqrt(np.mean(chunks_reshaped**2, axis=1))
+        for idx in range(num_chunks):
+            start_idx = idx * chunk_samples
+            end_idx = start_idx + chunk_samples
+            chunk = audio_trimmed[start_idx:end_idx]
+            peak_levels[idx] = max_abs_over_window(chunk, window_samples)
+            center_idx = min(end_idx - 1, start_idx + chunk_samples // 2)
+            rms_levels[idx] = slow_rms_envelope[center_idx] if slow_rms_envelope.size else 0.0
         
         # Vectorized crest factor calculation
         # Avoid division by zero and ensure crest factor >= 1.0
