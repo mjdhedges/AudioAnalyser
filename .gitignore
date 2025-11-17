@@ -176,5 +176,9 @@ Tracks/
 # Analysis output directory
 analysis/
 
+# Additional generated analysis/report directories
+analysis_test/
+reports/
+
 # Cache directory
 cache/

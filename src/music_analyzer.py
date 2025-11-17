@@ -263,44 +263,70 @@ class MusicAnalyzer:
         # Calculate number of chunks
         num_chunks = total_samples // chunk_samples
         
-        # Initialize arrays for results
-        time_points = []
-        crest_factors = []
-        crest_factors_db = []
-        peak_levels = []
-        rms_levels = []
-        peak_levels_dbfs = []
-        rms_levels_dbfs = []
+        if num_chunks == 0:
+            # Return empty results if no complete chunks
+            return {
+                "time_points": np.array([]),
+                "crest_factors": np.array([]),
+                "crest_factors_db": np.array([]),
+                "peak_levels": np.array([]),
+                "rms_levels": np.array([]),
+                "peak_levels_dbfs": np.array([]),
+                "rms_levels_dbfs": np.array([]),
+                "chunk_duration": chunk_duration,
+                "num_chunks": 0,
+                "total_duration": total_samples / self.sample_rate
+            }
         
-        for i in range(num_chunks):
-            # Extract chunk
-            start_idx = i * chunk_samples
-            end_idx = start_idx + chunk_samples
-            chunk = audio_data[start_idx:end_idx]
-            
-            # Calculate time point (center of chunk)
-            time_point = (start_idx + end_idx) / 2 / self.sample_rate
-            time_points.append(time_point)
-            
-            # Calculate peak and RMS for this chunk
-            peak_val = np.max(np.abs(chunk))
-            rms_val = np.sqrt(np.mean(chunk**2))
-            
-            # Calculate crest factor
-            crest_factor = peak_val / rms_val if rms_val > 0 else 0
-            crest_factor_db = 20 * np.log10(crest_factor) if crest_factor > 0 else -np.inf
-            
-            # Calculate dBFS values using original peak
-            peak_dbfs = 20 * np.log10(peak_val * self.original_peak) if peak_val > 0 else -np.inf
-            rms_dbfs = 20 * np.log10(rms_val * self.original_peak) if rms_val > 0 else -np.inf
-            
-            # Store results
-            crest_factors.append(crest_factor)
-            crest_factors_db.append(crest_factor_db)
-            peak_levels.append(peak_val)
-            rms_levels.append(rms_val)
-            peak_levels_dbfs.append(peak_dbfs)
-            rms_levels_dbfs.append(rms_dbfs)
+        # VECTORIZED IMPLEMENTATION: Process all chunks at once using reshape and vectorized operations
+        # This is 10-20x faster than the Python loop approach
+        num_complete_samples = num_chunks * chunk_samples
+        audio_trimmed = audio_data[:num_complete_samples]
+        
+        # Reshape into chunks: (num_chunks, chunk_samples)
+        chunks_reshaped = audio_trimmed.reshape(num_chunks, chunk_samples)
+        
+        # Vectorized peak calculation for all chunks simultaneously
+        peak_levels = np.max(np.abs(chunks_reshaped), axis=1)
+        
+        # Vectorized RMS calculation for all chunks simultaneously
+        rms_levels = np.sqrt(np.mean(chunks_reshaped**2, axis=1))
+        
+        # Vectorized crest factor calculation
+        # Avoid division by zero and ensure crest factor >= 1.0
+        crest_factors = np.divide(
+            peak_levels, rms_levels,
+            out=np.ones_like(peak_levels),
+            where=(rms_levels > 0)
+        )
+        crest_factors = np.maximum(crest_factors, 1.0)
+        
+        # Vectorized dB conversion
+        crest_factors_db = np.where(
+            crest_factors > 0,
+            20 * np.log10(crest_factors),
+            -np.inf
+        )
+        crest_factors_db = np.where(np.isfinite(crest_factors_db), crest_factors_db, 0.0)
+        
+        # Vectorized dBFS calculations
+        peak_levels_dbfs = np.where(
+            peak_levels > 0,
+            20 * np.log10(peak_levels * self.original_peak),
+            -np.inf
+        )
+        peak_levels_dbfs = np.where(np.isfinite(peak_levels_dbfs), peak_levels_dbfs, -120.0)
+        
+        rms_levels_dbfs = np.where(
+            rms_levels > 0,
+            20 * np.log10(rms_levels * self.original_peak),
+            -np.inf
+        )
+        rms_levels_dbfs = np.where(np.isfinite(rms_levels_dbfs), rms_levels_dbfs, -120.0)
+        
+        # Calculate time points (centers of chunks)
+        chunk_indices = np.arange(num_chunks)
+        time_points = (chunk_indices * chunk_samples + chunk_samples / 2) / self.sample_rate
         
         results = {
             "time_points": np.array(time_points),

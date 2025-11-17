@@ -198,7 +198,9 @@ class Config:
             'chunk_duration': 'analysis.chunk_duration_seconds',
             'sample_rate': 'analysis.sample_rate',
             'dpi': 'plotting.dpi',
-            'log_level': 'logging.level'
+            'log_level': 'logging.level',
+            'test_start_time': 'analysis.test_start_time',
+            'test_duration': 'analysis.test_duration'
         }
         
         for arg_name, config_path in arg_mapping.items():

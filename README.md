@@ -117,6 +117,12 @@ python -m src.main --tracks-dir "MyMusic" --output-dir "results"
 # Single file analysis
 python -m src.main --input "song.flac" --single
 
+# Batch processing with all artifacts (analysis + manifest + decay plot)
+python -m src.main --tracks-dir "Tracks" --output-dir "analysis_output"
+
+# Post-processing only (regenerate manifests/plots for existing results)
+python -m src.main --tracks-dir "Tracks" --output-dir "analysis_output" --post-only
+
 # Custom sample rate for batch processing
 python -m src.main --sample-rate 48000
 
@@ -132,6 +138,9 @@ python -m src.main --help
 - `--output-dir, -o`: Output directory for results (default: from config)
 - `--batch/--single`: Process all tracks in directory (batch) or single file (default: batch)
 - `--export-csv/--no-export-csv`: Export results to CSV (default: True)
+- `--generate-manifest/--no-generate-manifest`: Generate worst-channel manifest (default: True)
+- `--generate-decay-plot/--no-generate-decay-plot`: Generate combined decay plot (default: True)
+- `--post-only`: Skip analysis and only run post-processing (manifests/plots) on existing results
 
 #### Configuration Overrides
 - `--sample-rate, -sr`: Sample rate for processing (overrides config)

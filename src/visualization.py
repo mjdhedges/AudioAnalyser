@@ -16,6 +16,10 @@ matplotlib.use('Agg')
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.collections import LineCollection
+from matplotlib.colors import LinearSegmentedColormap
+
+from src.plotting_utils import add_calibrated_spl_axis
 
 logger = logging.getLogger(__name__)
 
@@ -35,10 +39,33 @@ class PlotGenerator:
         self.original_peak = original_peak
         self.dpi = dpi
 
+    def _format_title(self, base_title: str, track_name: Optional[str] = None, 
+                     channel_name: Optional[str] = None) -> str:
+        """Format plot title with track and channel information.
+        
+        Args:
+            base_title: Base title for the plot
+            track_name: Optional track name to include
+            channel_name: Optional channel name to include
+            
+        Returns:
+            Formatted title string
+        """
+        if track_name and channel_name:
+            return f"{base_title} - {track_name} - {channel_name}"
+        elif track_name:
+            return f"{base_title} - {track_name}"
+        elif channel_name:
+            return f"{base_title} - {channel_name}"
+        else:
+            return base_title
+
     def create_octave_spectrum_plot(self, analysis_results: Dict, 
                                   output_path: Optional[str] = None,
                                   time_analysis: Optional[Dict] = None,
-                                  chunk_octave_analysis: Optional[Dict] = None) -> None:
+                                  chunk_octave_analysis: Optional[Dict] = None,
+                                  track_name: Optional[str] = None,
+                                  channel_name: Optional[str] = None) -> None:
         """Create octave spectrum plot similar to MATLAB's semilogx plot.
         
         Args:
@@ -46,6 +73,8 @@ class PlotGenerator:
             output_path: Optional path to save the plot
             time_analysis: Optional time-domain analysis results for chunk comparison
             chunk_octave_analysis: Optional pre-computed octave analysis for extreme chunks
+            track_name: Optional track name for title
+            channel_name: Optional channel name for title
         """
         logger.info("Creating octave spectrum plot...")
         
@@ -103,7 +132,8 @@ class PlotGenerator:
         # Formatting
         ax.set_xlabel('Frequency (Hz)')
         ax.set_ylabel('Amplitude (dBFS)')
-        ax.set_title('Octave Band Analysis - Peak and RMS Levels (dBFS)')
+        ax.set_title(self._format_title('Octave Band Analysis - Peak and RMS Levels (dBFS)', 
+                                       track_name, channel_name))
         ax.grid(True, alpha=0.3)
         ax.legend()
         ax.set_xlim([15, 20000])
@@ -191,7 +221,9 @@ class PlotGenerator:
 
     def create_histogram_plots(self, analysis_results: Dict, 
                              output_dir: Optional[str] = None,
-                             octave_bank: Optional[np.ndarray] = None) -> None:
+                             octave_bank: Optional[np.ndarray] = None,
+                             track_name: Optional[str] = None,
+                             channel_name: Optional[str] = None) -> None:
         """Create histogram plots for each octave band.
         
         Args:
@@ -257,8 +289,9 @@ class PlotGenerator:
         # Hide unused subplots
         for i in range(len(band_data), len(axes)):
             axes[i].set_visible(False)
-        
-        plt.suptitle('Amplitude Distribution by Octave Band', fontsize=16)
+
+        plt.suptitle(self._format_title('Amplitude Distribution by Octave Band', 
+                                       track_name, channel_name), fontsize=16)
         plt.tight_layout()
         
         if output_dir:
@@ -271,7 +304,9 @@ class PlotGenerator:
     def create_histogram_plots_log_db(self, analysis_results: Dict, 
                                      output_dir: Optional[str] = None,
                                      config: Optional[Dict] = None,
-                                     octave_bank: Optional[np.ndarray] = None) -> None:
+                                     octave_bank: Optional[np.ndarray] = None,
+                                     track_name: Optional[str] = None,
+                                     channel_name: Optional[str] = None) -> None:
         """Create histogram plots for each octave band with log dB X-axis.
         
         Args:
@@ -362,8 +397,9 @@ class PlotGenerator:
         # Hide unused subplots
         for i in range(len(band_data), len(axes)):
             axes[i].set_visible(False)
-        
-        plt.suptitle('Amplitude Distribution by Octave Band (Log dBFS Scale)', fontsize=16)
+
+        plt.suptitle(self._format_title('Amplitude Distribution by Octave Band (Log dBFS Scale)', 
+                                       track_name, channel_name), fontsize=16)
         plt.tight_layout()
         
         if output_dir:
@@ -373,8 +409,10 @@ class PlotGenerator:
         
         plt.close(fig)
 
-    def create_crest_factor_time_plot(self, time_analysis: Dict, 
-                                     output_path: Optional[str] = None) -> None:
+    def create_crest_factor_time_plot(self, time_analysis: Dict,
+                                    output_path: Optional[str] = None,
+                                    track_name: Optional[str] = None,
+                                    channel_name: Optional[str] = None) -> None:
         """Create crest factor vs time plot.
         
         Args:
@@ -400,23 +438,60 @@ class PlotGenerator:
         rms_levels_dbfs_plot = np.copy(rms_levels_dbfs)
         rms_levels_dbfs_plot[rms_levels_dbfs_plot == -np.inf] = -120
         
-        # Top plot: Crest Factor vs Time
-        ax1.plot(time_points, crest_factors_db_plot, 'g-', linewidth=2, label='Crest Factor')
-        ax1.set_ylabel('Crest Factor (dB)')
-        ax1.set_title('Crest Factor vs Time')
-        ax1.grid(True, alpha=0.3)
-        ax1.legend()
+        # Top plot: Crest Factor vs Time (color-coded by peak level)
+        # Create line segments for color mapping
+        points = np.array([time_points, crest_factors_db_plot]).T.reshape(-1, 1, 2)
+        segments = np.concatenate([points[:-1], points[1:]], axis=1)
+        
+        # Normalize peak levels for colormap: -10 dBFS (green) to 0 dBFS (red)
+        # Green for low peaks (safe), Red for high peaks near 0 dBFS (stressful)
+        peak_for_colormap = np.clip(peak_levels_dbfs_plot, -60, 1.0)
+        # Map: -10 dBFS and below = green (0), 0 dBFS = red (1)
+        peak_normalized = np.clip((peak_for_colormap + 10) / 10, 0, 1)
+        
+        # Use midpoint of each segment for smoother color transitions
+        # This creates a continuous fade between points
+        segment_peak_values = (peak_normalized[:-1] + peak_normalized[1:]) / 2
+        
+        # Create custom colormap: green to yellow to red (traffic light)
+        colors_list = ['#00ff00', '#ffff00', '#ff0000']  # Green, Yellow, Red
+        n_bins = 256  # Higher resolution for smoother transitions
+        cmap = LinearSegmentedColormap.from_list('traffic_light', colors_list, N=n_bins)
+        
+        # Create LineCollection with color mapping
+        # Use antialiased=True for smoother rendering
+        lc = LineCollection(segments, cmap=cmap, norm=plt.Normalize(0, 1),
+                            linewidth=2, alpha=0.8, antialiased=True)
+        lc.set_array(segment_peak_values)
+        line = ax1.add_collection(lc)
+        ax1.set_xlim(time_points.min(), time_points.max())
         ax1.set_ylim([0, max(30, np.max(crest_factors_db_plot) * 1.1)])
         
+        ax1.set_ylabel('Crest Factor (dB)')
+        ax1.set_title(self._format_title('Crest Factor vs Time (Color: Peak Level)', track_name, channel_name))
+        ax1.grid(True, alpha=0.3, which='major')
+        ax1.grid(True, alpha=0.15, which='minor')
+        # Add 1 dB minor steps
+        ax1.yaxis.set_minor_locator(plt.MultipleLocator(1))
+        
+        # Add colorbar at the bottom to avoid X-axis distortion
+        cbar = plt.colorbar(line, ax=ax1, orientation='horizontal', pad=0.15)
+        cbar.set_label('Peak Level (dBFS)', labelpad=10)
+
         # Bottom plot: Peak and RMS Levels vs Time
+        channel_name_normalized = (channel_name or "").upper()
+        is_lfe_channel = "LFE" in channel_name_normalized
+
         ax2.plot(time_points, peak_levels_dbfs_plot, 'b-', linewidth=2, label='Peak Level')
         ax2.plot(time_points, rms_levels_dbfs_plot, 'r-', linewidth=2, label='RMS Level')
         ax2.set_xlabel('Time (seconds)')
         ax2.set_ylabel('Level (dBFS)')
-        ax2.set_title('Peak and RMS Levels vs Time')
+        ax2.set_title(self._format_title('Peak and RMS Levels vs Time', track_name, channel_name))
         ax2.grid(True, alpha=0.3)
         ax2.legend()
-        ax2.set_ylim([-60, 5])
+        level_ylim = (-40, 3)
+        ax2.set_ylim(level_ylim)
+        add_calibrated_spl_axis(ax2, level_ylim, is_lfe=is_lfe_channel)
         
         # Add overall statistics as text
         avg_crest_db = np.mean(crest_factors_db_plot)
@@ -439,7 +514,9 @@ class PlotGenerator:
     def create_octave_crest_factor_time_plot(self, octave_bank: np.ndarray,
                                            time_analysis: Dict, 
                                            center_frequencies: List[float],
-                                           output_path: Optional[str] = None) -> None:
+                                           output_path: Optional[str] = None,
+                                           track_name: Optional[str] = None,
+                                           channel_name: Optional[str] = None) -> None:
         """Create plot showing crest factor over time for all octave bands.
         
         Args:
@@ -532,7 +609,8 @@ class PlotGenerator:
         # Formatting
         ax.set_xlabel('Time (seconds)')
         ax.set_ylabel('Crest Factor (dB)')
-        ax.set_title('Octave Band Crest Factor vs Time')
+        ax.set_title(self._format_title('Octave Band Crest Factor vs Time', 
+                                       track_name, channel_name))
         ax.grid(True, alpha=0.3)
         ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
         
@@ -550,7 +628,9 @@ class PlotGenerator:
     def create_pattern_envelope_plots(self, envelope_statistics: Dict,
                                       center_frequencies: List[float],
                                       output_dir: Optional[str] = None,
-                                      config: Optional[Dict] = None) -> None:
+                                      config: Optional[Dict] = None,
+                                      track_name: Optional[str] = None,
+                                      channel_name: Optional[str] = None) -> None:
         """Create plots showing top N envelopes from repeating patterns for each band.
         
         Args:
@@ -578,6 +658,7 @@ class PlotGenerator:
         fallback_window_ms = config.get('envelope_plots_window_ms', 200.0)
         ylim_min = config.get('envelope_plots_ylim_min', -30)
         ylim_max = config.get('envelope_plots_ylim_max', 0)
+        is_lfe_channel = "LFE" in (channel_name or "").upper()
         
         extended_frequencies = [0] + center_frequencies
         
@@ -716,15 +797,18 @@ class PlotGenerator:
             
             # Check if window was capped and add note to title
             window_was_capped = band_data.get("window_was_capped", False)
-            title = f'Top {len(top_envelopes)} Pattern Envelopes - {freq_label}'
+            base_title = f'Top {len(top_envelopes)} Pattern Envelopes - {freq_label}'
             if window_was_capped and freq > 0:
                 expected_window_ms = (num_wavelengths / freq) * 1000.0
-                title += f'\n(Window capped at 500ms, {num_wavelengths}λ would be {expected_window_ms:.0f}ms)'
+                base_title += f'\n(Window capped at 500ms, {num_wavelengths}λ would be {expected_window_ms:.0f}ms)'
             
+            title = self._format_title(base_title, track_name, channel_name)
             ax.set_title(title)
             ax.grid(True, alpha=0.3)
             ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-            ax.set_ylim([ylim_min, ylim_max])
+            level_ylim = (ylim_min, ylim_max)
+            ax.set_ylim(level_ylim)
+            add_calibrated_spl_axis(ax, level_ylim, is_lfe=is_lfe_channel)
             ax.set_xlim([-window_ms/2, window_ms/2])
             
             plt.tight_layout()
@@ -739,7 +823,9 @@ class PlotGenerator:
     def create_independent_envelope_plots(self, envelope_statistics: Dict,
                                          center_frequencies: List[float],
                                          output_dir: Optional[str] = None,
-                                         config: Optional[Dict] = None) -> None:
+                                         config: Optional[Dict] = None,
+                                         track_name: Optional[str] = None,
+                                         channel_name: Optional[str] = None) -> None:
         """Create plots showing top N independent (non-repeating) envelopes for each band.
         
         Args:
@@ -767,6 +853,7 @@ class PlotGenerator:
         fallback_window_ms = config.get('envelope_plots_window_ms', 200.0)
         ylim_min = config.get('envelope_plots_ylim_min', -30)
         ylim_max = config.get('envelope_plots_ylim_max', 0)
+        is_lfe_channel = "LFE" in (channel_name or "").upper()
         
         extended_frequencies = [0] + center_frequencies
         
@@ -869,15 +956,18 @@ class PlotGenerator:
             ax.set_ylabel('RMS Level (dBFS)')
             
             # Check if window was capped and add note to title
-            title = f'Top {len(top_envelopes)} Independent Envelopes - {freq_label}'
+            base_title = f'Top {len(top_envelopes)} Independent Envelopes - {freq_label}'
             if window_was_capped and freq > 0:
                 expected_window_ms = (num_wavelengths / freq) * 1000.0
-                title += f'\n(Window capped at 500ms, {num_wavelengths}λ would be {expected_window_ms:.0f}ms)'
+                base_title += f'\n(Window capped at 500ms, {num_wavelengths}λ would be {expected_window_ms:.0f}ms)'
             
+            title = self._format_title(base_title, track_name, channel_name)
             ax.set_title(title)
             ax.grid(True, alpha=0.3)
             ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-            ax.set_ylim([ylim_min, ylim_max])
+            level_ylim = (ylim_min, ylim_max)
+            ax.set_ylim(level_ylim)
+            add_calibrated_spl_axis(ax, level_ylim, is_lfe=is_lfe_channel)
             ax.set_xlim([-window_ms/2, window_ms/2])
             
             plt.tight_layout()
@@ -892,7 +982,9 @@ class PlotGenerator:
     def create_crest_factor_plot(self, analysis_results: Dict, 
                                output_path: Optional[str] = None,
                                time_analysis: Optional[Dict] = None,
-                               chunk_octave_analysis: Optional[Dict] = None) -> None:
+                               chunk_octave_analysis: Optional[Dict] = None,
+                               track_name: Optional[str] = None,
+                               channel_name: Optional[str] = None) -> None:
         """Create crest factor plot showing peak-to-RMS ratio for each octave band.
         
         Args:
@@ -989,7 +1081,8 @@ class PlotGenerator:
         # Formatting
         ax.set_xlabel('Frequency (Hz)')
         ax.set_ylabel('Crest Factor (dB)')
-        ax.set_title('Crest Factor by Octave Band')
+        ax.set_title(self._format_title('Crest Factor by Octave Band', 
+                                       track_name, channel_name))
         ax.grid(True, alpha=0.3)
         ax.legend()
         ax.set_xlim([15, 20000])

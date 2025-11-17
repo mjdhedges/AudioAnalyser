@@ -32,6 +32,7 @@ class AudioProcessor:
         """
         self.sample_rate = sample_rate
         self.enable_mkv_support = enable_mkv_support
+        self._last_channel_layout: Optional[str] = None  # Store channel layout from ffprobe
 
     def _is_mkv_file(self, file_path: Path) -> bool:
         """Check if file is an MKV container.
@@ -44,13 +45,25 @@ class AudioProcessor:
         """
         return file_path.suffix.lower() == '.mkv'
     
-    def _probe_mkv_audio_streams(self, file_path: Path) -> List[dict]:
-        """Probe MKV file to get audio stream information.
-        
-        Uses ffprobe to extract stream metadata including codec and channel information.
+    def _is_mts_file(self, file_path: Path) -> bool:
+        """Check if file is an MTS container.
         
         Args:
-            file_path: Path to the MKV file
+            file_path: Path to the file
+            
+        Returns:
+            True if file has .mts extension, False otherwise
+        """
+        return file_path.suffix.lower() == '.mts'
+    
+    def _probe_audio_streams(self, file_path: Path) -> List[dict]:
+        """Probe audio file to get stream information.
+        
+        Uses ffprobe to extract stream metadata including codec and channel information.
+        Works for both MKV and MTS files.
+        
+        Args:
+            file_path: Path to the audio file
             
         Returns:
             List of dictionaries containing stream information:
@@ -84,23 +97,25 @@ class AudioProcessor:
             probe_data = json.loads(result.stdout)
             streams = probe_data.get('streams', [])
             
-            logger.info(f"Found {len(streams)} audio stream(s) in MKV file")
+            logger.info(f"Found {len(streams)} audio stream(s) in file")
             for stream in streams:
                 logger.info(
                     f"  Stream {stream.get('index')}: {stream.get('codec_name')} "
-                    f"({stream.get('channels')} channels, {stream.get('sample_rate')} Hz)"
+                    f"({stream.get('channels')} channels, {stream.get('sample_rate')} Hz, "
+                    f"layout: {stream.get('channel_layout', 'unknown')})"
                 )
             
             return streams
             
         except FileNotFoundError:
             raise RuntimeError(
-                "ffprobe not found. Please install ffmpeg to support MKV/TrueHD files. "
+                "ffprobe not found. Please install ffmpeg to support MKV/MTS/TrueHD files. "
                 "Download from https://ffmpeg.org/download.html"
             )
         except subprocess.CalledProcessError as e:
             logger.error(f"ffprobe failed: {e.stderr}")
-            raise RuntimeError(f"Failed to probe MKV file: {e.stderr}")
+            raise RuntimeError(f"Failed to probe file: {e.stderr}")
+    
     
     def _extract_truehd_from_mkv(
         self, 
@@ -177,7 +192,8 @@ class AudioProcessor:
             logger.error(f"ffmpeg failed: {e.stderr}")
             raise RuntimeError(f"Failed to extract TrueHD audio: {e.stderr}")
     
-    def load_audio(self, file_path: str | Path) -> Tuple[np.ndarray, int]:
+    def load_audio(self, file_path: str | Path, start_time: Optional[float] = None, 
+                   duration: Optional[float] = None) -> Tuple[np.ndarray, int]:
         """Load audio file and return audio data and sample rate.
         
         Preserves multi-channel audio. Returns shape (samples,) for mono or (samples, channels) for multi-channel.
@@ -185,6 +201,8 @@ class AudioProcessor:
         
         Args:
             file_path: Path to the audio file
+            start_time: Optional start time in seconds (for testing - analyze only a section)
+            duration: Optional duration in seconds (for testing - limit analysis length)
             
         Returns:
             Tuple of (audio_data, sample_rate)
@@ -201,44 +219,61 @@ class AudioProcessor:
         if not file_path.exists():
             raise FileNotFoundError(f"Audio file not found: {file_path}")
         
-        # Handle MKV containers with TrueHD audio
+        # Handle MKV and MTS containers with TrueHD audio
         temp_wav_path: Optional[Path] = None
-        if self.enable_mkv_support and self._is_mkv_file(file_path):
+        if self.enable_mkv_support and (self._is_mkv_file(file_path) or self._is_mts_file(file_path)):
             try:
-                # Probe MKV to find TrueHD audio streams
-                streams = self._probe_mkv_audio_streams(file_path)
+                # Probe file to find audio streams and get channel layout
+                streams = self._probe_audio_streams(file_path)
                 
-                # Find TrueHD stream (exclude Atmos metadata)
-                truehd_stream = None
-                for stream in streams:
-                    codec = stream.get('codec_name', '').lower()
-                    if codec == 'truehd':
-                        # Check if it's not Atmos metadata
-                        codec_long = stream.get('codec_long_name', '').lower()
-                        if 'atmos' not in codec_long:
-                            truehd_stream = stream
-                            break
-                
-                if truehd_stream:
-                    # Use global stream index for mapping
-                    global_stream_idx = int(truehd_stream.get('index', 0))
-                    logger.info(f"Found TrueHD audio stream at global index {global_stream_idx}")
-                    # Extract and decode TrueHD to temporary WAV
-                    temp_wav_path = self._extract_truehd_from_mkv(file_path, stream_index=global_stream_idx)
-                    # Update file_path to point to extracted WAV
-                    file_path = temp_wav_path
-                else:
-                    logger.warning(
-                        f"No TrueHD audio stream found in MKV file. "
-                        f"Found streams: {[s.get('codec_name') for s in streams]}"
-                    )
-                    # Try to extract first audio stream anyway
+                # For MTS files, just get channel layout (no extraction needed)
+                if self._is_mts_file(file_path):
                     if streams:
-                        global_stream_idx = int(streams[0].get('index', 0))
+                        # Store channel layout from ffprobe for correct channel mapping
+                        self._last_channel_layout = streams[0].get('channel_layout', None)
+                        if self._last_channel_layout:
+                            logger.info(f"Detected channel layout from MTS file: {self._last_channel_layout}")
+                    # MTS files can be loaded directly, no extraction needed
+                elif self._is_mkv_file(file_path):
+                    # For MKV files, find TrueHD stream and extract
+                    truehd_stream = None
+                    for stream in streams:
+                        codec = stream.get('codec_name', '').lower()
+                        if codec == 'truehd':
+                            # Check if it's not Atmos metadata
+                            codec_long = stream.get('codec_long_name', '').lower()
+                            if 'atmos' not in codec_long:
+                                truehd_stream = stream
+                                break
+                    
+                    if truehd_stream:
+                        # Use global stream index for mapping
+                        global_stream_idx = int(truehd_stream.get('index', 0))
+                        logger.info(f"Found TrueHD audio stream at global index {global_stream_idx}")
+                        # Store channel layout from ffprobe for correct channel mapping
+                        self._last_channel_layout = truehd_stream.get('channel_layout', None)
+                        if self._last_channel_layout:
+                            logger.info(f"Detected channel layout: {self._last_channel_layout}")
+                        # Extract and decode TrueHD to temporary WAV
                         temp_wav_path = self._extract_truehd_from_mkv(file_path, stream_index=global_stream_idx)
+                        # Update file_path to point to extracted WAV
                         file_path = temp_wav_path
                     else:
-                        raise ValueError("No audio streams found in MKV file")
+                        logger.warning(
+                            f"No TrueHD audio stream found in MKV file. "
+                            f"Found streams: {[s.get('codec_name') for s in streams]}"
+                        )
+                        # Try to extract first audio stream anyway
+                        if streams:
+                            global_stream_idx = int(streams[0].get('index', 0))
+                            # Store channel layout from ffprobe
+                            self._last_channel_layout = streams[0].get('channel_layout', None)
+                            if self._last_channel_layout:
+                                logger.info(f"Detected channel layout: {self._last_channel_layout}")
+                            temp_wav_path = self._extract_truehd_from_mkv(file_path, stream_index=global_stream_idx)
+                            file_path = temp_wav_path
+                        else:
+                            raise ValueError("No audio streams found in MKV file")
             except Exception as e:
                 logger.error(f"Failed to extract audio from MKV: {e}")
                 raise
@@ -254,21 +289,20 @@ class AudioProcessor:
                 audio_data, sr = sf.read(str(file_path), dtype=dtype)
                 # Resample if needed
                 if sr != self.sample_rate:
-                    import librosa
                     if audio_data.ndim == 1:
                         # Mono: resample directly
                         audio_data = librosa.resample(audio_data, orig_sr=sr, target_sr=self.sample_rate)
                     else:
-                        # Multi-channel: resample each channel
-                        resampled_channels = []
-                        for ch in range(audio_data.shape[1]):
-                            resampled_ch = librosa.resample(
-                                audio_data[:, ch], 
-                                orig_sr=sr, 
-                                target_sr=self.sample_rate
-                            )
-                            resampled_channels.append(resampled_ch)
-                        audio_data = np.column_stack(resampled_channels)
+                        # Multi-channel: OPTIMIZED - use librosa's built-in multi-channel support
+                        # librosa.resample expects (channels, samples) format for multi-channel
+                        # Transpose, resample all channels at once, then transpose back
+                        audio_data_transposed = audio_data.T  # (channels, samples)
+                        audio_data_resampled = librosa.resample(
+                            audio_data_transposed,
+                            orig_sr=sr,
+                            target_sr=self.sample_rate
+                        )
+                        audio_data = audio_data_resampled.T  # Back to (samples, channels)
                     sr = self.sample_rate
             except Exception:
                 # Fallback to librosa for formats soundfile doesn't support
@@ -283,7 +317,37 @@ class AudioProcessor:
             else:
                 logger.info(f"Loaded audio file: {file_path} ({audio_data.shape[1]} channels)")
             
-            logger.info(f"Sample rate: {sr} Hz, Duration: {len(audio_data)/sr:.2f}s, dtype: {audio_data.dtype}")
+            original_duration = len(audio_data) / sr
+            logger.info(f"Sample rate: {sr} Hz, Duration: {original_duration:.2f}s, dtype: {audio_data.dtype}")
+            
+            # Trim audio to specified section if requested (for testing)
+            if start_time is not None or duration is not None:
+                start_sample = int(start_time * sr) if start_time is not None else 0
+                if duration is not None:
+                    end_sample = start_sample + int(duration * sr)
+                else:
+                    end_sample = len(audio_data)
+                
+                # Clamp to valid range
+                start_sample = max(0, min(start_sample, len(audio_data)))
+                end_sample = max(start_sample, min(end_sample, len(audio_data)))
+                
+                if audio_data.ndim == 1:
+                    audio_data = audio_data[start_sample:end_sample]
+                else:
+                    audio_data = audio_data[start_sample:end_sample, :]
+                
+                trimmed_duration = len(audio_data) / sr
+                if duration is not None:
+                    logger.info(
+                        f"Trimmed audio: {start_time or 0:.2f}s to {(start_time or 0) + duration:.2f}s "
+                        f"(duration: {trimmed_duration:.2f}s)"
+                    )
+                else:
+                    logger.info(
+                        f"Trimmed audio: from {start_time:.2f}s to end "
+                        f"(duration: {trimmed_duration:.2f}s)"
+                    )
             
             return audio_data, sr
             
@@ -350,7 +414,7 @@ class AudioProcessor:
             - duration_seconds: Duration in seconds
             - sample_rate: Sample rate in Hz
             - channels: Number of channels (1 for mono)
-            - channel_layout: "mono", "stereo", or "multi-channel"
+            - channel_layout: FFmpeg channel layout string (e.g., "7.1", "5.1") or "mono"/"stereo"/"multi-channel"
             - samples: Number of samples
             - max_amplitude: Maximum amplitude across all channels
             - rms: RMS value across all channels
@@ -358,8 +422,11 @@ class AudioProcessor:
         duration = len(audio_data) / sample_rate
         num_channels = 1 if audio_data.ndim == 1 else audio_data.shape[1]
         
-        # Determine channel layout
-        if num_channels == 1:
+        # Use channel layout from ffprobe if available (most accurate)
+        # Otherwise determine from channel count
+        if self._last_channel_layout:
+            channel_layout = self._last_channel_layout
+        elif num_channels == 1:
             channel_layout = "mono"
         elif num_channels == 2:
             channel_layout = "stereo"

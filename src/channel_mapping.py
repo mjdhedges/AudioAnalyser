@@ -61,17 +61,62 @@ HBR = "HBR"  # Height Back Right
 # Low Frequency Effects
 LFE = "LFE"  # Low Frequency Effects (subwoofer)
 
-# Standard channel mapping configurations
-# Maps channel count to list of channel names in order
+# FFmpeg Standard Channel Mapping Configurations
+# FFmpeg uses a specific channel order - use "ffmpeg -layouts" as source of truth
+# Reference: https://ffmpeg.org/ffmpeg-all.html#channel-layout
+# Maps channel layout string to list of channel names in FFmpeg's exact order
+# Note: FFmpeg uses BL/BR for back left/right, we map to SBL/SBR for consistency
+FFMPEG_CHANNEL_MAPS: Dict[str, list[str]] = {
+    "mono": [FC],
+    "stereo": ["Channel 1 Left", "Channel 2 Right"],  # Custom naming for stereo
+    "2.1": [FL, FR, LFE],
+    "3.0": [FL, FR, FC],
+    "3.0(back)": [FL, FR, "BC"],  # BC = Back Center (not in our standard names)
+    "4.0": [FL, FR, FC, "BC"],  # BC = Back Center
+    "quad": [FL, FR, SBL, SBR],  # quad = FL+FR+BL+BR
+    "quad(side)": [FL, FR, SL, SR],  # quad(side) = FL+FR+SL+SR
+    "3.1": [FL, FR, FC, LFE],
+    "5.0": [FL, FR, FC, SBL, SBR],  # 5.0 = FL+FR+FC+BL+BR
+    "5.0(side)": [FL, FR, FC, SL, SR],  # 5.0(side) = FL+FR+FC+SL+SR
+    "4.1": [FL, FR, FC, LFE, "BC"],  # BC = Back Center
+    "5.1": [FL, FR, FC, LFE, SBL, SBR],  # 5.1 = FL+FR+FC+LFE+BL+BR
+    "5.1(side)": [FL, FR, FC, LFE, SL, SR],  # 5.1(side) = FL+FR+FC+LFE+SL+SR
+    "6.0": [FL, FR, FC, "BC", SL, SR],  # BC = Back Center
+    "6.0(front)": [FL, FR, "FLC", "FRC", SL, SR],  # FLC/FRC = Front Left/Right of Center
+    "3.1.2": [FL, FR, FC, LFE, TFL, TFR],
+    "hexagonal": [FL, FR, FC, SBL, SBR, "BC"],  # BC = Back Center
+    "6.1": [FL, FR, FC, LFE, "BC", SL, SR],  # 6.1 = FL+FR+FC+LFE+BC+SL+SR
+    "6.1(back)": [FL, FR, FC, LFE, SBL, SBR, "BC"],  # 6.1(back) = FL+FR+FC+LFE+BL+BR+BC
+    "6.1(front)": [FL, FR, LFE, "FLC", "FRC", SL, SR],  # FLC/FRC = Front Left/Right of Center
+    "7.0": [FL, FR, FC, SBL, SBR, SL, SR],  # 7.0 = FL+FR+FC+BL+BR+SL+SR
+    "7.0(front)": [FL, FR, FC, "FLC", "FRC", SL, SR],  # FLC/FRC = Front Left/Right of Center
+    "7.1": [FL, FR, FC, LFE, SBL, SBR, SL, SR],  # 7.1 = FL+FR+FC+LFE+BL+BR+SL+SR (FFmpeg standard order)
+    "7.1(wide)": [FL, FR, FC, LFE, SBL, SBR, "FLC", "FRC"],  # FLC/FRC = Front Left/Right of Center
+    "7.1(wide-side)": [FL, FR, FC, LFE, "FLC", "FRC", SL, SR],  # FLC/FRC = Front Left/Right of Center
+    "5.1.2": [FL, FR, FC, LFE, SBL, SBR, TFL, TFR],
+    "octagonal": [FL, FR, FC, SBL, SBR, "BC", SL, SR],  # BC = Back Center
+    "cube": [FL, FR, SBL, SBR, TFL, TFR, TBL, TBR],
+    "5.1.4": [FL, FR, FC, LFE, SBL, SBR, TFL, TFR, TBL, TBR],
+    "7.1.2": [FL, FR, FC, LFE, SBL, SBR, SL, SR, TFL, TFR],  # 7.1.2 = FL+FR+FC+LFE+BL+BR+SL+SR+TFL+TFR
+    "7.1.4": [FL, FR, FC, LFE, SBL, SBR, SL, SR, TFL, TFR, TBL, TBR],  # 7.1.4 = FL+FR+FC+LFE+BL+BR+SL+SR+TFL+TFR+TBL+TBR
+    "7.2.3": [FL, FR, FC, LFE, SBL, SBR, SL, SR, TFL, TFR, "TBC", "LFE2"],  # TBC = Top Back Center, LFE2 = Low Frequency 2
+    "9.1.4": [FL, FR, FC, LFE, SBL, SBR, "FLC", "FRC", SL, SR, TFL, TFR, TBL, TBR],  # FLC/FRC = Front Left/Right of Center
+    "hexadecagonal": [FL, FR, FC, SBL, SBR, "BC", SL, SR, TFL, "TFC", TFR, TBL, "TBC", TBR, "WL", "WR"],  # TFC/TBC = Top Front/Back Center, WL/WR = Wide Left/Right
+    "downmix": ["DL", "DR"],  # DL/DR = Downmix Left/Right
+    "22.2": [FL, FR, FC, LFE, SBL, SBR, "FLC", "FRC", "BC", SL, SR, "TC", TFL, "TFC", TFR, TBL, "TBC", TBR, "LFE2", "TSL", "TSR", "BFC", "BFL", "BFR"],  # Complex layout
+}
+
+# Legacy standard channel mapping configurations (RP22-based, may not match FFmpeg)
+# Kept for backward compatibility but should use FFmpeg order when available
 STANDARD_CHANNEL_MAPS: Dict[int, list[str]] = {
     1: [FC],  # Mono
     2: ["Channel 1 Left", "Channel 2 Right"],  # Stereo (custom naming)
     3: [FL, FC, FR],  # 3.0
     4: [FL, FR, SL, SR],  # Quad
     5: [FL, FC, FR, SL, SR],  # 5.0
-    6: [FL, FC, FR, SL, SR, LFE],  # 5.1
+    6: [FL, FC, FR, SL, SR, LFE],  # 5.1 (legacy order)
     7: [FL, FC, FR, SL, SR, SBL, SBR],  # 7.0
-    8: [FL, FC, FR, SL, SR, SBL, SBR, LFE],  # 7.1
+    8: [FL, FC, FR, SL, SR, SBL, SBR, LFE],  # 7.1 (legacy order - WRONG for FFmpeg!)
     # Extended configurations
     9: [FL, FC, FR, SL, SR, SBL, SBR, TFL, TFR],  # 7.1.2
     10: [FL, FC, FR, SL, SR, SBL, SBR, TFL, TFR, LFE],  # 7.1.2 with LFE
@@ -80,15 +125,18 @@ STANDARD_CHANNEL_MAPS: Dict[int, list[str]] = {
 }
 
 
-def get_channel_name(channel_index: int, total_channels: int) -> str:
-    """Get RP22 standard channel name for a given channel index.
+def get_channel_name(channel_index: int, total_channels: int, 
+                     channel_layout: Optional[str] = None) -> str:
+    """Get channel name for a given channel index.
     
+    Uses FFmpeg channel layout if provided, otherwise falls back to standard mapping.
     For stereo (2 channels), returns "Channel 1 Left" and "Channel 2 Right".
-    For multi-channel, returns RP22 standard names based on channel count.
+    For multi-channel, returns standard names based on channel layout or count.
     
     Args:
         channel_index: Zero-based channel index
         total_channels: Total number of channels in the audio
+        channel_layout: Optional FFmpeg channel layout string (e.g., "7.1", "5.1")
         
     Returns:
         Channel name string (e.g., "FL", "Channel 1 Left", "LFE")
@@ -108,7 +156,16 @@ def get_channel_name(channel_index: int, total_channels: int) -> str:
         elif channel_index == 1:
             return "Channel 2 Right"
     
-    # Use standard channel map if available
+    # Use FFmpeg channel layout if provided (most accurate)
+    # Normalize channel_layout string (lowercase, strip whitespace)
+    if channel_layout:
+        normalized_layout = channel_layout.lower().strip()
+        if normalized_layout in FFMPEG_CHANNEL_MAPS:
+            channel_names = FFMPEG_CHANNEL_MAPS[normalized_layout]
+            if channel_index < len(channel_names):
+                return channel_names[channel_index]
+    
+    # Fallback to standard channel map based on count
     if total_channels in STANDARD_CHANNEL_MAPS:
         channel_names = STANDARD_CHANNEL_MAPS[total_channels]
         if channel_index < len(channel_names):
@@ -118,20 +175,22 @@ def get_channel_name(channel_index: int, total_channels: int) -> str:
     return f"Channel {channel_index + 1}"
 
 
-def get_channel_folder_name(channel_index: int, total_channels: int) -> str:
+def get_channel_folder_name(channel_index: int, total_channels: int,
+                            channel_layout: Optional[str] = None) -> str:
     """Get folder name for channel output directory.
     
     For stereo: "Channel 1 Left", "Channel 2 Right"
-    For multi-channel: Uses RP22 standard names (FL, FC, FR, etc.)
+    For multi-channel: Uses standard names (FL, FC, FR, etc.)
     
     Args:
         channel_index: Zero-based channel index
         total_channels: Total number of channels
+        channel_layout: Optional FFmpeg channel layout string (e.g., "7.1", "5.1")
         
     Returns:
         Folder name string suitable for directory creation
     """
-    channel_name = get_channel_name(channel_index, total_channels)
+    channel_name = get_channel_name(channel_index, total_channels, channel_layout)
     
     # For stereo, use the full name as-is
     if total_channels == 2:

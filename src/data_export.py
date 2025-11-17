@@ -89,14 +89,52 @@ class DataExporter:
         # Convert audio to dBFS for peak analysis
         audio_dbfs = 20 * np.log10(np.abs(audio_data) * self.original_peak + 1e-10)
         
-        # 1. CLIPPING & PEAK STATISTICS
-        hot_peaks = np.sum(audio_dbfs > -1.0)  # Near-clipping events
-        clip_events = np.sum(audio_dbfs > -0.1)  # Actual clipping events
-        peak_saturation = np.sum(audio_dbfs > -3.0)  # Heavily compressed regions
+        # 1. PEAK EVENT STATISTICS (count discrete peaks, not samples)
+        # Use envelope to detect discrete peak events
+        from scipy import signal as sp_signal
+        
+        # Calculate a simple peak envelope for peak detection
+        rectified = np.abs(audio_data)
+        envelope = np.zeros_like(rectified)
+        envelope[0] = rectified[0]
+        # Simple peak follower with 10ms release time
+        release_samples = int(0.01 * self.sample_rate)  # 10ms
+        alpha = 1.0 / release_samples
+        for i in range(1, len(rectified)):
+            envelope[i] = max(rectified[i], envelope[i-1] * (1 - alpha))
+        
+        envelope_dbfs = 20 * np.log10(envelope * self.original_peak + 1e-10)
+        envelope_dbfs_clean = np.copy(envelope_dbfs)
+        envelope_dbfs_clean[envelope_dbfs_clean == -np.inf] = -120.0
+        
+        # Detect peaks with minimum distance (avoid counting same peak multiple times)
+        min_distance_samples = int(0.05 * self.sample_rate)  # 50ms minimum between peaks
+        peak_indices, peak_properties = sp_signal.find_peaks(
+            envelope_dbfs_clean,
+            height=-40.0,  # Minimum peak height
+            distance=min_distance_samples
+        )
+        peak_values_db = envelope_dbfs_clean[peak_indices]
+        
+        # Count peaks at different thresholds
+        peaks_above_minus3db = np.sum(peak_values_db > -3.0)
+        peaks_above_minus1db = np.sum(peak_values_db > -1.0)
+        peaks_above_minus0_1db = np.sum(peak_values_db > -0.1)
+        
+        # Legacy sample-based metrics (keep for backward compatibility)
+        clip_events_samples = np.sum(audio_dbfs > -0.1)  # Actual clipping events (samples)
+        peak_saturation = np.sum(audio_dbfs > -3.0)  # Heavily compressed regions (samples)
         
         stats.update({
-            "hot_peaks_rate_per_sec": hot_peaks / duration,
-            "clip_events_rate_per_sec": clip_events / duration,
+            "peaks_above_minus3db_count": int(peaks_above_minus3db),
+            "peaks_above_minus3db_per_sec": peaks_above_minus3db / duration,
+            "peaks_above_minus1db_count": int(peaks_above_minus1db),
+            "peaks_above_minus1db_per_sec": peaks_above_minus1db / duration,
+            "peaks_above_minus0_1db_count": int(peaks_above_minus0_1db),
+            "peaks_above_minus0_1db_per_sec": peaks_above_minus0_1db / duration,
+            # Legacy metrics (kept for compatibility, but deprecated)
+            "hot_peaks_rate_per_sec": peaks_above_minus1db / duration,  # Use peak count instead
+            "clip_events_rate_per_sec": clip_events_samples / duration,
             "peak_saturation_percent": (peak_saturation / len(audio_data)) * 100,
             "max_true_peak_dbfs": np.max(audio_dbfs),
             "peak_density_above_minus3db": peak_saturation / len(audio_data)
@@ -232,8 +270,14 @@ class DataExporter:
                 
                 # Define descriptions for each statistic
                 stat_descriptions = {
-                    "hot_peaks_rate_per_sec": "Near-clipping events (>-1dBFS) per second",
-                    "clip_events_rate_per_sec": "Actual clipping events (>-0.1dBFS) per second", 
+                    "peaks_above_minus3db_count": "Number of discrete peaks above -3dBFS",
+                    "peaks_above_minus3db_per_sec": "Peaks above -3dBFS per second",
+                    "peaks_above_minus1db_count": "Number of discrete peaks above -1dBFS",
+                    "peaks_above_minus1db_per_sec": "Peaks above -1dBFS per second",
+                    "peaks_above_minus0_1db_count": "Number of discrete peaks above -0.1dBFS",
+                    "peaks_above_minus0_1db_per_sec": "Peaks above -0.1dBFS per second",
+                    "hot_peaks_rate_per_sec": "Near-clipping events (>-1dBFS) per second (deprecated - use peaks_above_minus1db_per_sec)",
+                    "clip_events_rate_per_sec": "Actual clipping events (>-0.1dBFS) per second (sample-based, deprecated)", 
                     "peak_saturation_percent": "Percentage of samples above -3dBFS (heavily compressed)",
                     "max_true_peak_dbfs": "Maximum true peak level in dBFS",
                     "peak_density_above_minus3db": "Fraction of samples above -3dBFS",
@@ -442,6 +486,47 @@ class DataExporter:
                                 f"{pattern['median_interval_seconds']},{pattern['min_interval_seconds']},"
                                 f"{pattern['max_interval_seconds']},{pattern['pattern_regularity_score']},"
                                 f"{pattern['pattern_confidence']},{pattern['beats_per_minute']}\n"
+                            )
+                
+                # Export sustained peaks summary
+                csvfile.write("\n[SUSTAINED_PEAKS_SUMMARY]\n")
+                # Header: frequency_hz,n_peaks,hold_ms_mean,hold_ms_median,hold_ms_p90,hold_ms_p95,hold_ms_max,t3_ms_mean,...
+                headers = [
+                    "frequency_hz",
+                    "n_peaks",
+                    "hold_ms_mean","hold_ms_median","hold_ms_p90","hold_ms_p95","hold_ms_max",
+                    "t3_ms_mean","t3_ms_median","t3_ms_p90","t3_ms_p95","t3_ms_max",
+                    "t6_ms_mean","t6_ms_median","t6_ms_p90","t6_ms_p95","t6_ms_max",
+                    "t9_ms_mean","t9_ms_median","t9_ms_p90","t9_ms_p95","t9_ms_max",
+                    "t12_ms_mean","t12_ms_median","t12_ms_p90","t12_ms_p95","t12_ms_max",
+                ]
+                csvfile.write(",".join(headers) + "\n")
+
+                for freq_label, band_data in envelope_statistics.items():
+                    sust = band_data.get("sustained_peaks_summary", {})
+                    def get_stats(d, k):
+                        s = d.get(k, {})
+                        return [s.get("mean", 0.0), s.get("median", 0.0), s.get("p90", 0.0), s.get("p95", 0.0), s.get("max", 0.0)]
+                    row = [freq_label, sust.get("n_peaks", 0)]
+                    row += get_stats(sust, "hold_ms")
+                    row += get_stats(sust, "t3_ms")
+                    row += get_stats(sust, "t6_ms")
+                    row += get_stats(sust, "t9_ms")
+                    row += get_stats(sust, "t12_ms")
+                    csvfile.write(",".join(map(str, row)) + "\n")
+
+                # Optionally export sustained peaks events if present
+                has_events = any("sustained_peaks_events" in band for band in envelope_statistics.values())
+                if has_events:
+                    csvfile.write("\n[SUSTAINED_PEAKS_EVENTS]\n")
+                    csvfile.write("frequency_hz,peak_time_seconds,peak_value_db,hold_ms,t3_ms,t6_ms,t9_ms,t12_ms\n")
+                    for freq_label, band_data in envelope_statistics.items():
+                        events = band_data.get("sustained_peaks_events", [])
+                        for e in events:
+                            csvfile.write(
+                                f"{freq_label},{e.get('peak_time_seconds', 0.0)},{e.get('peak_value_db', 0.0)},"
+                                f"{e.get('hold_ms', 0.0)},{e.get('t3_ms', 0.0)},{e.get('t6_ms', 0.0)},"
+                                f"{e.get('t9_ms', 0.0)},{e.get('t12_ms', 0.0)}\n"
                             )
         
         logger.info("Comprehensive analysis results exported successfully")

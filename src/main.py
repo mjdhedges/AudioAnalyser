@@ -23,6 +23,12 @@ from src.octave_filter import OctaveBandFilter
 from src.config import config, Config
 from src.channel_mapping import get_channel_name, get_channel_folder_name
 from src.track_processor import TrackProcessor
+from src.post.worst_channels import select_worst_channels
+from src.post.group_decay_plot import generate_group_decay_plot
+from src.post.group_crest_factor_time import generate_group_crest_factor_time_plot
+from src.post.group_octave_spectrum import generate_group_octave_spectrum_plot
+from src.post.lfe_octave_time import generate_lfe_octave_time_plot, generate_lfe_full_channel_plot
+from src.post.channel_deep_dive import generate_channel_deep_dive_plot
 
 
 def determine_content_type(track_path: Path) -> str:
@@ -87,6 +93,7 @@ def get_config_hash() -> str:
         'use_linkwitz_riley': config.get('analysis.use_linkwitz_riley', True),
         'use_cascade_complementary': config.get('analysis.use_cascade_complementary', True),
         'normalize_overlap': config.get('analysis.normalize_overlap', False),
+        'sustained_peaks_search_window_seconds': config.get('envelope_analysis.sustained_peaks_search_window_seconds', 5.0),
         'dpi': config.get('plotting.dpi', 300),
     }
     
@@ -244,7 +251,19 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, c
         
         # Load audio file (preserves multi-channel)
         logger.info("Loading audio file...")
-        audio_data, sr = audio_processor.load_audio(track_path)
+        # Get test section parameters (for testing long files)
+        test_start_time = config.get('analysis.test_start_time', None)
+        test_duration = config.get('analysis.test_duration', None)
+        if test_start_time is not None or test_duration is not None:
+            logger.info(
+                f"Test mode: Analyzing section from {test_start_time or 0:.2f}s "
+                f"for {test_duration or 'full'} seconds"
+            )
+        audio_data, sr = audio_processor.load_audio(
+            track_path, 
+            start_time=test_start_time, 
+            duration=test_duration
+        )
         
         # Get audio info to determine channel count
         audio_info = audio_processor.get_audio_info(audio_data, sr)
@@ -270,8 +289,9 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, c
         success_count = 0
         for channel_data, channel_index in channels:
             # Get channel name (simple name for CSV) and folder name (for directory)
-            channel_name = get_channel_name(channel_index, num_channels)
-            channel_folder_name = get_channel_folder_name(channel_index, num_channels)
+            # Use FFmpeg channel layout if available for correct mapping
+            channel_name = get_channel_name(channel_index, num_channels, channel_layout)
+            channel_folder_name = get_channel_folder_name(channel_index, num_channels, channel_layout)
             
             # Create channel-specific output directory
             if num_channels == 1:
@@ -375,10 +395,40 @@ def analyze_single_track(track_path: Path, output_dir: Path, sample_rate: int, c
     default=True,
     help='Export results to CSV'
 )
+@click.option(
+    '--generate-manifest/--no-generate-manifest',
+    default=True,
+    help='Generate worst-channel manifest per track after analysis'
+)
+@click.option(
+    '--generate-decay-plot/--no-generate-decay-plot',
+    default=True,
+    help='Generate combined group decay plot per track after analysis'
+)
+@click.option(
+    '--post-only',
+    is_flag=True,
+    default=False,
+    help='Skip main analysis and only run post-processing on existing results'
+)
+@click.option(
+    '--test-start-time',
+    type=float,
+    default=None,
+    help='Start time in seconds for test mode (analyze only a section of the file)'
+)
+@click.option(
+    '--test-duration',
+    type=float,
+    default=None,
+    help='Duration in seconds for test mode (limit analysis length)'
+)
 def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional[Path], 
          sample_rate: Optional[int], chunk_duration: Optional[float],
          dpi: Optional[int], log_level: Optional[str], config_path: Optional[Path],
-         batch: bool, export_csv: bool) -> None:
+         batch: bool, export_csv: bool,
+         generate_manifest: bool, generate_decay_plot: bool, post_only: bool,
+         test_start_time: Optional[float], test_duration: Optional[float]) -> None:
     """Music Analyser - Analyze audio files using octave band filtering.
     
     This tool performs comprehensive octave band analysis on audio files,
@@ -406,7 +456,9 @@ def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional
             sample_rate=sample_rate,
             chunk_duration=chunk_duration,
             dpi=dpi,
-            log_level=log_level
+            log_level=log_level,
+            test_start_time=test_start_time,
+            test_duration=test_duration
         )
         
         # Update logging level if specified
@@ -430,6 +482,118 @@ def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional
         logger.info(f"Output directory: {output_dir}")
         logger.info(f"Sample rate: {sample_rate} Hz")
         logger.info(f"Chunk duration: {chunk_duration} seconds")
+
+        # Helper: find track output directories
+        def _find_track_dirs(base: Path) -> list[Path]:
+            if not base.exists():
+                return []
+            return sorted([p for p in base.iterdir() if p.is_dir()])
+
+        # Helper: run worst-channel manifest via internal function
+        def _run_select_worst_channels(track_dir: Path) -> bool:
+            try:
+                select_worst_channels(track_dir)
+                logger.info(f"Worst-channel manifest generated for {track_dir.name}")
+                return True
+            except Exception as e:
+                logger.warning(f"Failed to generate worst-channel manifest for {track_dir.name}: {e}")
+                return False
+
+        # Helper: run combined decay plot via internal function
+        def _run_group_decay_plot(track_dir: Path) -> bool:
+            try:
+                output_img = track_dir / "peak_decay_groups.png"
+                generate_group_decay_plot(track_dir, output_img)
+                logger.info(f"Group decay plot generated for {track_dir.name}")
+                return True
+            except Exception as e:
+                logger.warning(f"Failed to generate decay plot for {track_dir.name}: {e}")
+                return False
+
+        # Helper: run group crest factor time plots via internal function
+        def _run_group_crest_factor_time_plot(track_dir: Path) -> bool:
+            try:
+                generate_group_crest_factor_time_plot(track_dir, track_dir)
+                logger.info(f"Group crest factor time plots generated for {track_dir.name}")
+                return True
+            except Exception as e:
+                logger.warning(f"Failed to generate group crest factor time plots for {track_dir.name}: {e}")
+                return False
+
+        # Helper: run group octave spectrum plots via internal function
+        def _run_group_octave_spectrum_plot(track_dir: Path) -> bool:
+            try:
+                generate_group_octave_spectrum_plot(track_dir, track_dir)
+                logger.info(f"Group octave spectrum plots generated for {track_dir.name}")
+                return True
+            except Exception as e:
+                logger.warning(f"Failed to generate group octave spectrum plots for {track_dir.name}: {e}")
+                return False
+        
+        def _run_lfe_full_channel_plot(track_dir: Path) -> bool:
+            try:
+                output_path = track_dir / "LFE" / "lfe_full_channel.png"
+                result = generate_lfe_full_channel_plot(track_dir, output_path)
+                if result:
+                    logger.info(f"LFE full channel plot generated for {track_dir.name}")
+                    return True
+                return False
+            except Exception as e:
+                logger.warning(f"Failed to generate LFE full channel plot for {track_dir.name}: {e}")
+                return False
+        
+        def _run_lfe_octave_time_plot(track_dir: Path, original_track_path: Optional[Path] = None) -> bool:
+            try:
+                output_path = track_dir / "LFE" / "lfe_octave_time.png"
+                result = generate_lfe_octave_time_plot(track_dir, output_path, original_track_path)
+                if result:
+                    logger.info(f"LFE octave band time plot generated for {track_dir.name}")
+                    return True
+                return False
+            except Exception as e:
+                logger.warning(f"Failed to generate LFE octave band time plot for {track_dir.name}: {e}")
+                return False
+        
+        def _run_screen_deep_dive_plot(track_dir: Path, original_track_path: Optional[Path] = None) -> bool:
+            try:
+                output_dir = track_dir / "Screen"
+                result = generate_channel_deep_dive_plot(track_dir, "Screen", output_dir, original_track_path)
+                if result:
+                    logger.info(f"Screen deep dive plots generated for {track_dir.name}")
+                    return True
+                return False
+            except Exception as e:
+                logger.warning(f"Failed to generate Screen deep dive plots for {track_dir.name}: {e}")
+                return False
+        
+        def _run_surround_deep_dive_plot(track_dir: Path, original_track_path: Optional[Path] = None) -> bool:
+            try:
+                output_dir = track_dir / "Surround+Height"
+                result = generate_channel_deep_dive_plot(track_dir, "Surround+Height", output_dir, original_track_path)
+                if result:
+                    logger.info(f"Surround+Height deep dive plots generated for {track_dir.name}")
+                    return True
+                return False
+            except Exception as e:
+                logger.warning(f"Failed to generate Surround+Height deep dive plots for {track_dir.name}: {e}")
+                return False
+
+        # Post-only mode: skip analysis and just run post-processing
+        if post_only:
+            logger.info("Post-only mode: running post-processing on existing results")
+            for td in _find_track_dirs(output_dir):
+                if generate_manifest:
+                    _run_select_worst_channels(td)
+                if generate_decay_plot:
+                    _run_group_decay_plot(td)
+                _run_group_crest_factor_time_plot(td)
+                _run_group_octave_spectrum_plot(td)
+                _run_lfe_full_channel_plot(td)
+                _run_lfe_octave_time_plot(td)
+                _run_screen_deep_dive_plot(td)
+                _run_surround_deep_dive_plot(td)
+            logger.info("Post-processing complete.")
+            return
         
         if batch:
             # Batch processing - analyze all tracks in directory
@@ -510,6 +674,19 @@ def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional
             logger.info(f"Successfully analyzed: {successful_analyses} tracks")
             logger.info(f"Failed analyses: {failed_analyses} tracks")
             logger.info(f"Results saved to: {output_dir}")
+            # Post-process generated track folders (if enabled)
+            if generate_manifest or generate_decay_plot:
+                logger.info("Starting post-processing for generated tracks...")
+                for td in _find_track_dirs(output_dir):
+                    if generate_manifest:
+                        _run_select_worst_channels(td)
+                    if generate_decay_plot:
+                        _run_group_decay_plot(td)
+                    _run_group_crest_factor_time_plot(td)
+                    _run_group_octave_spectrum_plot(td)
+                    _run_lfe_full_channel_plot(td)
+                _run_lfe_octave_time_plot(td)
+                logger.info("Post-processing complete.")
             
         else:
             # Single file processing
@@ -522,6 +699,22 @@ def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional
             if analyze_single_track(input, output_dir, sample_rate, chunk_duration):
                 logger.info("Analysis complete!")
                 logger.info(f"Results saved to: {output_dir}")
+                # Post-process this track folder (if enabled)
+                if generate_manifest or generate_decay_plot:
+                    track_dir = output_dir / input.stem
+                    if track_dir.exists():
+                        if generate_manifest:
+                            _run_select_worst_channels(track_dir)
+                        if generate_decay_plot:
+                            _run_group_decay_plot(track_dir)
+                        _run_group_crest_factor_time_plot(track_dir)
+                        _run_group_octave_spectrum_plot(track_dir)
+                        _run_lfe_full_channel_plot(track_dir)
+                        _run_lfe_octave_time_plot(track_dir, original_track_path=input)
+                        _run_screen_deep_dive_plot(track_dir, original_track_path=input)
+                        _run_surround_deep_dive_plot(track_dir, original_track_path=input)
+                    else:
+                        logger.warning(f"Expected track directory not found for post-processing: {track_dir}")
             else:
                 logger.error("Analysis failed!")
                 sys.exit(1)

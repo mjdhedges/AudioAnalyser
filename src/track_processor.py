@@ -126,40 +126,55 @@ class TrackProcessor:
             time_analysis = comprehensive_results["time_analysis"]
             chunk_octave_analysis = comprehensive_results["chunk_octave_analysis"]
             
+            # Extract track name from path (remove extension)
+            track_name = track_path.stem
+            
             # Generate plots
             logger.info(f"Generating plots for channel {channel_name}...")
             plot_generator.create_octave_spectrum_plot(
                 analysis_results,
                 output_path=str(channel_output_dir / "octave_spectrum.png"),
                 time_analysis=time_analysis,
-                chunk_octave_analysis=chunk_octave_analysis
+                chunk_octave_analysis=chunk_octave_analysis,
+                track_name=track_name,
+                channel_name=channel_name
             )
             plot_generator.create_crest_factor_plot(
                 analysis_results,
                 output_path=str(channel_output_dir / "crest_factor.png"),
                 time_analysis=time_analysis,
-                chunk_octave_analysis=chunk_octave_analysis
+                chunk_octave_analysis=chunk_octave_analysis,
+                track_name=track_name,
+                channel_name=channel_name
             )
             plot_generator.create_histogram_plots(
                 analysis_results,
                 output_dir=str(channel_output_dir),
-                octave_bank=octave_bank
+                octave_bank=octave_bank,
+                track_name=track_name,
+                channel_name=channel_name
             )
             plot_generator.create_histogram_plots_log_db(
                 analysis_results,
                 output_dir=str(channel_output_dir),
                 config=config.get_plotting_config(),
-                octave_bank=octave_bank
+                octave_bank=octave_bank,
+                track_name=track_name,
+                channel_name=channel_name
             )
             plot_generator.create_crest_factor_time_plot(
                 time_analysis,
-                output_path=str(channel_output_dir / "crest_factor_time.png")
+                output_path=str(channel_output_dir / "crest_factor_time.png"),
+                track_name=track_name,
+                channel_name=channel_name
             )
             plot_generator.create_octave_crest_factor_time_plot(
                 octave_bank,
                 time_analysis,
                 octave_filter.OCTAVE_CENTER_FREQUENCIES,
-                output_path=str(channel_output_dir / "octave_crest_factor_time.png")
+                output_path=str(channel_output_dir / "octave_crest_factor_time.png"),
+                track_name=track_name,
+                channel_name=channel_name
             )
             
             # Envelope statistics analysis
@@ -176,13 +191,17 @@ class TrackProcessor:
                 envelope_stats,
                 octave_filter.OCTAVE_CENTER_FREQUENCIES,
                 output_dir=str(channel_output_dir),
-                config=config.get('envelope_analysis', {})
+                config=config.get('envelope_analysis', {}),
+                track_name=track_name,
+                channel_name=channel_name
             )
             plot_generator.create_independent_envelope_plots(
                 envelope_stats,
                 octave_filter.OCTAVE_CENTER_FREQUENCIES,
                 output_dir=str(channel_output_dir),
-                config=config.get('envelope_analysis', {})
+                config=config.get('envelope_analysis', {}),
+                track_name=track_name,
+                channel_name=channel_name
             )
             
             # Memory cleanup

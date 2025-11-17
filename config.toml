@@ -33,6 +33,14 @@ tracks_dir = "Tracks"
 # Can be overridden via command line --output-dir option
 output_dir = "analysis"
 
+# Testing: Analyze only a section of the file
+# Set start_time to skip to a specific point (seconds)
+# Set duration to limit analysis length (seconds)
+# Both default to None (analyze entire file) - use command line --test-start-time and --test-duration to override
+# Useful for testing long files quickly
+# test_start_time = 0.0  # Uncomment and set value to enable
+# test_duration = 60.0   # Uncomment and set value to enable
+
 
 # ============================================================================
 # OCTAVE BAND FILTERING SETTINGS
@@ -192,6 +200,27 @@ peak_hold_threshold_db = -1.0
 # Values are relative to peak (e.g., -3 dB = 3 dB below peak)
 # If decay doesn't reach a threshold, that measurement is omitted
 decay_thresholds_db = [-3.0, -6.0, -9.0, -12.0]
+
+# ----------------------------------------------------------------------------
+# Sustained Peaks (Hold and Recovery) Analysis
+# ----------------------------------------------------------------------------
+# Analyzes how long peaks are sustained and recovery times to thresholds
+# This supports amplifier-relevant statistics (rest/recovery behavior)
+sustained_peaks_enable = true
+# Minimum peak value (absolute dBFS) to include in sustained analysis
+sustained_peaks_min_peak_dbfs = -3.0
+# Thresholds (dB) for recovery time measurement. When relative=true, these are
+# relative to the detected peak value (e.g., -3 means peak-3 dB). When false,
+# they are absolute dBFS thresholds.
+sustained_peaks_thresholds_db = [-3.0, -6.0, -9.0, -12.0]
+# If true, thresholds are relative to each peak; if false, absolute dBFS
+sustained_peaks_relative = true
+# Maximum search window for recovery time (seconds)
+# Signals that don't recover within this window are capped at this value
+# Increase for content with very long decay times (e.g., sustained music/film)
+sustained_peaks_search_window_seconds = 5.0
+# Export per-peak events to CSV (can be large); if false, only summary is exported
+sustained_peaks_export_events = false
 
 # ----------------------------------------------------------------------------
 # Envelope Visualization
