@@ -115,6 +115,11 @@ class AudioProcessor:
         except subprocess.CalledProcessError as e:
             logger.error(f"ffprobe failed: {e.stderr}")
             raise RuntimeError(f"Failed to probe file: {e.stderr}")
+
+    # Backward-compatibility aliases (older tests/code patched these names)
+    def _probe_mkv_audio_streams(self, mkv_path: Path) -> List[dict]:
+        """Alias for probing MKV audio streams (compat)."""
+        return self._probe_audio_streams(mkv_path)
     
     
     def _extract_truehd_from_mkv(
@@ -224,7 +229,10 @@ class AudioProcessor:
         if self.enable_mkv_support and (self._is_mkv_file(file_path) or self._is_mts_file(file_path)):
             try:
                 # Probe file to find audio streams and get channel layout
-                streams = self._probe_audio_streams(file_path)
+                if self._is_mkv_file(file_path):
+                    streams = self._probe_mkv_audio_streams(file_path)
+                else:
+                    streams = self._probe_audio_streams(file_path)
                 
                 # For MTS files, just get channel layout (no extraction needed)
                 if self._is_mts_file(file_path):

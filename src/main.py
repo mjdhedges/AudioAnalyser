@@ -583,6 +583,10 @@ def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional
         # Get configuration values
         sample_rate = config.get('analysis.sample_rate', 44100)
         chunk_duration = config.get('analysis.chunk_duration_seconds', 2.0)
+
+        if chunk_duration <= 0:
+            logger.error(f"Invalid chunk duration: {chunk_duration}. Must be > 0.")
+            sys.exit(1)
         
         # Use config defaults if CLI options not provided
         if tracks_dir is None:

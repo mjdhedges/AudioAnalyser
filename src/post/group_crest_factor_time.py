@@ -21,8 +21,8 @@ def _parse_time_domain_analysis(csv_path: Path) -> Optional[Dict[str, np.ndarray
     """Parse TIME_DOMAIN_ANALYSIS section from CSV.
     
     Returns:
-        Dictionary with keys: time_seconds, crest_factor_db, peak_level_dbfs, rms_level_dbfs
-        or None if section not found
+        Dictionary with keys: time_seconds, crest_factor_db, peak_level_dbfs,
+        rms_level_dbfs, peak_level, rms_level or None if section not found
     """
     if not csv_path.exists():
         return None
@@ -44,6 +44,8 @@ def _parse_time_domain_analysis(csv_path: Path) -> Optional[Dict[str, np.ndarray
     crest_factor_db = []
     peak_level_dbfs = []
     rms_level_dbfs = []
+    peak_level = []
+    rms_level = []
     
     for line in lines[start + 1:]:
         if not line or line.startswith("["):
@@ -57,6 +59,10 @@ def _parse_time_domain_analysis(csv_path: Path) -> Optional[Dict[str, np.ndarray
             crest_factor_db.append(float(parts[key_to_idx["crest_factor_db"]]))
             peak_level_dbfs.append(float(parts[key_to_idx["peak_level_dbfs"]]))
             rms_level_dbfs.append(float(parts[key_to_idx["rms_level_dbfs"]]))
+            if "peak_level" in key_to_idx:
+                peak_level.append(float(parts[key_to_idx["peak_level"]]))
+            if "rms_level" in key_to_idx:
+                rms_level.append(float(parts[key_to_idx["rms_level"]]))
         except (KeyError, ValueError, IndexError):
             continue
     
@@ -68,6 +74,8 @@ def _parse_time_domain_analysis(csv_path: Path) -> Optional[Dict[str, np.ndarray
         "crest_factor_db": np.array(crest_factor_db),
         "peak_level_dbfs": np.array(peak_level_dbfs),
         "rms_level_dbfs": np.array(rms_level_dbfs),
+        "peak_level": np.array(peak_level) if peak_level else None,
+        "rms_level": np.array(rms_level) if rms_level else None,
     }
 
 
@@ -178,6 +186,12 @@ def generate_group_crest_factor_time_plot(track_dir: Path, output_dir: Path) -> 
             crest_factor_db = time_data["crest_factor_db"]
             peak_level_dbfs = time_data["peak_level_dbfs"]
             rms_level_dbfs = time_data["rms_level_dbfs"]
+            peak_level_linear = time_data.get("peak_level")
+            rms_level_linear = time_data.get("rms_level")
+            if peak_level_linear is None:
+                peak_level_linear = np.power(10.0, peak_level_dbfs / 20.0)
+            if rms_level_linear is None:
+                rms_level_linear = np.power(10.0, rms_level_dbfs / 20.0)
             
             # Replace -inf with very low value for plotting
             crest_factor_db_plot = np.copy(crest_factor_db)
@@ -197,13 +211,13 @@ def generate_group_crest_factor_time_plot(track_dir: Path, output_dir: Path) -> 
             if len(valid_cf) > 0:
                 all_crest_factors.extend(valid_cf.tolist())
             
-            valid_peak = peak_level_dbfs_plot[np.isfinite(peak_level_dbfs_plot) & (peak_level_dbfs_plot > -120)]
-            if len(valid_peak) > 0:
-                all_peak_levels.extend(valid_peak.tolist())
+            valid_peak_lin = peak_level_linear[peak_level_linear > 0]
+            if valid_peak_lin.size > 0:
+                all_peak_levels.extend(valid_peak_lin.tolist())
             
-            valid_rms = rms_level_dbfs_plot[np.isfinite(rms_level_dbfs_plot) & (rms_level_dbfs_plot > -120)]
-            if len(valid_rms) > 0:
-                all_rms_levels.extend(valid_rms.tolist())
+            valid_rms_lin = rms_level_linear[rms_level_linear > 0]
+            if valid_rms_lin.size > 0:
+                all_rms_levels.extend(valid_rms_lin.tolist())
             
             # Get color for this channel (cycle through palette)
             color = channel_colors[idx % len(channel_colors)]
@@ -255,10 +269,28 @@ def generate_group_crest_factor_time_plot(track_dir: Path, output_dir: Path) -> 
         
         # Add statistics text box for crest factor
         if all_crest_factors:
-            avg_cf = np.mean(all_crest_factors)
+            # Average crest factor: ratio of highest peak to average RMS
+            # This represents the average short-term level as a ratio to the highest peak
+            avg_cf = 0.0
+            if all_peak_levels and all_rms_levels:
+                # all_peak_levels and all_rms_levels are already in linear scale
+                peak_levels_linear = np.array([p for p in all_peak_levels if p > 0])
+                rms_levels_linear = np.array([r for r in all_rms_levels if r > 0])
+                if peak_levels_linear.size and rms_levels_linear.size:
+                    highest_peak = np.max(peak_levels_linear)
+                    avg_rms = np.mean(rms_levels_linear)
+                    if highest_peak > 0 and avg_rms > 0:
+                        avg_cf_linear = highest_peak / avg_rms
+                        if avg_cf_linear > 0:
+                            avg_cf = 20 * np.log10(avg_cf_linear)
+            # Max and Min are the maximum and minimum instantaneous crest factors
             max_cf = np.max(all_crest_factors)
             min_cf = np.min(all_crest_factors)
-            stats_text = f'Avg: {avg_cf:.1f} dB | Max: {max_cf:.1f} dB | Min: {min_cf:.1f} dB'
+            stats_text = (
+                f'Ave. Crest Factor: {avg_cf:.1f} dB | '
+                f'Max Crest Factor: {max_cf:.1f} dB | '
+                f'Min Crest Factor: {min_cf:.1f} dB'
+            )
             ax1.text(0.02, 0.95, stats_text, transform=ax1.transAxes,
                     bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8),
                     verticalalignment='top', fontsize=9)

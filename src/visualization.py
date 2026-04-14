@@ -158,6 +158,9 @@ class PlotGenerator:
         plt.tight_layout()
         
         if output_path:
+            # Ensure parent directory exists
+            output_file = Path(output_path)
+            output_file.parent.mkdir(parents=True, exist_ok=True)
             plt.savefig(output_path, dpi=self.dpi, bbox_inches='tight')
             logger.info(f"Plot saved to: {output_path}")
         
@@ -439,6 +442,8 @@ class PlotGenerator:
         crest_factors_db = time_analysis["crest_factors_db"]
         peak_levels_dbfs = time_analysis["peak_levels_dbfs"]
         rms_levels_dbfs = time_analysis["rms_levels_dbfs"]
+        peak_levels_linear = np.asarray(time_analysis.get("peak_levels", []), dtype=np.float64)
+        rms_levels_linear = np.asarray(time_analysis.get("rms_levels", []), dtype=np.float64)
         
         # Replace -inf with very low value for plotting
         crest_factors_db_plot = np.copy(crest_factors_db)
@@ -506,11 +511,27 @@ class PlotGenerator:
         add_calibrated_spl_axis(ax2, level_ylim, is_lfe=is_lfe_channel)
         
         # Add overall statistics as text
-        avg_crest_db = np.mean(crest_factors_db_plot)
-        max_crest_db = np.max(crest_factors_db_plot)
-        min_crest_db = np.min(crest_factors_db_plot)
+        finite_cf = crest_factors_db[np.isfinite(crest_factors_db)]
+        # Average crest factor: ratio of highest peak to average RMS
+        # This represents the average short-term level as a ratio to the highest peak
+        avg_crest_db = 0.0
+        valid_rms = rms_levels_linear[rms_levels_linear > 0]
+        if peak_levels_linear.size and valid_rms.size:
+            highest_peak = np.max(peak_levels_linear)
+            avg_rms = np.mean(valid_rms)
+            if highest_peak > 0 and avg_rms > 0:
+                avg_cf_linear = highest_peak / avg_rms
+                if avg_cf_linear > 0:
+                    avg_crest_db = 20 * np.log10(avg_cf_linear)
+        # Max and Min are the maximum and minimum instantaneous crest factors
+        max_crest_db = float(np.max(finite_cf)) if finite_cf.size else 0.0
+        min_crest_db = float(np.min(finite_cf)) if finite_cf.size else 0.0
         
-        stats_text = f'Avg: {avg_crest_db:.1f} dB | Max: {max_crest_db:.1f} dB | Min: {min_crest_db:.1f} dB'
+        stats_text = (
+            f'Ave. Crest Factor: {avg_crest_db:.1f} dB | '
+            f'Max Crest Factor: {max_crest_db:.1f} dB | '
+            f'Min Crest Factor: {min_crest_db:.1f} dB'
+        )
         ax1.text(0.02, 0.95, stats_text, transform=ax1.transAxes, 
                 bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8),
                 verticalalignment='top')

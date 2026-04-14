@@ -111,9 +111,12 @@ class MusicAnalyzer:
         Returns:
             Dictionary with statistical measures
         """
-        # Basic statistics with SLOW weighting
+        # Basic statistics
+        # NOTE: `rms` is conventional RMS (sqrt(mean(x^2))) for stability/compatibility.
+        # Slow-weighted RMS is computed separately and used for slow crest factor metrics.
+        rms_val = float(np.sqrt(np.mean(np.square(signal)))) if signal.size > 0 else 0.0
         slow_rms_envelope = compute_slow_rms_envelope(signal, self.sample_rate)
-        rms_val = float(np.mean(slow_rms_envelope)) if slow_rms_envelope.size > 0 else 0.0
+        slow_rms_val = float(np.mean(slow_rms_envelope)) if slow_rms_envelope.size > 0 else 0.0
         window_samples = max(int(self.sample_rate * 1.0), 1)
         max_val = max_abs_over_window(signal, window_samples)
         # Calculate dBFS relative to original track's full scale
@@ -122,14 +125,14 @@ class MusicAnalyzer:
         # Calculate RMS in dBFS relative to original track's full scale  
         rms_dbfs = 20 * np.log10(rms_val * self.original_peak) if rms_val > 0 else -np.inf
         
-        # Dynamic range
-        dynamic_range = rms_val / max_val if max_val > 0 else 0
+        # Dynamic range (slow-weighted RMS vs peak window)
+        dynamic_range = slow_rms_val / max_val if max_val > 0 else 0
         dynamic_range_db = 20 * np.log10(dynamic_range) if dynamic_range > 0 else -np.inf
         
-        # Crest factor (peak to RMS ratio)
+        # Crest factor (peak to RMS ratio) using SLOW-weighted RMS
         # Crest factor must be >= 1 (0 dB) since peak >= RMS always
-        if rms_val > 0 and max_val > 0:
-            crest_factor = max_val / rms_val
+        if slow_rms_val > 0 and max_val > 0:
+            crest_factor = max_val / slow_rms_val
             # Ensure crest factor is at least 1.0 (0 dB)
             crest_factor = max(crest_factor, 1.0)
             crest_factor_db = 20 * np.log10(crest_factor)
@@ -150,6 +153,7 @@ class MusicAnalyzer:
             "max_amplitude_db": max_dbfs,  # Now in dBFS
             "rms": rms_val,
             "rms_db": rms_dbfs,  # Now in dBFS
+            "slow_rms": slow_rms_val,
             "dynamic_range": dynamic_range,
             "dynamic_range_db": dynamic_range_db,
             "crest_factor": crest_factor,
