@@ -27,6 +27,11 @@ from src.signal_metrics import (
     compute_slow_rms_envelope,
     max_abs_over_window,
 )
+from src.time_domain_metrics import (
+    FixedChunkTimeDomainCalculator,
+    SlowTimeDomainCalculator,
+    TimeDomainCrestFactorResult,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +45,8 @@ class MusicAnalyzer:
         original_peak: float = 1.0,
         dpi: int = 300,
         peak_hold_tau: float = 1.0,
+        time_domain_crest_factor_mode: str = "slow",
+        analysis_config: Optional[Dict] = None,
     ) -> None:
         """Initialize the music analyzer.
         
@@ -53,6 +60,8 @@ class MusicAnalyzer:
         self.original_peak = original_peak
         self.dpi = dpi
         self.peak_hold_tau = peak_hold_tau
+        self.time_domain_mode = time_domain_crest_factor_mode
+        self._analysis_config: Dict[str, object] = dict(analysis_config or {})
         
         # Use composition for better separation of concerns
         self.plot_generator = PlotGenerator(
@@ -125,14 +134,14 @@ class MusicAnalyzer:
         # Calculate RMS in dBFS relative to original track's full scale  
         rms_dbfs = 20 * np.log10(rms_val * self.original_peak) if rms_val > 0 else -np.inf
         
-        # Dynamic range (slow-weighted RMS vs peak window)
-        dynamic_range = slow_rms_val / max_val if max_val > 0 else 0
+        # Dynamic range (conventional RMS vs peak window)
+        dynamic_range = rms_val / max_val if max_val > 0 else 0
         dynamic_range_db = 20 * np.log10(dynamic_range) if dynamic_range > 0 else -np.inf
         
-        # Crest factor (peak to RMS ratio) using SLOW-weighted RMS
+        # Crest factor (peak to RMS ratio) using conventional RMS (whole-file band metric)
         # Crest factor must be >= 1 (0 dB) since peak >= RMS always
-        if slow_rms_val > 0 and max_val > 0:
-            crest_factor = max_val / slow_rms_val
+        if rms_val > 0 and max_val > 0:
+            crest_factor = max_val / rms_val
             # Ensure crest factor is at least 1.0 (0 dB)
             crest_factor = max(crest_factor, 1.0)
             crest_factor_db = 20 * np.log10(crest_factor)
@@ -258,7 +267,7 @@ class MusicAnalyzer:
         
         # Chunk-specific octave analysis for min/max crest factor chunks
         chunk_octave_analysis = self._analyze_extreme_chunks_octave_bands(
-            octave_bank, time_analysis, center_frequencies, chunk_duration
+            audio_data, octave_bank, center_frequencies, chunk_duration
         )
         
         return {
@@ -272,7 +281,7 @@ class MusicAnalyzer:
         audio_data: np.ndarray,
         chunk_duration: float = 2.0,
     ) -> Dict:
-        """Analyze crest factor over time using sliding windows.
+        """Analyze crest factor over time using selected method.
         
         Args:
             audio_data: Input audio signal (normalized)
@@ -281,103 +290,48 @@ class MusicAnalyzer:
         Returns:
             Dictionary with time-domain crest factor analysis
         """
-        logger.info(
-            "Analyzing crest factor over time with SLOW weighting and 1s resolution..."
-        )
-        
-        total_samples = len(audio_data)
-        window_duration = 1.0  # seconds (IEC SLOW peak comparison)
-        window_samples = max(int(window_duration * self.sample_rate), 1)
-        step_samples = window_samples
-        
-        num_windows = (total_samples - window_samples) // step_samples + 1
-        if num_windows <= 0:
-            return {
-                "time_points": np.array([]),
-                "crest_factors": np.array([]),
-                "crest_factors_db": np.array([]),
-                "peak_levels": np.array([]),
-                "rms_levels": np.array([]),
-                "peak_levels_dbfs": np.array([]),
-                "rms_levels_dbfs": np.array([]),
-                "chunk_duration": window_duration,
-                "time_step_seconds": window_duration,
-                "num_chunks": 0,
-                "total_duration": total_samples / self.sample_rate,
-            }
-        
-        peak_envelope = compute_peak_hold_envelope(
-            audio_data,
-            self.sample_rate,
-            tau=self.peak_hold_tau,
-        )
-        slow_rms_envelope = compute_slow_rms_envelope(audio_data, self.sample_rate)
-        start_indices = np.arange(num_windows) * step_samples
-        end_indices = start_indices + window_samples - 1
-        if peak_envelope.size > 0:
-            end_indices = np.clip(end_indices, 0, peak_envelope.size - 1)
-            peak_levels = peak_envelope[end_indices]
+        mode = str(getattr(self, "time_domain_mode", "slow"))
+        if mode not in {"slow", "fixed_chunk"}:
+            mode = "slow"
+
+        if mode == "fixed_chunk":
+            calc = FixedChunkTimeDomainCalculator(window_seconds=float(chunk_duration))
+            result = calc.compute(
+                audio_data,
+                sample_rate=self.sample_rate,
+                original_peak=self.original_peak,
+                config=self._analysis_config,
+            )
         else:
-            peak_levels = np.zeros(num_windows, dtype=np.float64)
-        if slow_rms_envelope.size > 0:
-            end_indices = np.clip(end_indices, 0, slow_rms_envelope.size - 1)
-            rms_levels = slow_rms_envelope[end_indices]
-        else:
-            rms_levels = np.zeros(num_windows, dtype=np.float64)
-        
-        # Vectorized crest factor calculation
-        # Avoid division by zero and ensure crest factor >= 1.0
-        crest_factors = np.divide(
-            peak_levels, rms_levels,
-            out=np.ones_like(peak_levels),
-            where=(rms_levels > 0)
-        )
-        crest_factors = np.maximum(crest_factors, 1.0)
-        
-        # Vectorized dB conversion
-        crest_factors_db = np.where(
-            crest_factors > 0,
-            20 * np.log10(crest_factors),
-            -np.inf
-        )
-        crest_factors_db = np.where(np.isfinite(crest_factors_db), crest_factors_db, 0.0)
-        
-        # Vectorized dBFS calculations
-        peak_levels_dbfs = np.where(
-            peak_levels > 0,
-            20 * np.log10(peak_levels * self.original_peak),
-            -np.inf
-        )
-        peak_levels_dbfs = np.where(np.isfinite(peak_levels_dbfs), peak_levels_dbfs, -120.0)
-        
-        rms_levels_dbfs = np.where(
-            rms_levels > 0,
-            20 * np.log10(rms_levels * self.original_peak),
-            -np.inf
-        )
-        rms_levels_dbfs = np.where(np.isfinite(rms_levels_dbfs), rms_levels_dbfs, -120.0)
-        
-        # Calculate time points (end of each 1s window)
-        time_points = (end_indices + 1) / self.sample_rate
-        
-        results = {
-            "time_points": np.array(time_points),
-            "crest_factors": np.array(crest_factors),
-            "crest_factors_db": np.array(crest_factors_db),
-            "peak_levels": np.array(peak_levels),
-            "rms_levels": np.array(rms_levels),
-            "peak_levels_dbfs": np.array(peak_levels_dbfs),
-            "rms_levels_dbfs": np.array(rms_levels_dbfs),
-            "chunk_duration": window_duration,
-            "time_step_seconds": window_duration,
-            "num_chunks": num_windows,
-            "total_duration": total_samples / self.sample_rate,
+            calc = SlowTimeDomainCalculator(peak_hold_tau_seconds=self.peak_hold_tau)
+            result = calc.compute(
+                audio_data,
+                sample_rate=self.sample_rate,
+                original_peak=self.original_peak,
+                config=self._analysis_config,
+            )
+
+        return self._time_domain_result_to_dict(result)
+
+    @staticmethod
+    def _time_domain_result_to_dict(result: TimeDomainCrestFactorResult) -> Dict:
+        """Convert structured time-domain results to legacy dict format."""
+        return {
+            "time_points": np.asarray(result.time_points),
+            "crest_factors": np.asarray(result.crest_factors),
+            "crest_factors_db": np.asarray(result.crest_factors_db),
+            "peak_levels": np.asarray(result.peak_levels),
+            "rms_levels": np.asarray(result.rms_levels),
+            "peak_levels_dbfs": np.asarray(result.peak_levels_dbfs),
+            "rms_levels_dbfs": np.asarray(result.rms_levels_dbfs),
+            "chunk_duration": float(result.chunk_duration),
+            "time_step_seconds": float(result.time_step_seconds),
+            "num_chunks": int(result.num_chunks),
+            "total_duration": float(result.total_duration),
+            "time_domain_mode": result.mode,
+            "time_domain_rms_method": result.rms_method,
+            "time_domain_peak_method": result.peak_method,
         }
-        
-        logger.info(
-            f"Time-domain analysis complete: {num_windows} points over {results['total_duration']:.1f}s"
-        )
-        return results
 
     def analyze_crest_factor_over_time(self, audio_data: np.ndarray, 
                                      chunk_duration: float = 2.0) -> Dict:
@@ -387,10 +341,13 @@ class MusicAnalyzer:
         """
         return self._analyze_time_domain_chunks(audio_data, chunk_duration)
 
-    def _analyze_extreme_chunks_octave_bands(self, octave_bank: np.ndarray,
-                                           time_analysis: Dict,
-                                           center_frequencies: List[float],
-                                           chunk_duration: float) -> Dict:
+    def _analyze_extreme_chunks_octave_bands(
+        self,
+        audio_data: np.ndarray,
+        octave_bank: np.ndarray,
+        center_frequencies: List[float],
+        chunk_duration: float,
+    ) -> Dict:
         """Analyze octave bands for min/max crest factor chunks.
         
         Args:
@@ -402,10 +359,17 @@ class MusicAnalyzer:
         Returns:
             Dictionary with octave analysis for extreme chunks
         """
-        crest_factors_db = time_analysis["crest_factors_db"]
-        time_points = time_analysis["time_points"]
-        window_duration = time_analysis.get("chunk_duration", chunk_duration)
-        chunk_samples = max(int(window_duration * self.sample_rate), 1)
+        # Extreme chunks are always selected from fixed windows (chunk_duration),
+        # regardless of the time-domain crest factor mode used for plotting/export.
+        fixed = FixedChunkTimeDomainCalculator(window_seconds=float(chunk_duration)).compute(
+            audio_data,
+            sample_rate=self.sample_rate,
+            original_peak=self.original_peak,
+            config=self._analysis_config,
+        )
+        crest_factors_db = fixed.crest_factors_db
+        time_points = fixed.time_points
+        chunk_samples = max(int(float(chunk_duration) * self.sample_rate), 1)
         
         # Find valid (finite) crest factor values
         valid_mask = np.isfinite(crest_factors_db)
@@ -419,9 +383,9 @@ class MusicAnalyzer:
         min_idx = np.argmin(valid_crest_db)
         max_idx = np.argmax(valid_crest_db)
         
-        # Get the actual chunk indices from the original time analysis
-        min_chunk_idx = np.where(valid_mask)[0][min_idx]
-        max_chunk_idx = np.where(valid_mask)[0][max_idx]
+        # Chunk indices for fixed windows are the same as array indices
+        min_chunk_idx = int(np.where(valid_mask)[0][min_idx])
+        max_chunk_idx = int(np.where(valid_mask)[0][max_idx])
         
         results = {}
         

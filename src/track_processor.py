@@ -87,11 +87,14 @@ class TrackProcessor:
                        config.get('plotting.dpi', 300)
             
             peak_hold_tau = config.get('analysis.peak_hold_tau_seconds', 1.0)
+            time_domain_mode = config.get('analysis.time_domain_crest_factor_mode', 'slow')
             analyzer = MusicAnalyzer(
                 sample_rate=self.sample_rate,
                 original_peak=original_peak,
                 dpi=plot_dpi,
                 peak_hold_tau=peak_hold_tau,
+                time_domain_crest_factor_mode=time_domain_mode,
+                analysis_config=config.get('analysis', {}),
             )
             plot_generator = PlotGenerator(
                 sample_rate=self.sample_rate,

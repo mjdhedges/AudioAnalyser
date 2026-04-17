@@ -369,6 +369,10 @@ class DataExporter:
             summary_stats = {
                 "chunk_duration_seconds": time_analysis["chunk_duration"],
                 "total_chunks": time_analysis["num_chunks"],
+                "time_domain_mode": time_analysis.get("time_domain_mode", "unknown"),
+                "time_domain_time_step_seconds": time_analysis.get("time_step_seconds", np.nan),
+                "time_domain_rms_method": time_analysis.get("time_domain_rms_method", "unknown"),
+                "time_domain_peak_method": time_analysis.get("time_domain_peak_method", "unknown"),
                 "crest_factor_mean_db": np.mean(valid_crest_db) if len(valid_crest_db) > 0 else np.nan,
                 "crest_factor_std_db": np.std(valid_crest_db) if len(valid_crest_db) > 0 else np.nan,
                 "crest_factor_min_db": np.min(valid_crest_db) if len(valid_crest_db) > 0 else np.nan,

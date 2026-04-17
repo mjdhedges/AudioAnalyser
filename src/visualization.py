@@ -484,8 +484,19 @@ class PlotGenerator:
         ax1.set_xlim(time_points.min(), time_points.max())
         ax1.set_ylim([0, 30])
         
+        mode = str(time_analysis.get("time_domain_mode", ""))
+        window_s = time_analysis.get("chunk_duration", None)
+        mode_label = f"{mode}" if mode else "time-domain"
+        if window_s is not None:
+            mode_label = f"{mode_label}, window={window_s}s"
         ax1.set_ylabel('Crest Factor (dB)')
-        ax1.set_title(self._format_title('Crest Factor vs Time (Color: Peak Level)', track_name, channel_name))
+        ax1.set_title(
+            self._format_title(
+                f'Crest Factor vs Time ({mode_label}; Color: Peak Level)',
+                track_name,
+                channel_name,
+            )
+        )
         ax1.grid(True, alpha=0.3, which='major')
         ax1.grid(True, alpha=0.15, which='minor')
         # Add 1 dB minor steps

@@ -29,6 +29,19 @@ chunk_duration_seconds = 2.0
 # Increase to make the held peak decay more slowly; decrease for faster response
 peak_hold_tau_seconds = 2.0
 
+# Time-domain crest factor mode
+# Options:
+#   "slow"        - IEC-style: peak-hold + slow RMS envelope, sampled at 1s (or configured window)
+#   "fixed_chunk" - Fixed-window peak/RMS per analysis.chunk_duration_seconds
+time_domain_crest_factor_mode = "slow"
+
+# SLOW-mode configuration (only used when time_domain_crest_factor_mode = "slow")
+# Window size and step (seconds). Default 1.0s / 1.0s.
+time_domain_slow_window_seconds = 1.0
+time_domain_slow_step_seconds = 1.0
+# RMS time constant (seconds) for slow RMS envelope
+time_domain_slow_rms_tau_seconds = 1.0
+
 # Default input directory for audio tracks
 # Can be overridden via command line --tracks-dir option
 tracks_dir = "Tracks"
