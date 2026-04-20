@@ -79,6 +79,60 @@ def get_cache_path(track_path: Path, cache_dir: Path) -> Path:
     return cache_file
 
 
+def resolve_track_output_dir(
+    output_dir: Path,
+    track_path: Path,
+    batch_tracks_root: Optional[Path],
+) -> Path:
+    """Resolve the folder where one track's analysis outputs are stored.
+
+    In batch mode, mirror the directory layout under ``batch_tracks_root`` so that
+    ``tracks/Music/a.flac`` becomes ``output_dir/Music/a`` (extension stripped).
+    Single-file / non-batch uses a single folder named after the file stem.
+    """
+    if batch_tracks_root is not None:
+        try:
+            rel = track_path.resolve().relative_to(batch_tracks_root.resolve())
+            return (output_dir / rel).with_suffix("")
+        except ValueError:
+            logger.warning(
+                "Track path is not under batch tracks directory; using flat output folder: %s",
+                track_path,
+            )
+    return output_dir / track_path.stem
+
+
+def _is_channel_output_folder_name(name: str) -> bool:
+    """Heuristic: channel outputs live under folders like ``Channel 1 Left`` or ``FC``."""
+    u = name.upper()
+    if u.startswith("CHANNEL "):
+        return True
+    if u in ("FC",):
+        return True
+    return False
+
+
+def find_track_output_dirs(base: Path) -> list[Path]:
+    """Find per-track analysis folders under ``base`` (flat or nested).
+
+    Primary: directories that contain ``.cache_meta.json`` from a completed run.
+    Fallback (e.g. caching disabled): infer from ``analysis_results.csv`` paths.
+    """
+    if not base.exists():
+        return []
+    roots = {p.parent for p in base.rglob(".cache_meta.json")}
+    if roots:
+        return sorted(roots)
+    inferred: set[Path] = set()
+    for csv_path in base.rglob("analysis_results.csv"):
+        parent = csv_path.parent
+        if _is_channel_output_folder_name(parent.name):
+            inferred.add(parent.parent)
+        else:
+            inferred.add(parent)
+    return sorted(inferred)
+
+
 def get_config_hash() -> str:
     """Generate a hash of relevant configuration parameters.
     
@@ -103,13 +157,13 @@ def get_config_hash() -> str:
     return hashlib.md5(config_str.encode()).hexdigest()
 
 
-def check_result_cache(track_path: Path, output_dir: Path, 
+def check_result_cache(track_path: Path, track_output_dir: Path,
                       config_hash: str, use_cache: bool) -> bool:
     """Check if cached analysis results are still valid.
     
     Args:
         track_path: Path to the audio track
-        output_dir: Output directory for results
+        track_output_dir: Directory where this track's artifacts are stored
         config_hash: Hash of current configuration
         use_cache: Whether to use caching
         
@@ -118,9 +172,6 @@ def check_result_cache(track_path: Path, output_dir: Path,
     """
     if not use_cache:
         return False
-    
-    track_name = track_path.stem
-    track_output_dir = output_dir / track_name
     
     # Check if all required output files exist
     required_files = [
@@ -168,16 +219,14 @@ def check_result_cache(track_path: Path, output_dir: Path,
         return False
 
 
-def save_result_cache(track_path: Path, output_dir: Path, config_hash: str) -> None:
+def save_result_cache(track_path: Path, track_output_dir: Path, config_hash: str) -> None:
     """Save cache metadata for analysis results.
     
     Args:
         track_path: Path to the audio track
-        output_dir: Output directory for results
+        track_output_dir: Directory where this track's artifacts are stored
         config_hash: Hash of current configuration
     """
-    track_name = track_path.stem
-    track_output_dir = output_dir / track_name
     track_output_dir.mkdir(parents=True, exist_ok=True)
     
     cache_meta = {
@@ -201,6 +250,7 @@ def analyze_single_track(
     chunk_duration: float,
     use_cache: bool = True,
     channel_filters: Optional[tuple[str, ...]] = None,
+    batch_tracks_root: Optional[Path] = None,
 ) -> tuple[bool, float]:
     """Analyze a single audio track, processing each channel separately.
     
@@ -210,6 +260,7 @@ def analyze_single_track(
     Args:
         track_path: Path to the audio file
         output_dir: Base output directory
+        batch_tracks_root: If set (batch mode), mirror input paths under ``output_dir``
         sample_rate: Sample rate for processing
         chunk_duration: Duration of analysis chunks in seconds
         use_cache: Whether to use result caching
@@ -230,9 +281,9 @@ def analyze_single_track(
     
     started = time.perf_counter()
     try:
-        # Create track-specific output directory
+        # Create track-specific output directory (mirror batch folder layout when applicable)
         track_name = track_path.stem  # Get filename without extension
-        track_output_dir = output_dir / track_name
+        track_output_dir = resolve_track_output_dir(output_dir, track_path, batch_tracks_root)
         track_output_dir.mkdir(parents=True, exist_ok=True)
         
         logger.info(f"Analyzing: {track_path.name}")
@@ -242,7 +293,7 @@ def analyze_single_track(
         enable_result_cache = use_cache and config.get('performance.enable_result_cache', True)
         config_hash = get_config_hash()
         
-        if enable_result_cache and check_result_cache(track_path, output_dir, config_hash, use_cache):
+        if enable_result_cache and check_result_cache(track_path, track_output_dir, config_hash, use_cache):
             logger.info(f"Result cache valid - skipping analysis for {track_path.name}")
             return True, time.perf_counter() - started
         
@@ -399,7 +450,7 @@ def analyze_single_track(
             
             # Save cache metadata
             if enable_result_cache:
-                save_result_cache(track_path, output_dir, config_hash)
+                save_result_cache(track_path, track_output_dir, config_hash)
             
             return True, time.perf_counter() - started
         else:
@@ -604,12 +655,6 @@ def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional
         logger.info(f"Sample rate: {sample_rate} Hz")
         logger.info(f"Chunk duration: {chunk_duration} seconds")
 
-        # Helper: find track output directories
-        def _find_track_dirs(base: Path) -> list[Path]:
-            if not base.exists():
-                return []
-            return sorted([p for p in base.iterdir() if p.is_dir()])
-
         # Helper: run worst-channel manifest via internal function
         def _run_select_worst_channels(track_dir: Path) -> bool:
             try:
@@ -702,7 +747,7 @@ def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional
         # Post-only mode: skip analysis and just run post-processing
         if post_only:
             logger.info("Post-only mode: running post-processing on existing results")
-            for td in _find_track_dirs(output_dir):
+            for td in find_track_output_dirs(output_dir):
                 if generate_manifest:
                     _run_select_worst_channels(td)
                 if generate_decay_plot:
@@ -807,6 +852,7 @@ def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional
                             sample_rate,
                             chunk_duration,
                             channel_filters=channel_filters,
+                            batch_tracks_root=tracks_dir,
                         ): (idx, track_path, total_tracks)
                         for idx, track_path in enumerate(sorted(audio_files), 1)
                     }
@@ -839,6 +885,7 @@ def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional
                         sample_rate,
                         chunk_duration,
                         channel_filters=channel_filters,
+                        batch_tracks_root=tracks_dir,
                     )
                     per_track_timings.append((track_path, elapsed_s, success))
                     if success:
@@ -871,7 +918,7 @@ def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional
             # Post-process generated track folders (if enabled)
             if not skip_post:
                 logger.info("Starting post-processing for generated tracks...")
-                for td in _find_track_dirs(output_dir):
+                for td in find_track_output_dirs(output_dir):
                     if generate_manifest:
                         _run_select_worst_channels(td)
                     if generate_decay_plot:
@@ -904,6 +951,7 @@ def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional
                 sample_rate,
                 chunk_duration,
                 channel_filters=channel_filters,
+                batch_tracks_root=None,
             )
             if success:
                 logger.info("Analysis complete!")
@@ -911,7 +959,7 @@ def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional
                 logger.info(f"Results saved to: {output_dir}")
                 # Post-process this track folder (if enabled)
                 if not skip_post:
-                    track_dir = output_dir / input.stem
+                    track_dir = resolve_track_output_dir(output_dir, input, None)
                     if track_dir.exists():
                         if generate_manifest:
                             _run_select_worst_channels(track_dir)

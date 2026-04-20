@@ -138,7 +138,7 @@ python -m src.main --help
 #### Basic Options
 - `--input, -i`: Input path. If it's a file: single-file analysis. If it's a directory: batch analysis (recursive).
 - `--tracks-dir, -t`: Directory containing tracks to analyze (default: from config)
-- `--output-dir, -o`: Output directory for results (default: from config)
+- `--output-dir, -o`: Output directory for results (default: from config). In batch mode, subfolders under the input folder are recreated under this directory (each track is written to a path that mirrors its location relative to the batch input folder).
 - `--batch/--single`: Deprecated. Mode is inferred from `--input` (file=single, dir=batch).
 - `--export-csv/--no-export-csv`: Export results to CSV (default: True)
 - `--generate-manifest/--no-generate-manifest`: Generate worst-channel manifest (default: True)
@@ -274,6 +274,9 @@ analyzer.export_analysis_results(results, "results.csv")
 The tool generates comprehensive analysis outputs with professional-grade metrics and visualizations.
 
 ### Directory Structure
+
+For a **single file**, outputs go under ``analysis/<track stem>/``. For **batch** analysis of a folder, each file is written under ``analysis/<relative path without extension>/``, mirroring subfolders (e.g. ``tracks/Music/a.flac`` → ``analysis/Music/a/``).
+
 ```
 analysis/
 ├── Track Name 1/
