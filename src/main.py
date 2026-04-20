@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -200,7 +201,7 @@ def analyze_single_track(
     chunk_duration: float,
     use_cache: bool = True,
     channel_filters: Optional[tuple[str, ...]] = None,
-) -> bool:
+) -> tuple[bool, float]:
     """Analyze a single audio track, processing each channel separately.
     
     For mono files, processes single channel. For stereo/multi-channel files,
@@ -214,7 +215,7 @@ def analyze_single_track(
         use_cache: Whether to use result caching
         
     Returns:
-        True if analysis was successful, False otherwise
+        Tuple of (success, elapsed_seconds).
     """
     def _tokenize(values: list[str]) -> set[str]:
         tokens: set[str] = set()
@@ -227,6 +228,7 @@ def analyze_single_track(
                 tokens.add(''.join(ch for ch in norm if ch.isalnum()))
         return tokens
     
+    started = time.perf_counter()
     try:
         # Create track-specific output directory
         track_name = track_path.stem  # Get filename without extension
@@ -242,7 +244,7 @@ def analyze_single_track(
         
         if enable_result_cache and check_result_cache(track_path, output_dir, config_hash, use_cache):
             logger.info(f"Result cache valid - skipping analysis for {track_path.name}")
-            return True
+            return True, time.perf_counter() - started
         
         # Initialize components
         enable_mkv_support = config.get('mkv_support.enable', True)
@@ -387,7 +389,7 @@ def analyze_single_track(
         
         if processed_total == 0:
             logger.warning("No channels were processed (filters omitted all channels).")
-            return False
+            return False, time.perf_counter() - started
         
         if success_count == processed_total:
             logger.info(
@@ -399,17 +401,17 @@ def analyze_single_track(
             if enable_result_cache:
                 save_result_cache(track_path, output_dir, config_hash)
             
-            return True
+            return True, time.perf_counter() - started
         else:
             logger.warning(
                 f"Analysis partially complete: {success_count}/{processed_total} "
                 f"channel(s) processed successfully"
             )
-            return False
+            return False, time.perf_counter() - started
         
     except Exception as e:
         logger.error(f"Error analyzing {track_path.name}: {e}")
-        return False
+        return False, time.perf_counter() - started
 
 
 @click.command()
@@ -721,6 +723,7 @@ def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional
         if batch:
             # Batch processing - analyze all tracks in directory
             logger.info(f"Batch processing tracks from: {tracks_dir}")
+            batch_started = time.perf_counter()
             
             # Find all audio files
             audio_extensions = {'.wav', '.flac', '.mp3', '.m4a', '.aac', '.ogg', '.mkv'}
@@ -729,6 +732,26 @@ def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional
             for ext in audio_extensions:
                 audio_files.extend(tracks_dir.glob(f"**/*{ext}"))
                 audio_files.extend(tracks_dir.glob(f"**/*{ext.upper()}"))
+            
+            # On Windows, paths are case-insensitive: *.flac and *.FLAC globs both match the same
+            # files, doubling the list and scheduling duplicate ProcessPool jobs for one track.
+            raw_count = len(audio_files)
+            unique_by_resolve: dict[Path, Path] = {}
+            for p in audio_files:
+                key = p.resolve()
+                if key not in unique_by_resolve:
+                    unique_by_resolve[key] = p
+            audio_files = sorted(
+                unique_by_resolve.values(),
+                key=lambda x: str(x).casefold(),
+            )
+            if raw_count > len(audio_files):
+                logger.info(
+                    "Deduplicated track list: %s paths → %s unique files "
+                    "(case-insensitive extension globs on this OS can list the same file twice)",
+                    raw_count,
+                    len(audio_files),
+                )
             
             if not audio_files:
                 logger.error(f"No audio files found in {tracks_dir}")
@@ -741,6 +764,7 @@ def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional
             successful_analyses = 0
             failed_analyses = 0
             total_tracks = len(audio_files)
+            per_track_timings: list[tuple[Path, float, bool]] = []
             
             enable_parallel_batch = config.get('performance.enable_parallel_batch', False)
             
@@ -775,8 +799,9 @@ def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional
                     for future in as_completed(future_to_track):
                         idx, track_path, total_tracks = future_to_track[future]
                         try:
-                            result = future.result(timeout=600)  # 10 min timeout per track
-                            if result:
+                            success, elapsed_s = future.result(timeout=600)  # 10 min timeout per track
+                            per_track_timings.append((track_path, elapsed_s, success))
+                            if success:
                                 successful_analyses += 1
                                 logger.info(f"[{idx}/{total_tracks}] ✓ {track_path.name}")
                             else:
@@ -785,19 +810,22 @@ def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional
                         except Exception as e:
                             failed_analyses += 1
                             logger.error(f"[{idx}/{total_tracks}] ✗ {track_path.name}: {e}")
+                            per_track_timings.append((track_path, float("nan"), False))
             else:
                 # SEQUENTIAL PROCESSING: Process tracks one at a time
                 for idx, track_path in enumerate(sorted(audio_files), 1):
                     logger.info(f"\n{'='*60}")
                     logger.info(f"Processing track {idx}/{total_tracks} ({100*idx/total_tracks:.1f}%) - {track_path.name}")
                     
-                    if analyze_single_track(
+                    success, elapsed_s = analyze_single_track(
                         track_path,
                         output_dir,
                         sample_rate,
                         chunk_duration,
                         channel_filters=channel_filters,
-                    ):
+                    )
+                    per_track_timings.append((track_path, elapsed_s, success))
+                    if success:
                         successful_analyses += 1
                     else:
                         failed_analyses += 1
@@ -808,6 +836,22 @@ def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional
             logger.info(f"Successfully analyzed: {successful_analyses} tracks")
             logger.info(f"Failed analyses: {failed_analyses} tracks")
             logger.info(f"Results saved to: {output_dir}")
+            batch_elapsed_s = time.perf_counter() - batch_started
+            logger.info(f"Total batch wall time: {batch_elapsed_s:.2f}s")
+            if per_track_timings:
+                # Slowest-first; NaNs go last.
+                per_track_timings_sorted = sorted(
+                    per_track_timings,
+                    key=lambda x: (x[1] == x[1], x[1]),  # NaN sorts after numbers
+                    reverse=True,
+                )
+                logger.info("Per-track wall time (slowest first):")
+                for p, elapsed_s, success in per_track_timings_sorted:
+                    status = "OK" if success else "FAIL"
+                    if elapsed_s == elapsed_s:
+                        logger.info(f"  {elapsed_s:8.2f}s  [{status}]  {p.name}")
+                    else:
+                        logger.info(f"       n/a  [{status}]  {p.name}")
             # Post-process generated track folders (if enabled)
             if not skip_post:
                 logger.info("Starting post-processing for generated tracks...")
@@ -838,14 +882,16 @@ def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional
             
             logger.info(f"Single file analysis: {input}")
             
-            if analyze_single_track(
+            success, elapsed_s = analyze_single_track(
                 input,
                 output_dir,
                 sample_rate,
                 chunk_duration,
                 channel_filters=channel_filters,
-            ):
+            )
+            if success:
                 logger.info("Analysis complete!")
+                logger.info(f"Track wall time: {elapsed_s:.2f}s")
                 logger.info(f"Results saved to: {output_dir}")
                 # Post-process this track folder (if enabled)
                 if not skip_post:
@@ -873,6 +919,7 @@ def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional
                     logger.info("Skipping post-processing (--skip-post).")
             else:
                 logger.error("Analysis failed!")
+                logger.info(f"Track wall time: {elapsed_s:.2f}s")
                 sys.exit(1)
         
     except Exception as e:

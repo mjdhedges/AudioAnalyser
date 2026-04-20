@@ -830,22 +830,35 @@ class OctaveBandFilter:
         
         logger.info("Creating octave bank with parallel processing...")
         
-        # Determine optimal number of workers
         available_cores = multiprocessing.cpu_count()
-        if num_workers is None:
-            num_workers = min(len(center_frequencies), available_cores)
-        
-        logger.info(f"Using {num_workers} parallel workers (out of {available_cores} available cores)")
         
         # Start with original signal
         filtered_signals = [audio_data]
         
-        # Filter out frequencies above Nyquist
+        # Filter out frequencies above Nyquist (needed before choosing worker count)
         valid_frequencies = [f for f in center_frequencies if f < self.sample_rate / 2]
         
         if len(valid_frequencies) == 0:
             logger.warning("No valid frequencies below Nyquist limit")
             return np.column_stack(filtered_signals)
+        
+        requested_workers = num_workers
+        if num_workers is None:
+            num_workers = min(len(valid_frequencies), available_cores)
+            logger.info(
+                "Octave parallel: auto-detected max_workers=%d (min of %d bands below Nyquist, %d CPUs)",
+                num_workers,
+                len(valid_frequencies),
+                available_cores,
+            )
+        else:
+            num_workers = min(num_workers, available_cores)
+            logger.info(
+                "Octave parallel: max_workers=%d from config (capped to %d CPUs; %d band tasks)",
+                num_workers,
+                available_cores,
+                len(valid_frequencies),
+            )
         
         # Process frequencies in parallel
         try:

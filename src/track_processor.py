@@ -120,7 +120,7 @@ class TrackProcessor:
             
             if parallel_enabled and not use_cascade:
                 logger.info(f"Creating octave bank for channel {channel_name} with parallel processing...")
-                num_workers = config.get('performance.max_workers', None)
+                num_workers = config.get_optional_positive_int("performance.max_workers")
                 octave_bank = octave_filter.create_octave_bank_parallel(channel_data, num_workers=num_workers)
             else:
                 logger.info(f"Creating octave bank for channel {channel_name}...")

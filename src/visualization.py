@@ -455,68 +455,59 @@ class PlotGenerator:
         rms_levels_dbfs_plot = np.copy(rms_levels_dbfs)
         rms_levels_dbfs_plot[rms_levels_dbfs_plot == -np.inf] = -120
         
-        # Top plot: Crest Factor vs Time (color-coded by peak level)
-        # Create line segments for color mapping
-        points = np.array([time_points, crest_factors_db_plot]).T.reshape(-1, 1, 2)
-        segments = np.concatenate([points[:-1], points[1:]], axis=1)
-        
-        # Normalize peak levels for colormap: -10 dBFS (green) to 0 dBFS (red)
-        # Green for low peaks (safe), Red for high peaks near 0 dBFS (stressful)
-        peak_for_colormap = np.clip(peak_levels_dbfs_plot, -60, 1.0)
-        # Map: -10 dBFS and below = green (0), 0 dBFS = red (1)
-        peak_normalized = np.clip((peak_for_colormap + 10) / 10, 0, 1)
-        
-        # Use midpoint of each segment for smoother color transitions
-        # This creates a continuous fade between points
-        segment_peak_values = (peak_normalized[:-1] + peak_normalized[1:]) / 2
-        
-        # Create custom colormap: green to yellow to red (traffic light)
-        colors_list = ['#00ff00', '#ffff00', '#ff0000']  # Green, Yellow, Red
-        n_bins = 256  # Higher resolution for smoother transitions
-        cmap = LinearSegmentedColormap.from_list('traffic_light', colors_list, N=n_bins)
-        
-        # Create LineCollection with color mapping
-        # Use antialiased=True for smoother rendering
-        lc = LineCollection(segments, cmap=cmap, norm=plt.Normalize(0, 1),
-                            linewidth=2, alpha=0.8, antialiased=True)
-        lc.set_array(segment_peak_values)
-        line = ax1.add_collection(lc)
+        # Match the group plot formatting (no peak-level colorbar; plain lines).
+        # Derive a compact channel label similar to group_crest_factor_time.py.
+        channel_label = (channel_name or "").replace("Channel ", "").replace("Channel", "").strip()
+        if not channel_label:
+            channel_label = channel_name or "Channel"
+        color = "#1f77b4"
+
+        ax1.plot(
+            time_points,
+            crest_factors_db_plot,
+            color=color,
+            linewidth=2,
+            alpha=0.8,
+            label=channel_label,
+        )
         ax1.set_xlim(time_points.min(), time_points.max())
         ax1.set_ylim([0, 30])
-        
-        mode = str(time_analysis.get("time_domain_mode", ""))
-        window_s = time_analysis.get("chunk_duration", None)
-        mode_label = f"{mode}" if mode else "time-domain"
-        if window_s is not None:
-            mode_label = f"{mode_label}, window={window_s}s"
+
         ax1.set_ylabel('Crest Factor (dB)')
-        ax1.set_title(
-            self._format_title(
-                f'Crest Factor vs Time ({mode_label}; Color: Peak Level)',
-                track_name,
-                channel_name,
-            )
-        )
+        ax1.set_title(self._format_title('Crest Factor vs Time', track_name, channel_name))
         ax1.grid(True, alpha=0.3, which='major')
         ax1.grid(True, alpha=0.15, which='minor')
         # Add 1 dB minor steps
         ax1.yaxis.set_minor_locator(plt.MultipleLocator(1))
-        
-        # Add colorbar at the bottom to avoid X-axis distortion
-        cbar = plt.colorbar(line, ax=ax1, orientation='horizontal', pad=0.15)
-        cbar.set_label('Peak Level (dBFS)', labelpad=10)
+        ax1.legend(loc="best", fontsize=10)
 
         # Bottom plot: Peak and RMS Levels vs Time
         channel_name_normalized = (channel_name or "").upper()
         is_lfe_channel = "LFE" in channel_name_normalized
 
-        ax2.plot(time_points, peak_levels_dbfs_plot, 'b-', linewidth=2, label='Peak Level')
-        ax2.plot(time_points, rms_levels_dbfs_plot, 'r-', linewidth=2, label='RMS Level')
+        ax2.plot(
+            time_points,
+            peak_levels_dbfs_plot,
+            color=color,
+            linewidth=2,
+            alpha=0.8,
+            linestyle="-",
+            label=f"{channel_label} Peak",
+        )
+        ax2.plot(
+            time_points,
+            rms_levels_dbfs_plot,
+            color=color,
+            linewidth=2,
+            alpha=0.8,
+            linestyle="--",
+            label=f"{channel_label} RMS",
+        )
         ax2.set_xlabel('Time (seconds)')
         ax2.set_ylabel('Level (dBFS)')
         ax2.set_title(self._format_title('Peak and RMS Levels vs Time', track_name, channel_name))
         ax2.grid(True, alpha=0.3)
-        ax2.legend()
+        ax2.legend(loc="best", fontsize=9, ncol=2)
         level_ylim = (-40, 3)
         ax2.set_ylim(level_ylim)
         add_calibrated_spl_axis(ax2, level_ylim, is_lfe=is_lfe_channel)

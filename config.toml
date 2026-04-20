@@ -560,18 +560,42 @@ enable_memory_optimization = true
 use_float32 = true
 
 # ----------------------------------------------------------------------------
-# Parallel Processing
+# Parallel Processing (within a single track / channel)
 # ----------------------------------------------------------------------------
-
-# Enable parallel processing for octave bank creation
-# Processes multiple octave bands simultaneously
-# Provides 4-8x speedup on multi-core systems
+#
+# There are TWO separate parallel mechanisms in this app (see "Batch Processing" below).
+# This section only controls the OCTAVE BANK build for ONE channel at a time.
+#
+# How it works (code: OctaveBandFilter.create_octave_bank_parallel):
+#   - Uses a process pool (multiprocessing). Each worker runs band-pass filtering for
+#     one octave center frequency below Nyquist.
+#   - Effective parallelism is limited by min(number of such bands, max_workers, CPU cores).
+#   - Startup cost: spawning worker processes; best payoff on long files / many bands.
+#
+# Interaction with [analysis] use_cascade_complementary (read that section first):
+#   - use_cascade_complementary = true  (default): cascade / complementary bank path.
+#     Octave bands are built SEQUENTIALLY. This flag is IGNORED for speed—there is no
+#     parallel octave pool in that mode (by design).
+#   - use_cascade_complementary = false: parallel filter-bank path. If enable_parallel_processing
+#     is true, bands are farmed out to the pool above; if false, bands run one after another
+#     in a single process.
+#
+# Tuning:
+#   - For maximum throughput on many FILES, prefer raising max_batch_workers (batch section)
+#     before turning off cascade complementary—batch parallelism scales wall time better
+#     for large libraries and does not change filter topology.
+#   - Turning off cascade to use this pool trades the documented filter-bank behaviour for
+#     speed; compare outputs if that matters for your use case.
+#
 enable_parallel_processing = true
 
-# Maximum number of worker threads for parallel processing
-# Set to CPU count or leave blank for auto-detection
-# More workers = faster but more memory usage
-max_workers = 4
+# Optional cap on worker processes for the parallel octave pool (only when cascade is off
+# and enable_parallel_processing is true).
+#   - Omit this key entirely: auto-select min(bands below Nyquist, logical CPU count).
+#   - Set a positive integer: hard cap; the app may still run fewer tasks than bands.
+#   - Invalid / empty / non-positive values are treated as "omit" (auto).
+# Logs at INFO include the resolved worker count when the parallel octave path runs.
+# max_workers = 8
 
 # ----------------------------------------------------------------------------
 # Caching
@@ -595,18 +619,33 @@ enable_result_cache = true
 result_cache_dir = "cache/results"
 
 # ----------------------------------------------------------------------------
-# Batch Processing
+# Batch Processing (across multiple tracks / files)
 # ----------------------------------------------------------------------------
-
-# Enable parallel batch processing
-# Processes multiple tracks simultaneously
-# REDUCED by default: 4 workers = 2GB+ RAM per batch (too high for large tracks)
+#
+# Separate from "Parallel Processing" above. When you run batch mode (default CLI: all
+# files under tracks_dir), the app can analyze MULTIPLE TRACKS AT ONCE.
+#
+# How it works (code: main batch path with ProcessPoolExecutor):
+#   - Each worker is a full Python process running analyze_single_track() for one file.
+#   - One track per worker at a time; workers pick the next file when idle.
+#   - RAM scales roughly with (max_batch_workers) × (memory per track)—surround, long files,
+#     and high sample rates increase per-track memory. Large max_batch_workers on a machine
+#     with many cores can still OOM if each track is heavy.
+#
+# Tuning:
+#   - enable_parallel_batch = false: one track at a time (lowest peak RAM, slowest wall time).
+#   - enable_parallel_batch = true: use max_batch_workers concurrent track analyses.
+#   - max_batch_workers: start low (e.g. 2–4), increase while monitoring memory. Going up to
+#     half of logical CPUs is often viable on high-RAM boxes; the safe value depends on
+#     file size and channel count, not CPU count alone.
+#   - If max_batch_workers is omitted from the file, the code uses a conservative default
+#     (currently 2 workers) and logs the value at INFO.
+#
 enable_parallel_batch = true
 
-# Maximum number of workers for batch processing
-# Use 1-2 workers for reasonable memory usage
-# More workers = faster batch processing but much more RAM
-max_batch_workers = 2
+# Max concurrent TRACK analyses in batch mode (integer >= 1). Not the same as max_workers
+# above (octave bands within one channel). Raise this to use more cores when I/O and RAM allow.
+max_batch_workers = 8
 
 
 # ============================================================================

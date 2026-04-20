@@ -145,6 +145,32 @@ class Config:
         except (KeyError, TypeError):
             return default
     
+    def get_optional_positive_int(self, key_path: str) -> Optional[int]:
+        """Parse a positive worker/thread count, or None if unset / empty / non-positive (auto-detect).
+        
+        Use for settings like performance.max_workers where omitting the key means automatic selection.
+        """
+        raw = self.get(key_path, None)
+        if raw is None:
+            return None
+        if isinstance(raw, str):
+            stripped = raw.strip()
+            if stripped == "":
+                return None
+            try:
+                raw = int(stripped)
+            except ValueError:
+                logger.warning("Ignoring invalid integer for %s: %r", key_path, raw)
+                return None
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            logger.warning("Ignoring invalid integer for %s: %r", key_path, raw)
+            return None
+        if value <= 0:
+            return None
+        return value
+    
     def set(self, key_path: str, value: Any) -> None:
         """Set configuration value using dot notation.
         
