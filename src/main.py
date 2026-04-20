@@ -418,7 +418,7 @@ def analyze_single_track(
 @click.option(
     '--input', '-i',
     type=click.Path(exists=True, path_type=Path),
-    help='Input audio file path (for single file analysis)'
+    help='Input path: audio file (single) OR directory (batch recurse)'
 )
 @click.option(
     '--tracks-dir', '-t',
@@ -459,7 +459,7 @@ def analyze_single_track(
 @click.option(
     '--batch/--single',
     default=True,
-    help='Process all tracks in directory (batch) or single file'
+    help='DEPRECATED: Mode is inferred from --input (file=single, dir=batch).'
 )
 @click.option(
     '--export-csv/--no-export-csv',
@@ -720,6 +720,22 @@ def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional
             logger.info("Post-processing complete.")
             return
         
+        # ------------------------------------------------------------------
+        # Mode selection (simple path-based behavior)
+        # ------------------------------------------------------------------
+        # If --input is provided:
+        #   - file  => single-file processing
+        #   - dir   => batch processing over that directory (recursive)
+        # Otherwise:
+        #   - fall back to --tracks-dir (or config default) in batch mode.
+        if input is not None:
+            if input.is_dir():
+                tracks_dir = input
+                input = None
+                batch = True
+            else:
+                batch = False
+
         if batch:
             # Batch processing - analyze all tracks in directory
             logger.info(f"Batch processing tracks from: {tracks_dir}")
@@ -877,7 +893,7 @@ def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional
         else:
             # Single file processing
             if not input:
-                logger.error("--input is required when using --single mode")
+                logger.error("--input must be a file path for single-file analysis")
                 sys.exit(1)
             
             logger.info(f"Single file analysis: {input}")

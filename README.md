@@ -91,16 +91,16 @@ You can override any configuration parameter via command-line arguments:
 
 ```bash
 # Override chunk duration for finer time resolution
-python -m src.main --input "track.wav" --single --chunk-duration 1.0
+python -m src.main --input "track.wav" --chunk-duration 1.0
 
 # Override plot DPI for high-resolution output
-python -m src.main --input "track.wav" --single --dpi 600
+python -m src.main --input "track.wav" --dpi 600
 
 # Override logging level for debugging
-python -m src.main --input "track.wav" --single --log-level DEBUG
+python -m src.main --input "track.wav" --log-level DEBUG
 
 # Use custom configuration file
-python -m src.main --input "track.wav" --single --config "custom_config.toml"
+python -m src.main --input "track.wav" --config "custom_config.toml"
 ```
 
 ## Usage
@@ -114,8 +114,11 @@ python -m src.main
 # Analyze tracks in custom directory
 python -m src.main --tracks-dir "MyMusic" --output-dir "results"
 
-# Single file analysis
-python -m src.main --input "song.flac" --single
+# Single file analysis (file path)
+python -m src.main --input "song.flac"
+
+# Batch processing from a directory (directory path; recursive)
+python -m src.main --input "MyMusic" --output-dir "results"
 
 # Batch processing with all artifacts (analysis + manifest + decay plot)
 python -m src.main --tracks-dir "Tracks" --output-dir "analysis_output"
@@ -133,10 +136,10 @@ python -m src.main --help
 ### Command Line Options
 
 #### Basic Options
-- `--input, -i`: Input audio file path (for single file analysis)
+- `--input, -i`: Input path. If it's a file: single-file analysis. If it's a directory: batch analysis (recursive).
 - `--tracks-dir, -t`: Directory containing tracks to analyze (default: from config)
 - `--output-dir, -o`: Output directory for results (default: from config)
-- `--batch/--single`: Process all tracks in directory (batch) or single file (default: batch)
+- `--batch/--single`: Deprecated. Mode is inferred from `--input` (file=single, dir=batch).
 - `--export-csv/--no-export-csv`: Export results to CSV (default: True)
 - `--generate-manifest/--no-generate-manifest`: Generate worst-channel manifest (default: True)
 - `--generate-decay-plot/--no-generate-decay-plot`: Generate combined decay plot (default: True)
@@ -228,7 +231,7 @@ exclude_atmos = true       # Exclude Dolby Atmos metadata streams
 **Usage:**
 ```bash
 # Analyze MKV file with TrueHD audio
-python -m src.main --input "movie.mkv" --single
+python -m src.main --input "movie.mkv"
 ```
 
 ### Programmatic Usage
