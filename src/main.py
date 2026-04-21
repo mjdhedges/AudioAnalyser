@@ -157,8 +157,14 @@ def get_config_hash() -> str:
     return hashlib.md5(config_str.encode()).hexdigest()
 
 
-def check_result_cache(track_path: Path, track_output_dir: Path,
-                      config_hash: str, use_cache: bool) -> bool:
+def check_result_cache(
+    track_path: Path,
+    track_output_dir: Path,
+    config_hash: str,
+    use_cache: bool,
+    require_octave_crest_factor_time: bool = True,
+    require_octave_crest_factor_time_csv: bool = False,
+) -> bool:
     """Check if cached analysis results are still valid.
     
     Args:
@@ -180,9 +186,12 @@ def check_result_cache(track_path: Path, track_output_dir: Path,
         'histograms.png',
         'histograms_log_db.png',
         'crest_factor_time.png',
-        'octave_crest_factor_time.png',
         'analysis_results.csv'
     ]
+    if require_octave_crest_factor_time:
+        required_files.append('octave_crest_factor_time.png')
+    if require_octave_crest_factor_time_csv:
+        required_files.append('octave_crest_factor_time.csv')
     
     for filename in required_files:
         file_path = track_output_dir / filename
@@ -251,6 +260,8 @@ def analyze_single_track(
     use_cache: bool = True,
     channel_filters: Optional[tuple[str, ...]] = None,
     batch_tracks_root: Optional[Path] = None,
+    skip_octave_crest_factor_time: bool = False,
+    export_octave_crest_factor_time_data: bool = False,
 ) -> tuple[bool, float]:
     """Analyze a single audio track, processing each channel separately.
     
@@ -293,7 +304,14 @@ def analyze_single_track(
         enable_result_cache = use_cache and config.get('performance.enable_result_cache', True)
         config_hash = get_config_hash()
         
-        if enable_result_cache and check_result_cache(track_path, track_output_dir, config_hash, use_cache):
+        if enable_result_cache and check_result_cache(
+            track_path,
+            track_output_dir,
+            config_hash,
+            use_cache,
+            require_octave_crest_factor_time=(not skip_octave_crest_factor_time),
+            require_octave_crest_factor_time_csv=export_octave_crest_factor_time_data,
+        ):
             logger.info(f"Result cache valid - skipping analysis for {track_path.name}")
             return True, time.perf_counter() - started
         
@@ -422,7 +440,9 @@ def analyze_single_track(
                 chunk_duration=chunk_duration,
                 config=config,
                 content_type=content_type,
-                original_peak=original_peak
+                original_peak=original_peak,
+                skip_octave_crest_factor_time=skip_octave_crest_factor_time,
+                export_octave_crest_factor_time_data=export_octave_crest_factor_time_data,
             )
             
             if success:
@@ -577,6 +597,16 @@ def analyze_single_track(
     help='Skip post-processing (group plots, deep dives, manifests).'
 )
 @click.option(
+    '--skip-octave-cf-time/--run-octave-cf-time',
+    default=None,
+    help='Skip generating octave_crest_factor_time.png (saves significant time).'
+)
+@click.option(
+    '--export-octave-cf-time-data/--no-export-octave-cf-time-data',
+    default=None,
+    help='Export octave_crest_factor_time.csv (time-series) for later processing.'
+)
+@click.option(
     '--peak-hold-tau',
     type=float,
     help='Peak-hold time constant in seconds (overrides config).'
@@ -591,6 +621,8 @@ def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional
          post_only: bool,
          test_start_time: Optional[float], test_duration: Optional[float],
          channel_filters: tuple[str, ...], skip_post: bool,
+         skip_octave_cf_time: bool,
+         export_octave_cf_time_data: bool,
          peak_hold_tau: Optional[float]) -> None:
     """Music Analyser - Analyze audio files using octave band filtering.
     
@@ -654,6 +686,12 @@ def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional
         logger.info(f"Output directory: {output_dir}")
         logger.info(f"Sample rate: {sample_rate} Hz")
         logger.info(f"Chunk duration: {chunk_duration} seconds")
+
+        # Config-driven defaults for optional expensive artifacts.
+        if skip_octave_cf_time is None:
+            skip_octave_cf_time = bool(config.get("performance.skip_octave_cf_time", False))
+        if export_octave_cf_time_data is None:
+            export_octave_cf_time_data = bool(config.get("performance.export_octave_cf_time_data", False))
 
         # Helper: run worst-channel manifest via internal function
         def _run_select_worst_channels(track_dir: Path) -> bool:
@@ -853,6 +891,8 @@ def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional
                             chunk_duration,
                             channel_filters=channel_filters,
                             batch_tracks_root=tracks_dir,
+                            skip_octave_crest_factor_time=skip_octave_cf_time,
+                            export_octave_crest_factor_time_data=export_octave_cf_time_data,
                         ): (idx, track_path, total_tracks)
                         for idx, track_path in enumerate(sorted(audio_files), 1)
                     }
@@ -886,6 +926,8 @@ def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional
                         chunk_duration,
                         channel_filters=channel_filters,
                         batch_tracks_root=tracks_dir,
+                        skip_octave_crest_factor_time=skip_octave_cf_time,
+                        export_octave_crest_factor_time_data=export_octave_cf_time_data,
                     )
                     per_track_timings.append((track_path, elapsed_s, success))
                     if success:
@@ -952,6 +994,8 @@ def main(input: Optional[Path], tracks_dir: Optional[Path], output_dir: Optional
                 chunk_duration,
                 channel_filters=channel_filters,
                 batch_tracks_root=None,
+                skip_octave_crest_factor_time=skip_octave_cf_time,
+                export_octave_crest_factor_time_data=export_octave_cf_time_data,
             )
             if success:
                 logger.info("Analysis complete!")

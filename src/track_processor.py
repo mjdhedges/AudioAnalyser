@@ -54,7 +54,9 @@ class TrackProcessor:
         chunk_duration: float,
         config: Config,
         content_type: str,
-        original_peak: float
+        original_peak: float,
+        skip_octave_crest_factor_time: bool = False,
+        export_octave_crest_factor_time_data: bool = False,
     ) -> bool:
         """Process a single channel through the full analysis pipeline.
         
@@ -182,14 +184,36 @@ class TrackProcessor:
                 track_name=track_name,
                 channel_name=channel_name
             )
-            plot_generator.create_octave_crest_factor_time_plot(
-                octave_bank,
-                time_analysis,
-                octave_filter.OCTAVE_CENTER_FREQUENCIES,
-                output_path=str(channel_output_dir / "octave_crest_factor_time.png"),
-                track_name=track_name,
-                channel_name=channel_name
-            )
+            octave_cf_png = str(channel_output_dir / "octave_crest_factor_time.png")
+            if skip_octave_crest_factor_time:
+                if export_octave_crest_factor_time_data:
+                    # Reuse the existing computation path by calling the plot method with a .png output;
+                    # it will also emit a sibling .csv (same stem) for later processing.
+                    plot_generator.create_octave_crest_factor_time_plot(
+                        octave_bank,
+                        time_analysis,
+                        octave_filter.OCTAVE_CENTER_FREQUENCIES,
+                        output_path=octave_cf_png,
+                        track_name=track_name,
+                        channel_name=channel_name,
+                    )
+                    # Remove the PNG if it was created (we only want data in this mode).
+                    try:
+                        Path(octave_cf_png).unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                    logger.info("Skipped octave crest factor PNG; exported octave_crest_factor_time.csv for later use.")
+                else:
+                    logger.info("Skipping octave crest factor time plot (octave_crest_factor_time.png).")
+            else:
+                plot_generator.create_octave_crest_factor_time_plot(
+                    octave_bank,
+                    time_analysis,
+                    octave_filter.OCTAVE_CENTER_FREQUENCIES,
+                    output_path=octave_cf_png,
+                    track_name=track_name,
+                    channel_name=channel_name,
+                )
             
             # Envelope statistics analysis
             logger.info(f"Performing envelope statistics analysis for channel {channel_name}...")

@@ -121,7 +121,9 @@ class Config:
                 "max_chunk_size_mb": 100,
                 "enable_memory_optimization": True,
                 "enable_parallel_processing": False,
-                "max_workers": 4
+                "max_workers": 4,
+                "skip_octave_cf_time": False,
+                "export_octave_cf_time_data": False,
             }
         }
     

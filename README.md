@@ -315,6 +315,13 @@ analysis/
 - **Metrics**: Crest factor for each octave band over time
 - **Resolution**: Same time chunks as main analysis
 - **Visualization**: Multi-line plot with frequency-specific colors
+
+Note: This plot is relatively expensive to generate. You can skip it with
+`--skip-octave-cf-time` (it is not currently persisted in `analysis_results.csv`,
+so generating it later requires recomputation).
+
+If you want to keep the underlying time-series without generating the PNG,
+use `--export-octave-cf-time-data` (writes `octave_crest_factor_time.csv`).
 - **Format**: Time series with fixed 0-40dB crest factor scale
 
 #### 5. Amplitude Distributions (`histograms.png` & `histograms_log_db.png`)

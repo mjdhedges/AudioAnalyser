@@ -619,6 +619,19 @@ enable_result_cache = true
 result_cache_dir = "cache/results"
 
 # ----------------------------------------------------------------------------
+# Optional expensive artifacts
+# ----------------------------------------------------------------------------
+#
+# These control whether the app generates the heavy octave crest-factor vs time
+# outputs. They can also be overridden via CLI flags.
+#
+# Skip generating `octave_crest_factor_time.png`.
+skip_octave_cf_time = false
+#
+# Export `octave_crest_factor_time.csv` (time-series) for later processing.
+export_octave_cf_time_data = false
+
+# ----------------------------------------------------------------------------
 # Batch Processing (across multiple tracks / files)
 # ----------------------------------------------------------------------------
 #

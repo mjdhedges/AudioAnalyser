@@ -16,6 +16,7 @@ matplotlib.use('Agg')
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 from matplotlib.collections import LineCollection
 from matplotlib.colors import LinearSegmentedColormap
 
@@ -617,6 +618,21 @@ class PlotGenerator:
                 octave_crest_factors[freq] = crest_db.tolist()
             else:
                 octave_crest_factors[freq] = [0.0] * len(time_points)
+
+        # Optional: export the underlying time-series to CSV (fast; compute dominates).
+        if output_path:
+            try:
+                csv_path = str(Path(output_path).with_suffix(".csv"))
+                self.export_octave_crest_factor_time_csv(
+                    time_points=time_points,
+                    octave_crest_factors=octave_crest_factors,
+                    center_frequencies=center_freqs,
+                    output_path=csv_path,
+                    track_name=track_name,
+                    channel_name=channel_name,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to export octave crest factor time CSV: {e}")
         
         # Create the plot
         fig, ax = plt.subplots(figsize=(14, 8))
@@ -657,6 +673,32 @@ class PlotGenerator:
             logger.info(f"Octave band crest factor time plot saved to: {output_path}")
         
         plt.close(fig)
+
+    def export_octave_crest_factor_time_csv(
+        self,
+        time_points: np.ndarray,
+        octave_crest_factors: dict[float, list[float]],
+        center_frequencies: list[float],
+        output_path: str,
+        track_name: Optional[str] = None,
+        channel_name: Optional[str] = None,
+    ) -> None:
+        """Export octave-band crest factor time series to CSV.
+
+        Columns:
+          - time_seconds
+          - one column per center frequency (e.g. cf_16_000_hz), values are crest factor in dB
+        """
+        out = {"time_seconds": time_points}
+        for freq in center_frequencies:
+            key = f"cf_{freq:.3f}_hz".replace(".", "_")
+            out[key] = np.asarray(octave_crest_factors.get(freq, [0.0] * len(time_points)), dtype=np.float64)
+        df = pd.DataFrame(out)
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        df.to_csv(output_path, index=False)
+        logger.info(
+            f"Octave crest factor time data saved to: {output_path}"
+        )
 
     def create_pattern_envelope_plots(self, envelope_statistics: Dict,
                                       center_frequencies: List[float],
