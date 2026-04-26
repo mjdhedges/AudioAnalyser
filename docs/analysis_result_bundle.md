@@ -26,7 +26,7 @@ rendering code can recreate plots without reloading the source audio.
 
 ## Plot Replay Data
 
-- `octave_spectrum.png` and `crest_factor.png` should use
+- `octave_spectrum.png` and `crest_factor.png` use
   `octave_band_analysis.csv` plus `extreme_chunks_octave_analysis.csv`.
 - `crest_factor_time.png` should use `time_domain_analysis.csv`.
 - `histograms.png` should use `histogram_linear.csv`.
@@ -44,12 +44,13 @@ optional schema extension if a future UI needs sample-level replay.
 
 ## Rendering From A Bundle
 
-Histogram and crest-factor time rendering can now run as a second pass over
-`.aaresults` data:
+Core per-channel plot rendering can now run as a second pass over `.aaresults`
+data:
 
 ```powershell
 python -m src.render --results analysis/Track.aaresults --output-dir rendered
 ```
 
 `--results` may point at one bundle or a directory containing multiple bundles.
-Use `--no-histograms` or `--no-time-plots` to skip either plot family.
+Use `--no-spectrum-plots`, `--no-histograms`, or `--no-time-plots` to skip a
+plot family.

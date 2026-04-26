@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Union
 
 import pandas as pd
+from pandas.errors import EmptyDataError
 
 
 @dataclass(frozen=True)
@@ -27,7 +28,10 @@ class ChannelResult:
 
     def read_table(self, artifact_name: str) -> pd.DataFrame:
         """Read a tabular CSV artifact for this channel."""
-        return pd.read_csv(self.artifact_path(artifact_name))
+        try:
+            return pd.read_csv(self.artifact_path(artifact_name))
+        except EmptyDataError:
+            return pd.DataFrame()
 
     def artifact_path(self, artifact_name: str) -> Path:
         """Resolve a named artifact path."""

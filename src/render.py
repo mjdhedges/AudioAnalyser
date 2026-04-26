@@ -9,7 +9,11 @@ from pathlib import Path
 import click
 
 from src.results import find_result_bundles, load_result_bundle
-from src.results.render import render_bundle_histograms, render_bundle_time_plots
+from src.results.render import (
+    render_bundle_histograms,
+    render_bundle_spectrum_plots,
+    render_bundle_time_plots,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -38,6 +42,12 @@ logger = logging.getLogger(__name__)
     "--dpi", type=int, default=300, show_default=True, help="Plot output DPI."
 )
 @click.option(
+    "--spectrum-plots/--no-spectrum-plots",
+    default=True,
+    show_default=True,
+    help="Render octave spectrum and crest-factor spectrum plots from bundle data.",
+)
+@click.option(
     "--histograms/--no-histograms",
     default=True,
     show_default=True,
@@ -53,6 +63,7 @@ def main(
     results_path: Path,
     output_dir: Path,
     dpi: int,
+    spectrum_plots: bool,
     histograms: bool,
     time_plots: bool,
 ) -> None:
@@ -67,6 +78,14 @@ def main(
     for bundle_path in bundles:
         bundle = load_result_bundle(bundle_path)
         bundle_output_dir = output_dir / bundle_path.stem
+        if spectrum_plots:
+            generated.extend(
+                render_bundle_spectrum_plots(
+                    bundle=bundle,
+                    output_dir=bundle_output_dir,
+                    dpi=dpi,
+                )
+            )
         if histograms:
             generated.extend(
                 render_bundle_histograms(

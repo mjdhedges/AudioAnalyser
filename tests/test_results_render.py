@@ -10,7 +10,11 @@ from src.music_analyzer import MusicAnalyzer
 from src.render import main as render_main
 from src.results import load_result_bundle
 from src.results.bundle import write_channel_result_bundle
-from src.results.render import render_bundle_histograms, render_bundle_time_plots
+from src.results.render import (
+    render_bundle_histograms,
+    render_bundle_spectrum_plots,
+    render_bundle_time_plots,
+)
 
 
 def _write_test_bundle(tmp_path):
@@ -63,6 +67,11 @@ def _write_test_bundle(tmp_path):
             "log_histogram_noise_floor_db": -60.0,
             "log_histogram_max_db": 0.0,
             "log_histogram_max_bin_size_db": 6.0,
+            "octave_spectrum_xlim": [7.0, 20000.0],
+            "octave_spectrum_ylim": [-60.0, 3.0],
+            "crest_factor_xlim": [7.0, 20000.0],
+            "crest_factor_ylim_min": 0.0,
+            "crest_factor_ylim_max": 30.0,
         },
         envelope_config={},
         analysis_config={"peak_hold_tau_seconds": 1.0},
@@ -98,6 +107,22 @@ def test_render_bundle_histograms_writes_pngs(tmp_path):
     assert len(output_paths) == 2
     assert (output_dir / "channel_01" / "histograms.png").exists()
     assert (output_dir / "channel_01" / "histograms_log_db.png").exists()
+
+
+def test_render_bundle_spectrum_plots_writes_pngs(tmp_path):
+    """Spectrum rendering uses only stored bundle tables."""
+    bundle_dir = _write_test_bundle(tmp_path)
+    output_dir = tmp_path / "rendered_spectrum"
+
+    output_paths = render_bundle_spectrum_plots(
+        bundle=load_result_bundle(bundle_dir),
+        output_dir=output_dir,
+        dpi=80,
+    )
+
+    assert len(output_paths) == 2
+    assert (output_dir / "channel_01" / "octave_spectrum.png").exists()
+    assert (output_dir / "channel_01" / "crest_factor.png").exists()
 
 
 def test_render_bundle_time_plots_writes_pngs(tmp_path):
@@ -137,6 +162,8 @@ def test_render_cli_renders_histograms_from_bundle(tmp_path):
         raise result.exception
 
     assert result.exit_code == 0
+    assert (output_dir / "render_test" / "channel_01" / "octave_spectrum.png").exists()
+    assert (output_dir / "render_test" / "channel_01" / "crest_factor.png").exists()
     assert (output_dir / "render_test" / "channel_01" / "histograms.png").exists()
     assert (
         output_dir / "render_test" / "channel_01" / "histograms_log_db.png"
