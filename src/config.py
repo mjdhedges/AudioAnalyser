@@ -127,6 +127,7 @@ class Config:
                 "use_track_name_for_output": True,
             },
             "export": {
+                "generate_analysis_bundle": True,
                 "include_track_metadata": True,
                 "include_advanced_statistics": True,
                 "include_octave_band_analysis": True,

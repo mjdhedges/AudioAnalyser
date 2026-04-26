@@ -21,6 +21,7 @@ from src.data_export import DataExporter
 from src.envelope_analyzer import EnvelopeAnalyzer
 from src.music_analyzer import MusicAnalyzer
 from src.octave_filter import OctaveBandFilter
+from src.results import write_channel_result_bundle
 from src.visualization import PlotGenerator
 
 logger = logging.getLogger(__name__)
@@ -308,6 +309,22 @@ class TrackProcessor:
                 audio_data=channel_data,
                 envelope_statistics=envelope_stats,
             )
+
+            if config.get("export.generate_analysis_bundle", True):
+                write_channel_result_bundle(
+                    track_output_dir=track_output_dir,
+                    track_metadata=track_metadata,
+                    analysis_results=analysis_results,
+                    time_analysis=time_analysis,
+                    chunk_octave_analysis=chunk_octave_analysis,
+                    envelope_statistics=envelope_stats,
+                    octave_bank=octave_bank,
+                    center_frequencies=center_frequencies,
+                    channel_data=channel_data,
+                    plotting_config=config.get_plotting_config(),
+                    envelope_config=config.get("envelope_analysis", {}),
+                    analysis_config=config.get("analysis", {}),
+                )
 
             # Memory cleanup
             del channel_data, octave_bank, comprehensive_results

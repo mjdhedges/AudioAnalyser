@@ -496,6 +496,11 @@ exclude_atmos = true
 
 [export]
 
+# Generate a versioned per-track .aaresults bundle during analysis.
+# This is the future rendering/UI boundary and stores derived data needed
+# to recreate graphs without reloading the original audio.
+generate_analysis_bundle = true
+
 # Include track metadata section in CSV
 # Metadata includes: filename, duration, sample rate, channels, etc.
 include_track_metadata = true
@@ -524,8 +529,9 @@ include_histogram_data = true
 # Includes: identification of chunks with extreme characteristics
 include_extreme_chunks_analysis = true
 
-# Note: Octave crest factor time data is excluded for efficiency
-# as it would require recalculating octave analysis for every chunk
+# Note: The .aaresults bundle stores additional plot-replay data that the
+# legacy CSV format does not carry, including octave time metrics and
+# envelope plot windows.
 
 
 # ============================================================================
