@@ -1,0 +1,152 @@
+"""Tests for rendering plots from analysis result bundles."""
+
+import json
+
+import numpy as np
+import pandas as pd
+from click.testing import CliRunner
+
+from src.music_analyzer import MusicAnalyzer
+from src.render import main as render_main
+from src.results import load_result_bundle
+from src.results.bundle import write_channel_result_bundle
+from src.results.render import render_bundle_histograms, render_bundle_time_plots
+
+
+def _write_test_bundle(tmp_path):
+    sample_rate = 1000
+    time = np.arange(sample_rate * 2) / sample_rate
+    channel_data = 0.5 * np.sin(2 * np.pi * 10 * time)
+    octave_bank = np.column_stack([channel_data, channel_data * 0.8])
+    center_frequencies = [10.0]
+
+    analyzer = MusicAnalyzer(sample_rate=sample_rate, original_peak=1.0)
+    analysis_results = analyzer.analyze_octave_bands(octave_bank, center_frequencies)
+    analysis_results["band_data"] = {
+        "Full Spectrum": octave_bank[:, 0],
+        "10.000": octave_bank[:, 1],
+    }
+    time_analysis = {
+        "time_points": np.array([1.0, 2.0]),
+        "crest_factors": np.array([1.5, 1.6]),
+        "crest_factors_db": np.array([3.52, 4.08]),
+        "peak_levels": np.array([0.5, 0.5]),
+        "rms_levels": np.array([0.25, 0.25]),
+        "peak_levels_dbfs": np.array([-6.0, -6.0]),
+        "rms_levels_dbfs": np.array([-12.0, -12.0]),
+    }
+    return write_channel_result_bundle(
+        track_output_dir=tmp_path,
+        track_metadata={
+            "track_name": "render_test.wav",
+            "track_path": "Tracks/render_test.wav",
+            "content_type": "Test Signal",
+            "channel_index": 0,
+            "channel_name": "FL",
+            "total_channels": 1,
+            "duration_seconds": 2.0,
+            "sample_rate": sample_rate,
+            "samples": len(channel_data),
+            "original_peak": 1.0,
+            "analysis_date": "2026-04-26T22:30:00",
+        },
+        analysis_results=analysis_results,
+        time_analysis=time_analysis,
+        chunk_octave_analysis=None,
+        envelope_statistics={},
+        octave_bank=octave_bank,
+        center_frequencies=center_frequencies,
+        channel_data=channel_data,
+        plotting_config={
+            "histogram_bins": 11,
+            "histogram_range": [-1.0, 1.0],
+            "log_histogram_noise_floor_db": -60.0,
+            "log_histogram_max_db": 0.0,
+            "log_histogram_max_bin_size_db": 6.0,
+        },
+        envelope_config={},
+        analysis_config={"peak_hold_tau_seconds": 1.0},
+    )
+
+
+def test_load_result_bundle_reads_channel_artifacts(tmp_path):
+    """Reader loads manifest metadata and channel tables."""
+    bundle_dir = _write_test_bundle(tmp_path)
+    bundle = load_result_bundle(bundle_dir)
+    channel = bundle.channels()[0]
+
+    assert bundle.schema_version == 1
+    assert channel.channel_id == "channel_01"
+    assert channel.read_json("metadata")["channel_name"] == "FL"
+
+    histogram = channel.read_table("histogram_linear")
+    assert isinstance(histogram, pd.DataFrame)
+    assert {"frequency_label", "bin_center", "bin_density"}.issubset(histogram.columns)
+
+
+def test_render_bundle_histograms_writes_pngs(tmp_path):
+    """Histogram rendering uses only pre-binned bundle data."""
+    bundle_dir = _write_test_bundle(tmp_path)
+    output_dir = tmp_path / "rendered"
+
+    output_paths = render_bundle_histograms(
+        bundle=load_result_bundle(bundle_dir),
+        output_dir=output_dir,
+        dpi=80,
+    )
+
+    assert len(output_paths) == 2
+    assert (output_dir / "channel_01" / "histograms.png").exists()
+    assert (output_dir / "channel_01" / "histograms_log_db.png").exists()
+
+
+def test_render_bundle_time_plots_writes_pngs(tmp_path):
+    """Time rendering uses only stored bundle tables."""
+    bundle_dir = _write_test_bundle(tmp_path)
+    output_dir = tmp_path / "rendered_time"
+
+    output_paths = render_bundle_time_plots(
+        bundle=load_result_bundle(bundle_dir),
+        output_dir=output_dir,
+        dpi=80,
+    )
+
+    assert len(output_paths) == 2
+    assert (output_dir / "channel_01" / "crest_factor_time.png").exists()
+    assert (output_dir / "channel_01" / "octave_crest_factor_time.png").exists()
+
+
+def test_render_cli_renders_histograms_from_bundle(tmp_path):
+    """Render CLI scans bundles and writes plots."""
+    bundle_dir = _write_test_bundle(tmp_path)
+    output_dir = tmp_path / "cli_rendered"
+
+    result = CliRunner().invoke(
+        render_main,
+        [
+            "--results",
+            str(bundle_dir),
+            "--output-dir",
+            str(output_dir),
+            "--dpi",
+            "80",
+        ],
+    )
+
+    if result.exception:
+        raise result.exception
+
+    assert result.exit_code == 0
+    assert (output_dir / "render_test" / "channel_01" / "histograms.png").exists()
+    assert (
+        output_dir / "render_test" / "channel_01" / "histograms_log_db.png"
+    ).exists()
+    assert (
+        output_dir / "render_test" / "channel_01" / "crest_factor_time.png"
+    ).exists()
+    assert (
+        output_dir / "render_test" / "channel_01" / "octave_crest_factor_time.png"
+    ).exists()
+
+    manifest = json.loads((bundle_dir / "manifest.json").read_text())
+    assert manifest["track"]["track_name"] == "render_test.wav"

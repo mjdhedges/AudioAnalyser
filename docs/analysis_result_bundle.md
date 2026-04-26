@@ -41,3 +41,15 @@ rendering code can recreate plots without reloading the source audio.
 The bundle stores derived time-series and histogram data rather than full
 filtered waveforms by default. Full waveform storage can be added later as an
 optional schema extension if a future UI needs sample-level replay.
+
+## Rendering From A Bundle
+
+Histogram and crest-factor time rendering can now run as a second pass over
+`.aaresults` data:
+
+```powershell
+python -m src.render --results analysis/Track.aaresults --output-dir rendered
+```
+
+`--results` may point at one bundle or a directory containing multiple bundles.
+Use `--no-histograms` or `--no-time-plots` to skip either plot family.

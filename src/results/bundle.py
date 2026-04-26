@@ -150,6 +150,9 @@ def _update_manifest(
         "relative_path": channel_dir.relative_to(bundle_dir).as_posix(),
         "artifacts": {
             "metadata": "metadata.json",
+            "analysis_config": "analysis_config.json",
+            "plotting_config": "plotting_config.json",
+            "envelope_config": "envelope_config.json",
             "octave_band_analysis": "octave_band_analysis.csv",
             "time_domain_analysis": "time_domain_analysis.csv",
             "extreme_chunks_octave_analysis": "extreme_chunks_octave_analysis.csv",
