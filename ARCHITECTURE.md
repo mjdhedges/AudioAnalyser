@@ -1,8 +1,8 @@
-# Music Analyser - Architecture Documentation
+# Audio Analyser - Architecture Documentation
 
 ## Overview
 
-The Music Analyser is a Python application that performs comprehensive octave band frequency analysis on audio files. This document explains the system architecture, component design, and data flow.
+The Audio Analyser is a Python application that performs comprehensive octave band frequency analysis on audio files. This document explains the system architecture, component design, and data flow.
 
 ## System Architecture
 
@@ -65,10 +65,10 @@ The Music Analyser is a Python application that performs comprehensive octave ba
 ┌──────────────────────────────────────────────────────────────────┐
 │                      Octave Band Filtering                        │
 │                   (src/octave_filter.py)                          │
-│  • Butterworth bandpass filter design                             │
-│  • Octave bank creation (11 bands: 16Hz-16kHz)                   │
-│  • Filter coefficient caching                                     │
-│  • Parallel processing (ProcessPoolExecutor)                      │
+│  • FFT power-complementary octave bank                            │
+│  • Full-file or large-block FFT processing                        │
+│  • Low/high residual bands for energy outside nominal octaves     │
+│  • Inverse FFT time-series reconstruction per band                │
 │  • Disk-based caching (NPY format)                                │
 └──────────────────────────────────────────────────────────────────┘
                               │
@@ -159,19 +159,21 @@ The Music Analyser is a Python application that performs comprehensive octave ba
 ### 4. Octave Band Filter (`src/octave_filter.py`)
 
 **Responsibilities:**
-- Design Butterworth bandpass filters for each octave band
-- Apply filters to audio data (zero-phase filtering)
-- Create octave bank (all bands + full spectrum)
-- Filter coefficient caching
-- Parallel filtering for performance
+- Create an FFT power-complementary octave bank
+- Preserve total RMS energy through flat summed power
+- Return same-length filtered time-series signals for each band
+- Support auto, full-file FFT, and large-block FFT processing
+- Use temporary disk-backed octave storage when the time-series bank would
+  exceed the configured RAM budget
 
 **Key Classes:**
-- `OctaveBandFilter`: Main filter class with caching and parallel processing
+- `OctaveBandFilter`: Main FFT octave-bank class
 
 **Filter Specifications:**
-- 11 center frequencies: 16, 31.25, 62.5, 125, 250, 500, 1k, 2k, 4k, 8k, 16k Hz
-- 4th order filters (2nd order for very low frequencies)
-- Bandwidth: center_freq / √2
+- Nominal centers: 8, 16, 31.25, 62.5, 125, 250, 500, 1k, 2k, 4k, 8k, 16k Hz
+- Optional residual band at 4 Hz and below
+- Optional high residual band above the 16 kHz octave region up to Nyquist
+- Power complementarity: `sum(weight_band(f) ** 2) = 1.0`
 
 **Caching Strategy:**
 - Cache octave banks to disk (NPY format)
@@ -194,7 +196,7 @@ The Music Analyser is a Python application that performs comprehensive octave ba
 - **Multi-Channel**: RP22 standard names (FL, FC, FR, SL, SR, SBL, SBR, LFE, etc.)
 - Supports up to 32 channels with extended RP22 names (TFL, TFR, TBL, TBR, etc.)
 
-### 6. Music Analyzer (`src/music_analyzer.py`)
+### 6. Audio Analyzer (`src/music_analyzer.py`)
 
 **Responsibilities:**
 - Core octave band statistical analysis
@@ -337,13 +339,15 @@ Re-run (File Changed):
 ### Key Configuration Options
 
 ```toml
+[analysis]
+octave_filter_mode = "auto"           # Auto full-file/block FFT selection
+octave_max_memory_gb = 4.0            # Octave processing RAM budget
+octave_fft_block_duration_seconds = 30.0
+
 [performance]
-enable_parallel_processing = true    # Parallel octave filtering
 enable_parallel_batch = true        # Parallel batch processing
-enable_octave_cache = true          # Cache octave banks
 enable_result_cache = true          # Cache analysis results
 use_float32 = true                  # Memory optimization
-max_workers = 4                     # Worker count (auto if blank)
 
 [plotting]
 dpi = 300                           # High quality plots

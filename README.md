@@ -1,6 +1,6 @@
-# Music Analyser
+# Audio Analyser
 
-A Python implementation of octave band music analysis, based on the MATLAB `musicanalyser.m` script. This tool performs comprehensive frequency analysis on audio files using octave band filtering, statistical analysis, and visualization.
+A Python implementation of octave band audio analysis, based on the MATLAB `musicanalyser.m` script. This tool performs comprehensive frequency analysis on audio files using octave band filtering, statistical analysis, and visualization.
 
 ## Features
 
@@ -8,7 +8,7 @@ A Python implementation of octave band music analysis, based on the MATLAB `musi
 - **Multi-Channel Support**: Process stereo and surround audio with separate analysis per channel
 - **MKV/TrueHD Support**: Extract and decode Dolby TrueHD audio from MKV containers (requires ffmpeg)
 - **RP22 Channel Naming**: Automatic channel identification using RP22 standard (FL, FC, FR, SL, SR, etc.)
-- **Octave Band Filtering**: Apply octave band filters at standard frequencies (16Hz to 16kHz) including cinema/LFE analysis
+- **Octave Band Filtering**: Apply octave band filters from **8 Hz** through 16 kHz (IEC 16 Hz–16 kHz series plus an 8 Hz sub-bass band) including cinema/LFE analysis
 - **Advanced Statistics**: Comprehensive analysis including clipping detection, dynamic range, spectral characteristics
 - **Visualization**: Generate octave spectrum plots, crest factor analysis, and amplitude distribution histograms
 - **Data Export**: Export comprehensive analysis results to CSV format with content type tagging
@@ -28,7 +28,7 @@ A Python implementation of octave band music analysis, based on the MATLAB `musi
 1. Clone the repository:
 ```bash
 git clone <repository-url>
-cd music-analyser
+cd audio-analyser
 ```
 
 2. Create and activate a virtual environment:
@@ -53,7 +53,7 @@ pip install -e ".[dev]"
 
 ## Configuration
 
-The Music Analyser uses a TOML-based configuration system (`config.toml`) that allows you to customize all analysis parameters. You can override any setting via command-line arguments.
+The Audio Analyser uses a TOML-based configuration system (`config.toml`) that allows you to customize all analysis parameters. You can override any setting via command-line arguments.
 
 ### Configuration File (`config.toml`)
 
@@ -65,11 +65,11 @@ chunk_duration_seconds = 2.0        # Time-domain analysis chunk size
 sample_rate = 44100                 # Audio processing sample rate
 tracks_dir = "Tracks"               # Default tracks directory
 output_dir = "analysis"             # Default output directory
-octave_center_frequencies = [16.0, 31.25, 62.5, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0]
+octave_center_frequencies = [8.0, 16.0, 31.25, 62.5, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0]
 
 [plotting]
 octave_spectrum_figsize = [12, 8]   # Figure dimensions
-octave_spectrum_xlim = [15, 20000]  # X-axis limits (Hz)
+octave_spectrum_xlim = [7, 20000]   # X-axis limits (Hz); low end supports 8 Hz band
 octave_spectrum_ylim = [-60, 3]     # Y-axis limits (dBFS)
 dpi = 300                           # Plot resolution
 
@@ -280,7 +280,7 @@ For a **single file**, outputs go under ``analysis/<track stem>/``. For **batch*
 ```
 analysis/
 ├── Track Name 1/
-│   ├── octave_spectrum.png              # Octave spectrum plot (16Hz-16kHz)
+│   ├── octave_spectrum.png              # Octave spectrum plot (8 Hz–16 kHz)
 │   ├── crest_factor.png                 # Crest factor analysis
 │   ├── crest_factor_time.png            # Crest factor vs time
 │   ├── octave_crest_factor_time.png     # Octave band crest factors vs time
@@ -294,7 +294,7 @@ analysis/
 ### Visualizations
 
 #### 1. Octave Spectrum Plot (`octave_spectrum.png`)
-- **Frequency Range**: 16Hz to 16kHz (cinema-ready including LFE)
+- **Frequency Range**: 8 Hz to 16 kHz (IEC series from 16 Hz plus 8 Hz sub-bass; cinema/LFE)
 - **Metrics**: Peak and RMS levels for each octave band
 - **Reference Lines**: Track peak/RMS, min/max crest factor chunks
 - **Format**: Logarithmic frequency axis, dBFS amplitude scale
@@ -347,7 +347,7 @@ The CSV export contains comprehensive analysis data organized in sections:
 - **Peak Distribution**: Sample distribution across dBFS ranges
 
 #### 3. Octave Band Analysis
-- **11 Frequency Bands**: 16Hz to 16kHz (including cinema LFE)
+- **12 octave bands** (8 Hz … 16 kHz) plus Full Spectrum in the export sections
 - **Metrics per Band**: Max amplitude, RMS, dynamic range, crest factor
 - **Statistics**: Mean, std, percentiles (10th, 25th, 50th, 75th, 90th, 95th, 99th)
 
@@ -366,15 +366,19 @@ The CSV export contains comprehensive analysis data organized in sections:
 ## Technical Details
 
 ### Octave Band Frequencies
-The tool analyzes audio using standard octave band center frequencies including cinema/LFE analysis:
-- **16 Hz** (LFE/Cinema), 31.25 Hz, 62.5 Hz, 125 Hz, 250 Hz, 500 Hz
+The tool analyzes audio using 1/1-octave band centers (IEC 16 Hz-16 kHz) plus **8 Hz** for sub-bass / infra extension:
+- **4 Hz and below** residual band
+- **8 Hz**, **16 Hz** (LFE/cinema low octaves), 31.25 Hz, 62.5 Hz, 125 Hz, 250 Hz, 500 Hz
 - 1000 Hz, 2000 Hz, 4000 Hz, 8000 Hz, 16000 Hz
+- **Above the 16 kHz octave region** residual band up to Nyquist
 
 ### Filter Design
-- Uses Butterworth bandpass filters (4th order for standard frequencies)
-- **2nd order filters** for very low frequencies (< 1% of Nyquist) for numerical stability
-- Bandwidth calculated as center_frequency / √2 for octave bands
-- Zero-phase filtering using `scipy.signal.filtfilt`
+- Uses an FFT power-complementary octave bank
+- Adjacent raised-cosine bands overlap in amplitude but sum flat in power
+- Octave-band RMS values are combined as linear power, not by adding dB values
+- Supports `auto`, full-file FFT, and large-block FFT modes
+- `auto` switches to block processing and disk-backed octave storage when the
+  configured RAM budget would be exceeded
 
 ### Advanced Statistics
 - **Clipping Detection**: Hot peaks (>-1dBFS), clip events (>-0.1dBFS), peak saturation (>-3dBFS)
@@ -399,7 +403,7 @@ The tool analyzes audio using standard octave band center frequencies including 
 ## Project Structure
 
 ```
-music-analyser/
+audio-analyser/
 ├── src/                    # Source code
 │   ├── __init__.py
 │   ├── main.py             # CLI entry point
@@ -434,9 +438,8 @@ This Python implementation replicates the functionality of the original MATLAB `
 | MATLAB Function | Python Equivalent |
 |----------------|-------------------|
 | `audioread()` | `librosa.load()` |
-| `octdsgn()` | `OctaveBandFilter.design_octave_filter()` |
-| `filter()` | `scipy.signal.filtfilt()` |
-| `poctave()` | Custom octave band analysis |
+| `octdsgn()` / `poctave()` | `OctaveBandFilter.create_octave_bank()` |
+| `filter()` | FFT weighting plus inverse FFT per band |
 | `semilogx()` | `matplotlib.pyplot.semilogx()` |
 | `histogram()` | `matplotlib.pyplot.hist()` |
 
