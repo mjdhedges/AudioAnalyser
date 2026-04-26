@@ -1,5 +1,5 @@
 """
-Music Analyser - A Python project for music analysis.
+Audio Analyser - A Python project for audio analysis.
 """
 
 __version__ = "0.1.0"

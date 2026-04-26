@@ -1,5 +1,5 @@
 """
-Analysis and visualization module for Music Analyser.
+Analysis and visualization module for Audio Analyser.
 
 This module handles octave band analysis, statistical calculations, and visualization.
 """
@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 
 class MusicAnalyzer:
-    """Main class for music analysis operations."""
+    """Main class for audio analysis operations."""
 
     def __init__(
         self,
@@ -48,7 +48,7 @@ class MusicAnalyzer:
         time_domain_crest_factor_mode: str = "slow",
         analysis_config: Optional[Dict] = None,
     ) -> None:
-        """Initialize the music analyzer.
+        """Initialize the analyzer.
         
         Args:
             sample_rate: Sample rate for audio processing

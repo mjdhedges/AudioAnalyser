@@ -1,5 +1,5 @@
 """
-Audio processing module for Music Analyser.
+Audio processing module for Audio Analyser.
 
 This module handles audio file loading, preprocessing, and basic audio operations.
 """

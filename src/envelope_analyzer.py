@@ -1,5 +1,5 @@
 """
-Envelope analysis module for Music Analyser.
+Envelope analysis module for Audio Analyser.
 
 This module handles envelope processing, peak detection, and pattern analysis.
 """

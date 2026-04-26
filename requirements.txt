@@ -1,4 +1,4 @@
-# Production dependencies for Music Analyser
+# Production dependencies for Audio Analyser
 librosa>=0.10.0
 numpy>=1.24.0
 scipy>=1.10.0

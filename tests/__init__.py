@@ -1,3 +1,3 @@
 """
-Test package for Music Analyser.
+Test package for Audio Analyser.
 """

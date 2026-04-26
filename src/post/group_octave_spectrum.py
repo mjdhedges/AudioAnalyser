@@ -281,9 +281,9 @@ def generate_group_octave_spectrum_plot(track_dir: Path, output_dir: Path) -> Di
         ax2.set_ylim([-60, 3])
         
         # Add frequency labels to bottom plot (shared x-axis)
-        ax2.set_xlim([15, 20000])
-        ax2.set_xticks([16, 31.25, 62.5, 125, 250, 500, 1000, 2000, 4000, 8000, 16000])
-        ax2.set_xticklabels(['16', '31.25', '62.5', '125', '250', '500', '1k', '2k', '4k', '8k', '16k'])
+        ax2.set_xlim([7, 20000])
+        ax2.set_xticks([8, 16, 31.25, 62.5, 125, 250, 500, 1000, 2000, 4000, 8000, 16000])
+        ax2.set_xticklabels(['8', '16', '31.25', '62.5', '125', '250', '500', '1k', '2k', '4k', '8k', '16k'])
         
         plt.tight_layout()
         

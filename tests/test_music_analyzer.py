@@ -1,5 +1,5 @@
 """
-Tests for the music analyzer module.
+Tests for the audio analyzer module.
 """
 
 import pytest

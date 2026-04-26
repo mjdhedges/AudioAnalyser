@@ -1,5 +1,5 @@
 # ============================================================================
-# Music Analyser Configuration File
+# Audio Analyser Configuration File
 # ============================================================================
 # This file defines default parameters for audio analysis.
 # Parameters can be overridden via command line arguments.
@@ -62,45 +62,39 @@ output_dir = "analysis"
 # ============================================================================
 # OCTAVE BAND FILTERING SETTINGS
 # ============================================================================
-# Parameters for frequency-domain analysis using octave band filters
+# Parameters for frequency-domain analysis using FFT octave band filters
 # ============================================================================
 
-# Center frequencies for octave band analysis (Hz)
-# Each band covers frequencies from center/sqrt(2) to center*sqrt(2)
-# Standard 1/1 octave bands from 16 Hz to 16 kHz
-# Full Spectrum (0 Hz) is automatically included for comparison
-octave_center_frequencies = [16.0, 31.25, 62.5, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0]
+# Nominal octave center frequencies for analysis (Hz)
+# IEC 1/1-octave series from 16 Hz-16 kHz, plus 8 Hz for sub-bass / infra extension.
+# Full Spectrum (0 Hz) is automatically included for comparison.
+octave_center_frequencies = [8.0, 16.0, 31.25, 62.5, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0]
 
-# Filter type for octave band filtering
-# true = Use Linkwitz-Riley filters (recommended for cascade complementary approach)
-# false = Use Butterworth filters (legacy, parallel processing only)
-# Linkwitz-Riley filters are designed for complementary summing and better phase coherence
-use_linkwitz_riley = true
+# FFT power-complementary octave filter mode.
+# Options:
+#   "auto"      - use full-file FFT when estimated RAM is under octave_max_memory_gb,
+#                 otherwise switch to large-block FFT and disk-backed output if needed.
+#   "full_file" - one FFT over the complete channel; best frequency resolution.
+#   "block"     - large non-overlapping FFT blocks; lower peak RAM for long files.
+octave_filter_mode = "auto"
 
-# Cascade complementary filter bank approach
-# true = Use cascade complementary approach (recommended for crest factor preservation)
-#        - Non-overlapping bands
-#        - Linear phase (zero-phase via filtfilt)
-#        - Better phase coherence
-#        - Sequential processing (cannot be parallelized)
-# false = Use parallel filter bank approach
-#         - Overlapping bands (ISO standard)
-#         - Can be parallelized for speed
-#         - May have phase interference issues
-use_cascade_complementary = true
+# Block size used when octave_filter_mode = "block".
+# Keep this in the tens of seconds for offline analysis and useful 4 Hz detail.
+octave_fft_block_duration_seconds = 30.0
 
-# Normalize overlapping bands to eliminate ripple
-# Only applies when use_cascade_complementary = false (parallel approach)
-# true = Apply frequency-dependent normalization to reduce ripple
-# false = Use ISO standard bandwidths without normalization
-# Not needed with cascade complementary approach (bands don't overlap)
-normalize_overlap = false
+# Approximate RAM budget for octave-bank processing. If full-file FFT processing
+# is estimated above this limit, the app switches to large-block FFT processing.
+# If the octave-bank time-series output itself is larger than this limit, it is
+# stored as a temporary disk-backed memmap while downstream analysis runs.
+octave_max_memory_gb = 4.0
 
-# Butterworth filter order for octave band filtering (legacy, when use_linkwitz_riley = false)
-# Higher order = steeper rolloff, better isolation between bands
-# 4th order provides -24 dB/octave rolloff (adequate precision at all frequencies)
-# Options: 2, 4, 6, 8 (higher = more CPU intensive)
-filter_order = 4
+# Residual bands capture energy outside the nominal 8 Hz-16 kHz octave range.
+# The low band represents 4 Hz and below. The high band represents energy above
+# the 16 kHz octave region up to Nyquist.
+octave_include_low_residual_band = true
+octave_include_high_residual_band = true
+octave_low_residual_center_hz = 4.0
+octave_high_residual_center_hz = 32000.0
 
 
 # ============================================================================
@@ -307,13 +301,13 @@ octave_crest_factor_time_figsize = [14, 12]
 # ----------------------------------------------------------------------------
 
 # Octave spectrum plot: X-axis frequency range (Hz)
-octave_spectrum_xlim = [15, 20000]
+octave_spectrum_xlim = [3, 40000]
 
 # Octave spectrum plot: Y-axis level range (dBFS)
 octave_spectrum_ylim = [-60, 3]
 
 # Crest factor plot: X-axis frequency range (Hz)
-crest_factor_xlim = [15, 20000]
+crest_factor_xlim = [3, 40000]
 
 # Crest factor plot: Y-axis minimum value
 crest_factor_ylim_min = 0
@@ -429,7 +423,7 @@ peak_distribution_ranges_labels = ["clipping", "hot", "loud", "moderate", "quiet
 # Used for calculating energy in different frequency ranges
 
 # Bass frequencies (Hz) - low frequency energy
-bass_frequencies = [31.25, 62.5, 125.0]
+bass_frequencies = [8.0, 16.0, 31.25, 62.5, 125.0]
 
 # Mid frequencies (Hz) - mid frequency energy
 mid_frequencies = [250.0, 500.0, 1000.0, 2000.0]
@@ -560,55 +554,16 @@ enable_memory_optimization = true
 use_float32 = true
 
 # ----------------------------------------------------------------------------
-# Parallel Processing (within a single track / channel)
+# Octave FFT Processing
 # ----------------------------------------------------------------------------
 #
-# There are TWO separate parallel mechanisms in this app (see "Batch Processing" below).
-# This section only controls the OCTAVE BANK build for ONE channel at a time.
-#
-# How it works (code: OctaveBandFilter.create_octave_bank_parallel):
-#   - Uses a process pool (multiprocessing). Each worker runs band-pass filtering for
-#     one octave center frequency below Nyquist.
-#   - Effective parallelism is limited by min(number of such bands, max_workers, CPU cores).
-#   - Startup cost: spawning worker processes; best payoff on long files / many bands.
-#
-# Interaction with [analysis] use_cascade_complementary (read that section first):
-#   - use_cascade_complementary = true  (default): cascade / complementary bank path.
-#     Octave bands are built SEQUENTIALLY. This flag is IGNORED for speed—there is no
-#     parallel octave pool in that mode (by design).
-#   - use_cascade_complementary = false: parallel filter-bank path. If enable_parallel_processing
-#     is true, bands are farmed out to the pool above; if false, bands run one after another
-#     in a single process.
-#
-# Tuning:
-#   - For maximum throughput on many FILES, prefer raising max_batch_workers (batch section)
-#     before turning off cascade complementary—batch parallelism scales wall time better
-#     for large libraries and does not change filter topology.
-#   - Turning off cascade to use this pool trades the documented filter-bank behaviour for
-#     speed; compare outputs if that matters for your use case.
-#
-enable_parallel_processing = true
-
-# Optional cap on worker processes for the parallel octave pool (only when cascade is off
-# and enable_parallel_processing is true).
-#   - Omit this key entirely: auto-select min(bands below Nyquist, logical CPU count).
-#   - Set a positive integer: hard cap; the app may still run fewer tasks than bands.
-#   - Invalid / empty / non-positive values are treated as "omit" (auto).
-# Logs at INFO include the resolved worker count when the parallel octave path runs.
-# max_workers = 8
+# Octave processing now uses one FFT filter bank per full channel or per large
+# block, controlled by analysis.octave_filter_mode. It does not use the retired
+# per-band multiprocessing path.
 
 # ----------------------------------------------------------------------------
 # Caching
 # ----------------------------------------------------------------------------
-
-# Enable caching for octave bank analysis
-# Creates cache files for faster re-analysis of same tracks
-# DISABLED by default: Creates 500MB+ cache files per track
-# Enable only if frequently re-analyzing same tracks
-enable_octave_cache = false
-
-# Directory for octave bank cache files
-cache_dir = "cache/octave_banks"
 
 # Enable result caching for plots and CSV files
 # Skips regeneration if source file and config haven't changed
