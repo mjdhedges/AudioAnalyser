@@ -35,7 +35,7 @@ def _compute_slow_rms_envelope_py(
         return np.array([], dtype=np.float64)
 
     dt = 1.0 / float(sample_rate)
-    alpha = dt / (tau + dt)
+    alpha = 1.0 - np.exp(-dt / tau)
 
     slow_squares = np.empty(signal.size, dtype=np.float64)
     prev = float(signal[0]) ** 2
@@ -68,7 +68,7 @@ if _NUMBA_AVAILABLE:
             return np.empty(0, dtype=np.float64)
 
         dt = 1.0 / float(sample_rate)
-        alpha = dt / (tau + dt)
+        alpha = 1.0 - np.exp(-dt / tau)
 
         slow_squares = np.empty(n, dtype=np.float64)
         prev = float(signal[0]) ** 2
