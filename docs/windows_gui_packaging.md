@@ -31,24 +31,25 @@ The PyInstaller spec includes:
 
 - `audioanalyser_icon.jpeg`
 - `config.toml`
+- `vendor/ffmpeg/bin/ffmpeg.exe`
+- `vendor/ffmpeg/bin/ffprobe.exe`
+- FFmpeg license/readme files
 - package data needed by `librosa`, `matplotlib`, and `scipy`
+- PDF report support via PySide6 and Python-Markdown
 
 The GUI launches analysis and rendering subprocesses through the packaged
 `AudioAnalyserCli.exe` companion, so a separate Python installation is not
 required for normal use.
 
-## ffmpeg
+## FFmpeg
 
-MKV/TrueHD processing still requires the external ffmpeg tools package. The
-current packaged GUI expects both `ffmpeg.exe` and `ffprobe.exe` to be available
-on `PATH`.
+Packaged Windows builds include FFmpeg so MKV/TrueHD processing works without a
+separate FFmpeg install. The bundled files live under `vendor/ffmpeg/` in source
+and are copied into the packaged `_internal/vendor/ffmpeg/` runtime folder.
 
-Install ffmpeg from [https://ffmpeg.org/download.html](https://ffmpeg.org/download.html),
-add the ffmpeg `bin` folder to `PATH`, then restart Audio Analyser. If those
-tools are missing, MKV analysis fails with a clear log message explaining that
-ffmpeg must be installed and added to `PATH`.
+Source/development runs can also use a system FFmpeg install on `PATH`. If
+`ffmpeg.exe` or `ffprobe.exe` cannot be found, MKV analysis fails with a clear
+log message explaining that FFmpeg must be installed and added to `PATH`.
 
-Bundling ffmpeg can be added later by copying `ffmpeg.exe` and `ffprobe.exe`
-into a tracked `vendor/ffmpeg/` folder and adding them to the PyInstaller
-`binaries` list.
+The FFmpeg binaries are distributed with their upstream license/readme files.
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -18,6 +19,28 @@ import numpy as np
 import soundfile as sf
 
 logger = logging.getLogger(__name__)
+
+
+def _bundled_tool_path(tool_name: str) -> Optional[Path]:
+    """Return a bundled FFmpeg tool path when available."""
+    executable_name = f"{tool_name}.exe" if sys.platform == "win32" else tool_name
+    search_roots = []
+    frozen_root = getattr(sys, "_MEIPASS", None)
+    if frozen_root:
+        search_roots.append(Path(frozen_root))
+    search_roots.append(Path(__file__).resolve().parents[1])
+
+    for root in search_roots:
+        candidate = root / "vendor" / "ffmpeg" / "bin" / executable_name
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _ffmpeg_tool_command(tool_name: str) -> str:
+    """Return a bundled FFmpeg executable path or fall back to PATH lookup."""
+    bundled = _bundled_tool_path(tool_name)
+    return str(bundled) if bundled is not None else tool_name
 
 
 class AudioProcessor:
@@ -83,7 +106,7 @@ class AudioProcessor:
         """
         try:
             cmd = [
-                "ffprobe",
+                _ffmpeg_tool_command("ffprobe"),
                 "-v",
                 "error",
                 "-select_streams",
@@ -157,7 +180,7 @@ class AudioProcessor:
             # -ar sets sample rate (will be resampled later if needed)
             # -ac preserves channel count
             cmd = [
-                "ffmpeg",
+                _ffmpeg_tool_command("ffmpeg"),
                 "-i",
                 str(mkv_path),
                 "-map",

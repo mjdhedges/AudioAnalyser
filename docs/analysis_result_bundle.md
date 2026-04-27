@@ -75,9 +75,9 @@ override it for one run.
 Use `--no-spectrum-plots`, `--no-histograms`, `--no-time-plots`,
 `--no-envelope-plots`, or `--no-group-plots` to skip a plot family.
 
-Add `--reports` to write `analysis.md` next to the rendered plots. The report
-uses bundle tables directly and does not require legacy `analysis_results.csv`
-files.
+Add `--reports` to write `analysis.md` and `analysis.pdf` next to the rendered
+plots. The reports use bundle tables directly and do not require legacy
+`analysis_results.csv` files.
 
 Legacy `src.main --post-only` and `--run-post` post-processing reads the old
 sectioned CSV files and is skipped for bundle-only output. Use `src.render` for

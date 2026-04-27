@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import sys
+from multiprocessing import freeze_support
 
 from src.gui.cli import ANALYSIS_CLI_ARG, RENDER_CLI_ARG
 
 
 def main() -> int:
     """Dispatch packaged subprocess calls to the analysis or render CLI."""
+    freeze_support()
     if len(sys.argv) > 1 and sys.argv[1] == ANALYSIS_CLI_ARG:
         from src.main import main as analysis_main
 

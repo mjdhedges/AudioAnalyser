@@ -15,6 +15,7 @@ from urllib.parse import quote
 import numpy as np
 import pandas as pd
 
+from src.report_pdf import markdown_report_to_pdf
 from src.results.reader import ChannelResult, ResultBundle
 
 logger = logging.getLogger(__name__)
@@ -500,6 +501,8 @@ def generate_bundle_report(
 
     report_path.write_text("\n".join(lines), encoding="utf-8")
     logger.info("Bundle report written to: %s", report_path)
+    pdf_path = markdown_report_to_pdf(report_path)
+    logger.info("Bundle PDF report written to: %s", pdf_path)
     return report_path
 
 

@@ -7,6 +7,7 @@ import pandas as pd
 from click.testing import CliRunner
 
 from src.music_analyzer import MusicAnalyzer
+from src.report_pdf import markdown_report_to_pdf
 from src.render import _resolve_render_dpi, main as render_main
 from src.results import generate_bundle_report, load_result_bundle
 from src.results.bundle import write_channel_result_bundle
@@ -234,6 +235,28 @@ def test_generate_bundle_report_writes_markdown(tmp_path):
     assert "Crest Factor Analysis" in report_text
     assert "Group Plots" in report_text
     assert "T3, T6, T9, and T12 are recovery-time measurements" in report_text
+    pdf_path = output_dir / "analysis.pdf"
+    assert pdf_path.exists()
+    assert pdf_path.read_bytes().startswith(b"%PDF")
+
+
+def test_markdown_report_to_pdf_writes_pdf(tmp_path):
+    """Markdown reports can be exported as portable PDFs."""
+    markdown_path = tmp_path / "analysis.md"
+    markdown_path.write_text(
+        "# Test Report\n\n"
+        "This is a **PDF smoke test**.\n\n"
+        "| Metric | Value |\n"
+        "| --- | --- |\n"
+        "| Crest factor | 12 dB |\n",
+        encoding="utf-8",
+    )
+
+    pdf_path = markdown_report_to_pdf(markdown_path)
+
+    assert pdf_path == tmp_path / "analysis.pdf"
+    assert pdf_path.exists()
+    assert pdf_path.read_bytes().startswith(b"%PDF")
 
 
 def test_render_dpi_uses_override_then_config():
@@ -279,6 +302,7 @@ def test_render_cli_renders_histograms_from_bundle(tmp_path):
         output_dir / "render_test" / "channel_01" / "octave_crest_factor_time.png"
     ).exists()
     assert (output_dir / "render_test" / "analysis.md").exists()
+    assert (output_dir / "render_test" / "analysis.pdf").exists()
 
     manifest = json.loads((bundle_dir / "manifest.json").read_text())
     assert manifest["track"]["track_name"] == "render_test.wav"

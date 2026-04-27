@@ -2,7 +2,7 @@
 
 # Audio Analyser
 
-Audio Analyser is an offline analysis tool for music, film, and test-signal audio. It measures octave-band level, crest factor, time-domain dynamics, envelope behaviour, sustained peaks, and channel/group behaviour across mono, stereo, and surround material. Analysis results are stored as portable per-track `.aaresults` bundles, which can then be rendered into plots, manifests, and Markdown reports without reprocessing the source audio.
+Audio Analyser is an offline analysis tool for music, film, and test-signal audio. It measures octave-band level, crest factor, time-domain dynamics, envelope behaviour, sustained peaks, and channel/group behaviour across mono, stereo, and surround material. Analysis results are stored as portable per-track `.aaresults` bundles, which can then be rendered into plots, manifests, Markdown reports, and portable PDF reports without reprocessing the source audio.
 
 ## Recommended Route: Desktop GUI
 
@@ -11,10 +11,10 @@ Analyser. The packaged build is self-contained: it includes the Python runtime
 and Python dependencies, so normal use does not require installing Python,
 creating a virtual environment, or running command-line tools.
 
-For MKV/TrueHD files, install the external `ffmpeg` tools package separately.
-Audio Analyser needs both `ffmpeg.exe` and `ffprobe.exe` available on `PATH`.
-If they are missing, analysis fails with a clear log message explaining that
-ffmpeg must be installed and added to `PATH`.
+The packaged Windows build includes `ffmpeg.exe` and `ffprobe.exe` for
+MKV/TrueHD workflows. Source/development runs can also use a system FFmpeg
+installation on `PATH`; if FFmpeg is missing, analysis fails with a clear log
+message explaining what needs to be installed.
 
 Basic workflow:
 
@@ -26,8 +26,9 @@ Basic workflow:
 6. Start analysis and watch per-file progress in the GUI.
 
 The GUI writes portable analysis bundles to `<project>/analysis/` and rendered
-plots/reports to `<project>/rendered/`. Those `.aaresults` bundles can be shared
-or re-rendered later without reprocessing the source audio.
+plots/reports to `<project>/rendered/`. Reports are written as both
+`analysis.md` and `analysis.pdf`. Those `.aaresults` bundles can be shared or
+re-rendered later without reprocessing the source audio.
 
 Packaged builds are created with PyInstaller and produce a `dist/AudioAnalyser/`
 folder containing `AudioAnalyser.exe` plus its runtime files. See
@@ -44,7 +45,7 @@ packaging notes.
 - **Octave Band Filtering**: Apply octave band filters from **8 Hz** through 16 kHz (IEC 16 Hz–16 kHz series plus an 8 Hz sub-bass band) including cinema/LFE analysis
 - **Advanced Statistics**: Comprehensive analysis including clipping detection, dynamic range, spectral characteristics
 - **Bundle-First Output**: Store derived per-track analysis data in portable `.aaresults` bundles
-- **Separate Rendering**: Generate graphs and Markdown reports from bundles without reloading source audio
+- **Separate Rendering**: Generate graphs, Markdown reports, and PDF reports from bundles without reloading source audio
 - **Legacy CSV Export**: Optional compatibility export for the old `analysis_results.csv` workflow
 - **Configuration System**: TOML-based configuration with command-line overrides
 - **Content Classification**: Automatic tagging of Music/Film/Test Signal content based on folder structure
@@ -58,7 +59,7 @@ from source. They are not needed for normal use of a packaged Windows build.
 ### Prerequisites
 - Python 3.8 or higher
 - Git
-- **ffmpeg** (required for MKV/TrueHD support): install the ffmpeg tools package from [https://ffmpeg.org/download.html](https://ffmpeg.org/download.html), add its `bin` folder to `PATH`, then restart the app or terminal.
+- **ffmpeg** (required for MKV/TrueHD support in source/development runs): install the ffmpeg tools package from [https://ffmpeg.org/download.html](https://ffmpeg.org/download.html), add its `bin` folder to `PATH`, then restart the app or terminal. Packaged Windows builds include bundled FFmpeg binaries.
 
 ### Installation
 
@@ -160,15 +161,15 @@ is designed around a single project folder:
 ```text
 MyProject/
 ├── analysis/   # .aaresults bundles
-└── rendered/   # plots, manifests, and analysis.md reports
+└── rendered/   # plots, manifests, analysis.md, and analysis.pdf reports
 ```
 
 The GUI asks for an input file or folder and one project folder. It writes
 analysis bundles to `<project>/analysis/` and rendered plots/reports to
-`<project>/rendered/`. Rendering and Markdown report generation can be toggled
-from the GUI. The GUI also exposes batch worker and octave memory controls, shows
-the raw process log, and tracks each discovered file as waiting, running,
-finished, or failed.
+`<project>/rendered/`. Report generation writes both `analysis.md` and
+`analysis.pdf`. Rendering and report generation can be toggled from the GUI. The
+GUI also exposes batch worker and octave memory controls, shows the raw process
+log, and tracks each discovered file as waiting, running, finished, or failed.
 
 For source/development runs, launch the GUI with:
 
@@ -233,7 +234,7 @@ python -m src.main --help
 #### Render Options
 - `--results`: A single `.aaresults` bundle or a directory containing bundles.
 - `--output-dir`: Directory for rendered plots and reports.
-- `--reports/--no-reports`: Enable or disable Markdown report generation.
+- `--reports/--no-reports`: Enable or disable Markdown and PDF report generation.
 - `--dpi`: Override `plotting.render_dpi` for one render run.
 - `--no-spectrum-plots`, `--no-histograms`, `--no-time-plots`, `--no-envelope-plots`, `--no-group-plots`: Skip specific output families.
 
@@ -296,7 +297,8 @@ Each channel is analyzed separately and stored under stable bundle channel IDs s
 The analyzer can extract and decode Dolby TrueHD audio from MKV video containers:
 
 **Requirements:**
-- `ffmpeg.exe` and `ffprobe.exe` must be installed and available on `PATH`
+- Packaged Windows builds include bundled `ffmpeg.exe` and `ffprobe.exe`
+- Source/development runs need `ffmpeg.exe` and `ffprobe.exe` installed and available on `PATH`, unless `vendor/ffmpeg/bin/` is present
 - Enable MKV support in `config.toml`: `[mkv_support] enable = true`
 
 If `ffmpeg` or `ffprobe` cannot be found, Audio Analyser stops the MKV analysis
@@ -362,7 +364,7 @@ results = analyzer.analyze_octave_bands(
 The tool now uses a two-stage workflow:
 
 1. `python -m src.main` analyzes audio and writes portable `.aaresults` bundles.
-2. `python -m src.render` reads bundles and generates graphs, group outputs, worst-channel manifests, and Markdown reports.
+2. `python -m src.render` reads bundles and generates graphs, group outputs, worst-channel manifests, Markdown reports, and PDF reports.
 
 ### Directory Structure
 
@@ -394,7 +396,8 @@ rendered/
     ├── histograms_log_db.png
     ├── peak_decay_groups.png
     ├── worst_channels_manifest.csv
-    └── analysis.md
+    ├── analysis.md
+    └── analysis.pdf
 ```
 
 ### Visualizations

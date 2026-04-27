@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from multiprocessing import freeze_support
 
 from PySide6.QtWidgets import QApplication
 
@@ -13,6 +14,7 @@ from src.gui.main_window import MainWindow
 
 def main() -> int:
     """Run the Audio Analyser desktop GUI."""
+    freeze_support()
     if len(sys.argv) > 1 and sys.argv[1] == ANALYSIS_CLI_ARG:
         from src.main import main as analysis_main
 

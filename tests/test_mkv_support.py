@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
 import tempfile
 
-from src.audio_processor import AudioProcessor
+from src.audio_processor import AudioProcessor, _ffmpeg_tool_command
 
 
 class TestMKVSupport:
@@ -26,6 +26,13 @@ class TestMKVSupport:
         assert self.processor._is_mkv_file(Path("test.MKV")) is True
         assert self.processor._is_mkv_file(Path("test.mkvv")) is False
         assert self.processor._is_mkv_file(Path("test.wav")) is False
+
+    def test_ffmpeg_tool_command_uses_vendored_binary(self):
+        """FFmpeg commands should prefer the bundled Windows binaries."""
+        command = _ffmpeg_tool_command("ffmpeg")
+
+        assert command.endswith("ffmpeg.exe")
+        assert Path(command).exists()
 
     @patch("subprocess.run")
     def test_probe_mkv_audio_streams(self, mock_subprocess):
@@ -69,7 +76,7 @@ class TestMKVSupport:
         # Verify ffprobe was called correctly
         mock_subprocess.assert_called_once()
         call_args = mock_subprocess.call_args[0][0]
-        assert call_args[0] == "ffprobe"
+        assert Path(call_args[0]).name == "ffprobe.exe"
         assert "-select_streams" in call_args
         assert "a" in call_args  # Select audio streams
 
@@ -113,7 +120,7 @@ class TestMKVSupport:
         # Verify ffmpeg was called correctly
         mock_subprocess.assert_called_once()
         call_args = mock_subprocess.call_args[0][0]
-        assert call_args[0] == "ffmpeg"
+        assert Path(call_args[0]).name == "ffmpeg.exe"
         assert "-map" in call_args
         assert "0:1" in call_args  # Stream index 1
         assert "-c:a" in call_args

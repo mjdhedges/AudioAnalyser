@@ -14,12 +14,14 @@ ICON = ROOT / "audioanalyser_icon.jpeg"
 datas = [
     (str(ROOT / "audioanalyser_icon.jpeg"), "."),
     (str(ROOT / "config.toml"), "."),
+    (str(ROOT / "vendor" / "ffmpeg"), "vendor/ffmpeg"),
 ]
 datas += collect_data_files("librosa")
 datas += collect_data_files("matplotlib")
 datas += collect_data_files("scipy")
 
 hiddenimports = []
+hiddenimports += ["PySide6.QtCore", "PySide6.QtGui"]
 hiddenimports += collect_submodules("numba")
 hiddenimports += collect_submodules("soundfile")
 
