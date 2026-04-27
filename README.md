@@ -1,3 +1,5 @@
+![Audio Analyser banner](audioanalyser_banner.png)
+
 # Audio Analyser
 
 Audio Analyser is an offline analysis tool for music, film, and test-signal audio. It measures octave-band level, crest factor, time-domain dynamics, envelope behaviour, sustained peaks, and channel/group behaviour across mono, stereo, and surround material. Analysis results are stored as portable per-track `.aaresults` bundles, which can then be rendered into plots, manifests, and Markdown reports without reprocessing the source audio.
@@ -12,6 +14,7 @@ Audio Analyser is an offline analysis tool for music, film, and test-signal audi
 - **Advanced Statistics**: Comprehensive analysis including clipping detection, dynamic range, spectral characteristics
 - **Bundle-First Output**: Store derived per-track analysis data in portable `.aaresults` bundles
 - **Separate Rendering**: Generate graphs and Markdown reports from bundles without reloading source audio
+- **Desktop GUI**: Select files/folders, choose a project folder, configure workers/memory, and monitor per-file progress
 - **Legacy CSV Export**: Optional compatibility export for the old `analysis_results.csv` workflow
 - **Configuration System**: TOML-based configuration with command-line overrides
 - **Content Classification**: Automatic tagging of Music/Film/Test Signal content based on folder structure
@@ -153,7 +156,14 @@ python -m src.main --help
 The GUI asks for an input file or folder and one project folder. It writes
 analysis bundles to `<project>/analysis/` and rendered plots/reports to
 `<project>/rendered/`. Rendering and Markdown report generation can be toggled
-from the GUI.
+from the GUI. The GUI also exposes batch worker and octave memory controls, shows
+the raw process log, and tracks each discovered file as waiting, running,
+finished, or failed.
+
+Packaged Windows builds are created with PyInstaller. See
+[`docs/windows_gui_packaging.md`](docs/windows_gui_packaging.md) for the build
+script, runtime layout, and the `AudioAnalyserCli.exe` subprocess companion used
+by the desktop app.
 
 ### Command Line Options
 
@@ -458,23 +468,28 @@ The tool analyzes audio using 1/1-octave band centers (IEC 16 Hz-16 kHz) plus **
 
 ```
 audio-analyser/
+├── audioanalyser_banner.png  # README banner image
+├── audioanalyser_icon.jpeg   # GUI/window icon
 ├── src/                    # Source code
 │   ├── __init__.py
-│   ├── main.py             # CLI entry point
+│   ├── main.py             # Analysis CLI entry point
+│   ├── render.py           # Bundle rendering CLI
 │   ├── config.py           # Configuration management
 │   ├── audio_processor.py  # Audio loading and preprocessing
 │   ├── octave_filter.py    # Octave band filtering
 │   ├── music_analyzer.py   # Analysis metrics
-│   ├── render.py           # Bundle rendering CLI
+│   ├── gui/                # PySide6 desktop GUI
 │   └── results/            # Bundle reader/writer/render helpers
+├── packaging/              # PyInstaller spec and Windows build script
 ├── tests/                  # Test files
-│   ├── __init__.py
 │   ├── test_main.py
-│   ├── test_audio_processor.py
-│   ├── test_octave_filter.py
-│   └── test_music_analyzer.py
+│   ├── test_results_render.py
+│   └── test_gui_*.py
 ├── docs/                   # Documentation
-│   └── musicanalyser.m     # Original MATLAB script
+│   ├── analysis_result_bundle.md
+│   ├── performance_notes.md
+│   └── windows_gui_packaging.md
+├── proofs/                 # Analysis proof work and validation notes
 ├── .cursor/                # Cursor IDE rules
 │   └── rules/
 ├── venv/                   # Virtual environment (not in git)
@@ -487,18 +502,6 @@ audio-analyser/
 └── README.md              # This file
 ```
 
-## Comparison with MATLAB Version
-
-This Python implementation replicates the functionality of the original MATLAB `musicanalyser.m` script:
-
-| MATLAB Function | Python Equivalent |
-|----------------|-------------------|
-| `audioread()` | `librosa.load()` |
-| `octdsgn()` / `poctave()` | `OctaveBandFilter.create_octave_bank()` |
-| `filter()` | FFT weighting plus inverse FFT per band |
-| `semilogx()` | `matplotlib.pyplot.semilogx()` |
-| `histogram()` | `matplotlib.pyplot.hist()` |
-
 ## Dependencies
 
 ### Core Libraries
@@ -509,6 +512,7 @@ This Python implementation replicates the functionality of the original MATLAB `
 - **pandas**: Data manipulation, bundle tables, and optional legacy CSV export
 - **soundfile**: Audio file I/O
 - **click**: Command-line interface
+- **PySide6**: Desktop GUI
 
 ### Development Tools
 - **pytest**: Testing framework
@@ -516,6 +520,7 @@ This Python implementation replicates the functionality of the original MATLAB `
 - **flake8**: Linting
 - **mypy**: Type checking
 - **isort**: Import sorting
+- **PyInstaller**: Windows GUI executable packaging
 
 ## License
 
