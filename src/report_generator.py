@@ -667,6 +667,12 @@ def _bundle_sustained_peak_section(group_data: Dict[str, Dict]) -> List[str]:
         "full-spectrum sustained-peak table. P95 values are used as realistic "
         "worst-case recovery indicators.",
         "",
+        "T3, T6, T9, and T12 are recovery-time measurements: the time taken "
+        "after a detected peak for the signal to decay to 3 dB, 6 dB, 9 dB, "
+        "and 12 dB below that peak. The P95 columns show the 95th percentile "
+        "of those recovery times, so 95% of measured peaks recovered within "
+        "that duration and 5% took longer.",
+        "",
         _format_table_row(
             [
                 "Group",
@@ -1600,6 +1606,10 @@ def generate_report(track_dir: Path, output_path: Path) -> None:
     lines.append("- **P90:** 90th percentile - 90% of peaks are at or below this value")
     lines.append("- **P95:** 95th percentile - 95% of peaks are at or below this value")
     lines.append("- **Max:** Worst-case value observed")
+    lines.append(
+        "- **T3/T6/T9/T12:** Time for the signal to recover to 3/6/9/12 dB "
+        "below the detected peak"
+    )
     lines.append("")
 
     for group_name in groups.keys():
