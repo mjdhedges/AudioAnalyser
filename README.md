@@ -68,7 +68,12 @@ tracks_dir = "Tracks"               # Default tracks directory
 output_dir = "analysis"             # Default output directory
 peak_hold_tau_seconds = 0.8         # Crest-factor peak-hold release time
 time_domain_slow_rms_tau_seconds = 1.0  # IEC Slow RMS time constant
+octave_max_memory_gb = 8.0          # Octave processing RAM budget
 octave_center_frequencies = [8.0, 16.0, 31.25, 62.5, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0]
+
+[performance]
+enable_parallel_batch = true        # Analyze multiple tracks at once in batch mode
+max_batch_workers = 8               # Maximum concurrent track analyses
 
 [plotting]
 octave_spectrum_figsize = [12, 8]   # Figure dimensions
@@ -95,6 +100,9 @@ You can override any configuration parameter via command-line arguments:
 ```bash
 # Override chunk duration for finer time resolution
 python -m src.main --input "track.wav" --chunk-duration 1.0
+
+# Override GUI-facing performance controls
+python -m src.main --input "Tracks" --output-dir "analysis" --batch-workers 2 --max-memory-gb 6
 
 # Override render DPI for high-resolution graph/report output
 python -m src.render --results "analysis/track.aaresults" --output-dir "rendered" --dpi 600
@@ -147,6 +155,8 @@ python -m src.main --help
 - `--output-dir, -o`: Output directory for analysis bundles (default: from config). In bundle-only batch mode, subfolders under the input folder are recreated and each track bundle is written directly into its mirrored parent folder, e.g. `Tracks/Film/a.wav` -> `analysis/Film/a.aaresults`.
 - `--batch/--single`: Deprecated. Mode is inferred from `--input` (file=single, dir=batch).
 - `--export-csv/--no-export-csv`: Legacy CSV compatibility option. Bundle output is controlled by `export.generate_analysis_bundle`.
+- `--batch-workers`: Maximum concurrent track analyses in batch mode. Use `1` for sequential processing.
+- `--max-memory-gb`: Octave processing RAM budget in GB.
 - `--skip-post`: Legacy option retained for compatibility. Graph/report generation is now handled by `python -m src.render`.
 - `--post-only`, `--run-post`: Legacy post-processing paths for old CSV output. Bundle-only workflows should use `python -m src.render`.
 

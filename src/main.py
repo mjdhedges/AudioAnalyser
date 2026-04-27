@@ -664,6 +664,16 @@ def analyze_single_track(
     type=float,
     help="Peak-hold time constant in seconds (overrides config).",
 )
+@click.option(
+    "--max-memory-gb",
+    type=click.FloatRange(min=0.1),
+    help="Octave processing RAM budget in GB (overrides config).",
+)
+@click.option(
+    "--batch-workers",
+    type=click.IntRange(min=1),
+    help="Maximum concurrent track analyses in batch mode; 1 runs sequentially.",
+)
 def main(
     input: Optional[Path],
     tracks_dir: Optional[Path],
@@ -689,6 +699,8 @@ def main(
     skip_octave_cf_time: bool,
     export_octave_cf_time_data: bool,
     peak_hold_tau: Optional[float],
+    max_memory_gb: Optional[float],
+    batch_workers: Optional[int],
 ) -> None:
     """Audio Analyser - Analyze audio files using octave band filtering.
 
@@ -721,7 +733,16 @@ def main(
             test_start_time=test_start_time,
             test_duration=test_duration,
             peak_hold_tau=peak_hold_tau,
+            max_memory_gb=max_memory_gb,
+            batch_workers=batch_workers,
         )
+
+        if batch_workers is not None:
+            config.set("performance.enable_parallel_batch", batch_workers > 1)
+            logger.info(
+                "Overrode performance.enable_parallel_batch with %s",
+                batch_workers > 1,
+            )
 
         if post_only:
             skip_post = False
@@ -751,6 +772,14 @@ def main(
         logger.info(f"Output directory: {output_dir}")
         logger.info(f"Sample rate: {sample_rate} Hz")
         logger.info(f"Chunk duration: {chunk_duration} seconds")
+        logger.info(
+            "Octave RAM budget: %.2f GB",
+            float(config.get("analysis.octave_max_memory_gb", 4.0)),
+        )
+        logger.info(
+            "Batch workers: %s",
+            config.get("performance.max_batch_workers", 2),
+        )
 
         # Config-driven defaults for optional expensive artifacts.
         if skip_octave_cf_time is None:

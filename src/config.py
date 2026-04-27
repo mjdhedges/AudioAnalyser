@@ -75,7 +75,7 @@ class Config:
                 ],
                 "octave_filter_mode": "auto",
                 "octave_fft_block_duration_seconds": 30.0,
-                "octave_max_memory_gb": 4.0,
+                "octave_max_memory_gb": 8.0,
                 "octave_include_low_residual_band": True,
                 "octave_include_high_residual_band": True,
                 "octave_low_residual_center_hz": 4.0,
@@ -148,6 +148,8 @@ class Config:
             "performance": {
                 "max_chunk_size_mb": 100,
                 "enable_memory_optimization": True,
+                "enable_parallel_batch": False,
+                "max_batch_workers": 2,
                 "skip_octave_cf_time": False,
                 "export_octave_cf_time_data": False,
             },
@@ -277,6 +279,8 @@ class Config:
             "test_start_time": "analysis.test_start_time",
             "test_duration": "analysis.test_duration",
             "peak_hold_tau": "analysis.peak_hold_tau_seconds",
+            "max_memory_gb": "analysis.octave_max_memory_gb",
+            "batch_workers": "performance.max_batch_workers",
         }
 
         for arg_name, config_path in arg_mapping.items():

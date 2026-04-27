@@ -116,6 +116,11 @@ class TestConfigExtended:
         config.override_from_args(log_level='DEBUG')
         assert config.get('logging.level') == 'DEBUG'
 
+        # Override GUI-facing runtime controls
+        config.override_from_args(max_memory_gb=6.5, batch_workers=3)
+        assert config.get('analysis.octave_max_memory_gb') == 6.5
+        assert config.get('performance.max_batch_workers') == 3
+
     def test_config_override_from_args_ignores_none(self):
         """Test that None values in override_from_args are ignored."""
         config = Config()
