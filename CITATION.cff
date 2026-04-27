@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use Audio Analyser in published or shared work, please cite it using this metadata."
+title: "Audio Analyser"
+version: "0.1.0"
+date-released: 2026-04-27
+type: software
+authors:
+  - family-names: "Hedges"
+    given-names: "Michael"
+repository-code: "https://github.com/mjdhedges/AudioAnalyser"
+url: "https://github.com/mjdhedges/AudioAnalyser"
+license: "GPL-3.0-only"
+abstract: "Offline audio analysis software for music, film, and test-signal material, with portable analysis result bundles, separate graph/report rendering, and a Windows desktop GUI."
+keywords:
+  - audio analysis
+  - octave-band analysis
+  - crest factor
+  - dynamics
+  - PySide6
+  - Python

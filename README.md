@@ -580,3 +580,6 @@ If you use Audio Analyser in published or shared work, cite:
 
 Michael Hedges, Audio Analyser, GitHub repository,
 https://github.com/mjdhedges/AudioAnalyser
+
+The repository also includes `CITATION.cff` so GitHub and citation tools can
+generate a formatted citation automatically.
