@@ -4,8 +4,39 @@
 
 Audio Analyser is an offline analysis tool for music, film, and test-signal audio. It measures octave-band level, crest factor, time-domain dynamics, envelope behaviour, sustained peaks, and channel/group behaviour across mono, stereo, and surround material. Analysis results are stored as portable per-track `.aaresults` bundles, which can then be rendered into plots, manifests, and Markdown reports without reprocessing the source audio.
 
+## Recommended Route: Desktop GUI
+
+For most users, the Windows desktop GUI is the easiest way to use Audio
+Analyser. The packaged build is self-contained: it includes the Python runtime
+and Python dependencies, so normal use does not require installing Python,
+creating a virtual environment, or running command-line tools.
+
+For MKV/TrueHD files, install the external `ffmpeg` tools package separately.
+Audio Analyser needs both `ffmpeg.exe` and `ffprobe.exe` available on `PATH`.
+If they are missing, analysis fails with a clear log message explaining that
+ffmpeg must be installed and added to `PATH`.
+
+Basic workflow:
+
+1. Download or build the Windows GUI package.
+2. Run `AudioAnalyser.exe`.
+3. Select an input audio file or folder.
+4. Select a project folder.
+5. Choose simple options such as batch workers and octave memory limit.
+6. Start analysis and watch per-file progress in the GUI.
+
+The GUI writes portable analysis bundles to `<project>/analysis/` and rendered
+plots/reports to `<project>/rendered/`. Those `.aaresults` bundles can be shared
+or re-rendered later without reprocessing the source audio.
+
+Packaged builds are created with PyInstaller and produce a `dist/AudioAnalyser/`
+folder containing `AudioAnalyser.exe` plus its runtime files. See
+[`docs/windows_gui_packaging.md`](docs/windows_gui_packaging.md) for build and
+packaging notes.
+
 ## Features
 
+- **Desktop GUI**: Primary route for most users, with file/folder selection, project-folder output, simple options, logs, and per-file progress
 - **Audio Processing**: Load and preprocess various audio formats (WAV, FLAC, MP3, MKV, etc.)
 - **Multi-Channel Support**: Process stereo and surround audio with separate analysis per channel
 - **MKV/TrueHD Support**: Extract and decode Dolby TrueHD audio from MKV containers (requires ffmpeg)
@@ -14,18 +45,20 @@ Audio Analyser is an offline analysis tool for music, film, and test-signal audi
 - **Advanced Statistics**: Comprehensive analysis including clipping detection, dynamic range, spectral characteristics
 - **Bundle-First Output**: Store derived per-track analysis data in portable `.aaresults` bundles
 - **Separate Rendering**: Generate graphs and Markdown reports from bundles without reloading source audio
-- **Desktop GUI**: Select files/folders, choose a project folder, configure workers/memory, and monitor per-file progress
 - **Legacy CSV Export**: Optional compatibility export for the old `analysis_results.csv` workflow
 - **Configuration System**: TOML-based configuration with command-line overrides
 - **Content Classification**: Automatic tagging of Music/Film/Test Signal content based on folder structure
 - **Command Line Interface**: Professional CLI with extensive customization options
 
-## Development Setup
+## Developer Setup
+
+These steps are for contributors, CLI users, and anyone building the GUI package
+from source. They are not needed for normal use of a packaged Windows build.
 
 ### Prerequisites
 - Python 3.8 or higher
 - Git
-- **ffmpeg** (required for MKV/TrueHD support): Download from [https://ffmpeg.org/download.html](https://ffmpeg.org/download.html)
+- **ffmpeg** (required for MKV/TrueHD support): install the ffmpeg tools package from [https://ffmpeg.org/download.html](https://ffmpeg.org/download.html), add its `bin` folder to `PATH`, then restart the app or terminal.
 
 ### Installation
 
@@ -119,7 +152,33 @@ python -m src.main --input "track.wav" --config "custom_config.toml"
 
 ## Usage
 
+### Desktop GUI
+
+Use `AudioAnalyser.exe` from the packaged Windows build for normal use. The app
+is designed around a single project folder:
+
+```text
+MyProject/
+├── analysis/   # .aaresults bundles
+└── rendered/   # plots, manifests, and analysis.md reports
+```
+
+The GUI asks for an input file or folder and one project folder. It writes
+analysis bundles to `<project>/analysis/` and rendered plots/reports to
+`<project>/rendered/`. Rendering and Markdown report generation can be toggled
+from the GUI. The GUI also exposes batch worker and octave memory controls, shows
+the raw process log, and tracks each discovered file as waiting, running,
+finished, or failed.
+
+For source/development runs, launch the GUI with:
+
+```bash
+python -m src.gui.app
+```
+
 ### Command Line Interface
+
+The CLI is useful for automation, development, and repeatable batch workflows.
 
 ```bash
 # Batch processing - analyze all tracks in Tracks directory
@@ -143,27 +202,12 @@ python -m src.render --results "analysis_output/Music/song.aaresults" --output-d
 # Render graphs and reports from all bundles under a directory
 python -m src.render --results "analysis_output" --output-dir "rendered" --reports
 
-# Launch the desktop GUI
-python -m src.gui.app
-
 # Custom sample rate for batch processing
 python -m src.main --sample-rate 48000
 
 # Get help
 python -m src.main --help
 ```
-
-The GUI asks for an input file or folder and one project folder. It writes
-analysis bundles to `<project>/analysis/` and rendered plots/reports to
-`<project>/rendered/`. Rendering and Markdown report generation can be toggled
-from the GUI. The GUI also exposes batch worker and octave memory controls, shows
-the raw process log, and tracks each discovered file as waiting, running,
-finished, or failed.
-
-Packaged Windows builds are created with PyInstaller. See
-[`docs/windows_gui_packaging.md`](docs/windows_gui_packaging.md) for the build
-script, runtime layout, and the `AudioAnalyserCli.exe` subprocess companion used
-by the desktop app.
 
 ### Command Line Options
 
@@ -252,8 +296,12 @@ Each channel is analyzed separately and stored under stable bundle channel IDs s
 The analyzer can extract and decode Dolby TrueHD audio from MKV video containers:
 
 **Requirements:**
-- ffmpeg must be installed and available in PATH
+- `ffmpeg.exe` and `ffprobe.exe` must be installed and available on `PATH`
 - Enable MKV support in `config.toml`: `[mkv_support] enable = true`
+
+If `ffmpeg` or `ffprobe` cannot be found, Audio Analyser stops the MKV analysis
+and reports a message explaining that ffmpeg must be installed, its `bin` folder
+must be added to `PATH`, and the app or terminal should be restarted.
 
 **Features:**
 - Automatic TrueHD stream detection

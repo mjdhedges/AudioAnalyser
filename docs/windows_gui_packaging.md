@@ -39,8 +39,16 @@ required for normal use.
 
 ## ffmpeg
 
-MKV/TrueHD processing still requires `ffmpeg` and `ffprobe`. The current package
-expects those tools to be available on `PATH`. Bundling ffmpeg can be added later
-by copying `ffmpeg.exe` and `ffprobe.exe` into a tracked `vendor/ffmpeg/` folder
-and adding them to the PyInstaller `binaries` list.
+MKV/TrueHD processing still requires the external ffmpeg tools package. The
+current packaged GUI expects both `ffmpeg.exe` and `ffprobe.exe` to be available
+on `PATH`.
+
+Install ffmpeg from [https://ffmpeg.org/download.html](https://ffmpeg.org/download.html),
+add the ffmpeg `bin` folder to `PATH`, then restart Audio Analyser. If those
+tools are missing, MKV analysis fails with a clear log message explaining that
+ffmpeg must be installed and added to `PATH`.
+
+Bundling ffmpeg can be added later by copying `ffmpeg.exe` and `ffprobe.exe`
+into a tracked `vendor/ffmpeg/` folder and adding them to the PyInstaller
+`binaries` list.
 
