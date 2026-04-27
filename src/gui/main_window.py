@@ -4,27 +4,36 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from PySide6.QtCore import QProcess, Qt
-from PySide6.QtGui import QTextCursor
+from PySide6.QtGui import QAction, QIcon, QTextCursor
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QCheckBox,
+    QDialog,
+    QDialogButtonBox,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
+    QHeaderView,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QProgressBar,
     QSpinBox,
+    QTableWidget,
+    QTableWidgetItem,
+    QTextBrowser,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
+from src.gui.about import APP_NAME, about_html
 from src.gui.commands import (
     AnalysisCommandOptions,
     RenderCommandOptions,
@@ -34,6 +43,7 @@ from src.gui.commands import (
     render_output_dir,
     resolve_render_results_path,
 )
+from src.gui.progress import FileProgress, ProgressTracker
 
 PROGRESS_PREFIX = "AA_PROGRESS "
 
@@ -41,17 +51,22 @@ PROGRESS_PREFIX = "AA_PROGRESS "
 class MainWindow(QMainWindow):
     """Small desktop wrapper around the existing analysis/render CLIs."""
 
-    def __init__(self) -> None:
+    def __init__(self, icon: Optional[QIcon] = None) -> None:
         """Initialize the GUI."""
         super().__init__()
         self.setWindowTitle("Audio Analyser")
+        if icon is not None:
+            self.setWindowIcon(icon)
         self.resize(900, 650)
+        self._build_menu()
 
         self.process: Optional[QProcess] = None
         self.current_stage = ""
         self.completed_files = 0
         self.total_files = 0
         self.process_text_buffer = ""
+        self.progress_tracker = ProgressTracker()
+        self.file_rows: Dict[str, int] = {}
 
         self.input_path = QLineEdit()
         self.project_dir = QLineEdit("AudioAnalyserProject")
@@ -59,6 +74,14 @@ class MainWindow(QMainWindow):
         self.batch_workers = QSpinBox()
         self.batch_workers.setRange(1, 64)
         self.batch_workers.setValue(2)
+        self.batch_workers.setToolTip(
+            "Number of tracks to analyze at the same time. Use 1 for safest "
+            "memory use; increase only when the machine has enough RAM."
+        )
+        self.batch_workers_help = QLabel(
+            "Concurrent tracks. 1 = safest; higher values are faster but use more RAM."
+        )
+        self.batch_workers_help.setWordWrap(True)
 
         self.max_memory_gb = QDoubleSpinBox()
         self.max_memory_gb.setRange(0.1, 1024.0)
@@ -66,6 +89,15 @@ class MainWindow(QMainWindow):
         self.max_memory_gb.setSingleStep(0.5)
         self.max_memory_gb.setValue(8.0)
         self.max_memory_gb.setSuffix(" GB")
+        self.max_memory_gb.setToolTip(
+            "Approximate RAM budget for octave-bank processing per track. "
+            "If the estimate exceeds this value, analysis switches to lower-memory "
+            "block/disk-backed processing."
+        )
+        self.max_memory_help = QLabel(
+            "Per-track octave RAM budget. Higher can be faster; lower avoids memory pressure."
+        )
+        self.max_memory_help.setWordWrap(True)
 
         self.render_after_analysis = QCheckBox("Render graphs after analysis")
         self.render_after_analysis.setChecked(True)
@@ -74,6 +106,17 @@ class MainWindow(QMainWindow):
 
         self.status_label = QLabel("Ready")
         self.status_label.setAlignment(Qt.AlignLeft)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 1)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setFormat("0/0 files")
+
+        self.files_table = QTableWidget(0, 4)
+        self.files_table.setHorizontalHeaderLabels(["#", "File", "Status", "Time"])
+        self.files_table.verticalHeader().setVisible(False)
+        self.files_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.files_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
 
         self.log_output = QTextEdit()
         self.log_output.setReadOnly(True)
@@ -86,12 +129,20 @@ class MainWindow(QMainWindow):
         self._build_layout()
         self._connect_signals()
 
+    def _build_menu(self) -> None:
+        help_menu = self.menuBar().addMenu("&Help")
+        about_action = QAction("&About Audio Analyser", self)
+        about_action.triggered.connect(self._show_about)
+        help_menu.addAction(about_action)
+
     def _build_layout(self) -> None:
         form = QFormLayout()
         form.addRow("Input", self._path_row(self.input_path, "File...", "Folder..."))
         form.addRow("Project folder", self._directory_row(self.project_dir))
         form.addRow("Batch workers", self.batch_workers)
+        form.addRow("", self.batch_workers_help)
         form.addRow("Max memory", self.max_memory_gb)
+        form.addRow("", self.max_memory_help)
         form.addRow("", self.render_after_analysis)
         form.addRow("", self.generate_report)
 
@@ -104,6 +155,8 @@ class MainWindow(QMainWindow):
         layout.addLayout(form)
         layout.addLayout(button_row)
         layout.addWidget(self.status_label)
+        layout.addWidget(self.progress_bar)
+        layout.addWidget(self.files_table, stretch=1)
         layout.addWidget(self.log_output, stretch=1)
 
         container = QWidget()
@@ -142,6 +195,23 @@ class MainWindow(QMainWindow):
         self.start_button.clicked.connect(self.start_analysis)
         self.cancel_button.clicked.connect(self.cancel_process)
         self.render_after_analysis.toggled.connect(self.generate_report.setEnabled)
+
+    def _show_about(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"About {APP_NAME}")
+        dialog.resize(520, 360)
+
+        text = QTextBrowser(dialog)
+        text.setOpenExternalLinks(True)
+        text.setHtml(about_html())
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Close, parent=dialog)
+        buttons.rejected.connect(dialog.reject)
+
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(text)
+        layout.addWidget(buttons)
+        dialog.exec()
 
     def _choose_input_file(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -206,6 +276,11 @@ class MainWindow(QMainWindow):
         self.completed_files = 0
         self.total_files = 0
         self.process_text_buffer = ""
+        if stage == "analysis":
+            self.progress_tracker.reset()
+            self.file_rows.clear()
+            self.files_table.setRowCount(0)
+            self._update_progress_bar()
         self.status_label.setText(f"Running {stage}...")
         self.start_button.setEnabled(False)
         self.cancel_button.setEnabled(True)
@@ -257,25 +332,58 @@ class MainWindow(QMainWindow):
             return
 
         event_name = event.get("event")
+        file_progress = self.progress_tracker.handle_event(event)
+        if file_progress is not None:
+            self._upsert_file_row(file_progress)
+        self._update_progress_bar()
+
         if event_name == "analysis_started":
-            self.total_files = int(event.get("total_tracks") or 0)
-            self.completed_files = 0
-            self.status_label.setText(f"Analysis started: {self.total_files} file(s)")
+            self.status_label.setText(
+                f"Analysis started: {self.progress_tracker.total_files} file(s)"
+            )
         elif event_name == "file_started":
             self.status_label.setText(
                 f"Running {event.get('index')}/{event.get('total')}: {event.get('name')}"
             )
         elif event_name == "file_finished":
-            self.completed_files += 1
             status = "finished" if event.get("success") else "failed"
             self.status_label.setText(
-                f"{self.completed_files}/{self.total_files} {status}: {event.get('name')}"
+                f"{self.progress_tracker.completed_files}/"
+                f"{self.progress_tracker.total_files} {status}: {event.get('name')}"
             )
         elif event_name == "analysis_finished":
             self.status_label.setText(
                 "Analysis complete: "
                 f"{event.get('successful', 0)} OK, {event.get('failed', 0)} failed"
             )
+
+    def _upsert_file_row(self, file_progress: FileProgress) -> None:
+        row = self.file_rows.get(file_progress.path)
+        if row is None:
+            row = self.files_table.rowCount()
+            self.files_table.insertRow(row)
+            self.file_rows[file_progress.path] = row
+
+        elapsed = (
+            f"{file_progress.elapsed_seconds:.2f}s"
+            if file_progress.elapsed_seconds is not None
+            else ""
+        )
+        values = [
+            str(file_progress.index),
+            file_progress.name,
+            file_progress.status,
+            elapsed,
+        ]
+        for column, value in enumerate(values):
+            self.files_table.setItem(row, column, QTableWidgetItem(value))
+
+    def _update_progress_bar(self) -> None:
+        total = max(self.progress_tracker.total_files, 0)
+        completed = max(self.progress_tracker.completed_files, 0)
+        self.progress_bar.setRange(0, max(total, 1))
+        self.progress_bar.setValue(min(completed, total))
+        self.progress_bar.setFormat(f"{completed}/{total} files")
 
     def _process_finished(
         self,

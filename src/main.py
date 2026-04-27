@@ -1082,10 +1082,14 @@ def main(
                         ): (idx, track_path, total_tracks)
                         for idx, track_path in enumerate(sorted_audio_files, 1)
                     }
-                    for idx, track_path in enumerate(sorted_audio_files, 1):
+                    active_worker_slots = min(int(max_workers), total_tracks)
+                    next_running_idx = active_worker_slots + 1
+                    for idx, track_path in enumerate(
+                        sorted_audio_files[:active_worker_slots], 1
+                    ):
                         _emit_progress(
                             progress_json,
-                            "file_submitted",
+                            "file_started",
                             index=idx,
                             total=total_tracks,
                             path=str(track_path),
@@ -1146,6 +1150,17 @@ def main(
                                 f"[{idx}/{total_tracks}] ✗ {track_path.name}: {e}"
                             )
                             per_track_timings.append((track_path, float("nan"), False))
+                        if next_running_idx <= total_tracks:
+                            next_track_path = sorted_audio_files[next_running_idx - 1]
+                            _emit_progress(
+                                progress_json,
+                                "file_started",
+                                index=next_running_idx,
+                                total=total_tracks,
+                                path=str(next_track_path),
+                                name=next_track_path.name,
+                            )
+                            next_running_idx += 1
             else:
                 # SEQUENTIAL PROCESSING: Process tracks one at a time
                 for idx, track_path in enumerate(sorted(audio_files), 1):

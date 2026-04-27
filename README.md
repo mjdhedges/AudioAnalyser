@@ -518,4 +518,11 @@ This Python implementation replicates the functionality of the original MATLAB `
 
 ## License
 
-MIT License - see LICENSE file for details.
+GPL-3.0 license.
+
+## Citation
+
+If you use Audio Analyser in published or shared work, cite:
+
+Michael Hedges, Audio Analyser, GitHub repository,
+https://github.com/mjdhedges/AudioAnalyser
