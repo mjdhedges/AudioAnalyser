@@ -36,6 +36,7 @@ the engineering in plain language while staying technically accurate.
 - `src/results/bundle.py` and `src/results/reader.py`: `.aaresults` writer and reader.
 - `src/results/render.py` and `src/render.py`: bundle graph rendering, group outputs, and render CLI.
 - `src/report_generator.py`: bundle-native Markdown report generation and local image asset handling.
+- `src/gui/main_window.py`, `src/gui/commands.py`, and `src/gui/progress.py`: desktop GUI orchestration, project-folder layout, subprocess commands, and structured progress handling.
 - `config.toml`: current default analysis, filtering, envelope, plotting, export, and
   performance settings.
 
@@ -44,18 +45,21 @@ the engineering in plain language while staying technically accurate.
 1. Title and short purpose statement.
 2. Executive summary of what the pipeline measures.
 3. End-to-end processing flow from input file to `.aaresults` bundle to rendered reports.
-4. Input handling and channel mapping.
-5. Normalization and dBFS reference explanation.
-6. Octave-band filtering approach.
-7. Time-domain crest factor approach, including slow vs fixed-window behavior.
-8. Envelope, peak, and recovery analysis.
-9. Bundle export and report generation.
-10. Interpretation guidance and limitations.
-11. Reproducibility notes.
+4. Desktop GUI workflow as an orchestration layer over the same analysis/render CLIs.
+5. Input handling and channel mapping.
+6. Normalization and dBFS reference explanation.
+7. Octave-band filtering approach.
+8. Time-domain crest factor approach, including slow vs fixed-window behavior.
+9. Envelope, peak, and recovery analysis.
+10. Bundle export and report generation.
+11. Interpretation guidance and limitations.
+12. Reproducibility notes.
 
 ## Accuracy Rules
 
 - Describe multi-channel processing as per-channel analysis with group-level summaries.
+- Describe the GUI as a wrapper around the CLI workflow, not as a separate analysis engine.
+- State that the GUI writes to a project folder containing `analysis/` and `rendered/`.
 - State that rendered report image assets are referenced from the render output folder.
 - Explain that generated report prose should read run metadata and tables from `.aaresults` bundle artifacts.
 - Distinguish whole-track octave statistics from time-domain sampled statistics.

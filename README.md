@@ -1,3 +1,5 @@
+![Audio Analyser banner](audioanalyser_banner.png)
+
 # Audio Analyser
 
 Audio Analyser is an offline analysis tool for music, film, and test-signal audio. It measures octave-band level, crest factor, time-domain dynamics, envelope behaviour, sustained peaks, and channel/group behaviour across mono, stereo, and surround material. Analysis results are stored as portable per-track `.aaresults` bundles, which can then be rendered into plots, manifests, and Markdown reports without reprocessing the source audio.
@@ -12,6 +14,7 @@ Audio Analyser is an offline analysis tool for music, film, and test-signal audi
 - **Advanced Statistics**: Comprehensive analysis including clipping detection, dynamic range, spectral characteristics
 - **Bundle-First Output**: Store derived per-track analysis data in portable `.aaresults` bundles
 - **Separate Rendering**: Generate graphs and Markdown reports from bundles without reloading source audio
+- **Desktop GUI**: Select files/folders, choose a project folder, configure workers/memory, and monitor per-file progress
 - **Legacy CSV Export**: Optional compatibility export for the old `analysis_results.csv` workflow
 - **Configuration System**: TOML-based configuration with command-line overrides
 - **Content Classification**: Automatic tagging of Music/Film/Test Signal content based on folder structure
@@ -68,7 +71,12 @@ tracks_dir = "Tracks"               # Default tracks directory
 output_dir = "analysis"             # Default output directory
 peak_hold_tau_seconds = 0.8         # Crest-factor peak-hold release time
 time_domain_slow_rms_tau_seconds = 1.0  # IEC Slow RMS time constant
+octave_max_memory_gb = 8.0          # Octave processing RAM budget
 octave_center_frequencies = [8.0, 16.0, 31.25, 62.5, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0]
+
+[performance]
+enable_parallel_batch = true        # Analyze multiple tracks at once in batch mode
+max_batch_workers = 8               # Maximum concurrent track analyses
 
 [plotting]
 octave_spectrum_figsize = [12, 8]   # Figure dimensions
@@ -95,6 +103,9 @@ You can override any configuration parameter via command-line arguments:
 ```bash
 # Override chunk duration for finer time resolution
 python -m src.main --input "track.wav" --chunk-duration 1.0
+
+# Override GUI-facing performance controls
+python -m src.main --input "Tracks" --output-dir "analysis" --batch-workers 2 --max-memory-gb 6
 
 # Override render DPI for high-resolution graph/report output
 python -m src.render --results "analysis/track.aaresults" --output-dir "rendered" --dpi 600
@@ -132,12 +143,27 @@ python -m src.render --results "analysis_output/Music/song.aaresults" --output-d
 # Render graphs and reports from all bundles under a directory
 python -m src.render --results "analysis_output" --output-dir "rendered" --reports
 
+# Launch the desktop GUI
+python -m src.gui.app
+
 # Custom sample rate for batch processing
 python -m src.main --sample-rate 48000
 
 # Get help
 python -m src.main --help
 ```
+
+The GUI asks for an input file or folder and one project folder. It writes
+analysis bundles to `<project>/analysis/` and rendered plots/reports to
+`<project>/rendered/`. Rendering and Markdown report generation can be toggled
+from the GUI. The GUI also exposes batch worker and octave memory controls, shows
+the raw process log, and tracks each discovered file as waiting, running,
+finished, or failed.
+
+Packaged Windows builds are created with PyInstaller. See
+[`docs/windows_gui_packaging.md`](docs/windows_gui_packaging.md) for the build
+script, runtime layout, and the `AudioAnalyserCli.exe` subprocess companion used
+by the desktop app.
 
 ### Command Line Options
 
@@ -147,6 +173,9 @@ python -m src.main --help
 - `--output-dir, -o`: Output directory for analysis bundles (default: from config). In bundle-only batch mode, subfolders under the input folder are recreated and each track bundle is written directly into its mirrored parent folder, e.g. `Tracks/Film/a.wav` -> `analysis/Film/a.aaresults`.
 - `--batch/--single`: Deprecated. Mode is inferred from `--input` (file=single, dir=batch).
 - `--export-csv/--no-export-csv`: Legacy CSV compatibility option. Bundle output is controlled by `export.generate_analysis_bundle`.
+- `--batch-workers`: Maximum concurrent track analyses in batch mode. Use `1` for sequential processing.
+- `--max-memory-gb`: Octave processing RAM budget in GB.
+- `--progress-json`: Emit machine-readable progress events for GUI/status consumers.
 - `--skip-post`: Legacy option retained for compatibility. Graph/report generation is now handled by `python -m src.render`.
 - `--post-only`, `--run-post`: Legacy post-processing paths for old CSV output. Bundle-only workflows should use `python -m src.render`.
 
@@ -425,6 +454,7 @@ The tool analyzes audio using 1/1-octave band centers (IEC 16 Hz-16 kHz) plus **
 - **[ARCHITECTURE.md](ARCHITECTURE.md)**: Comprehensive system architecture and design details
 - **[docs/analysis_result_bundle.md](docs/analysis_result_bundle.md)**: `.aaresults` bundle layout and render workflow
 - **[docs/performance_notes.md](docs/performance_notes.md)**: Performance optimization notes and caveats
+- **[docs/windows_gui_packaging.md](docs/windows_gui_packaging.md)**: Windows GUI executable build notes
 
 ## Development Commands
 
@@ -438,23 +468,28 @@ The tool analyzes audio using 1/1-octave band centers (IEC 16 Hz-16 kHz) plus **
 
 ```
 audio-analyser/
+├── audioanalyser_banner.png  # README banner image
+├── audioanalyser_icon.jpeg   # GUI/window icon
 ├── src/                    # Source code
 │   ├── __init__.py
-│   ├── main.py             # CLI entry point
+│   ├── main.py             # Analysis CLI entry point
+│   ├── render.py           # Bundle rendering CLI
 │   ├── config.py           # Configuration management
 │   ├── audio_processor.py  # Audio loading and preprocessing
 │   ├── octave_filter.py    # Octave band filtering
 │   ├── music_analyzer.py   # Analysis metrics
-│   ├── render.py           # Bundle rendering CLI
+│   ├── gui/                # PySide6 desktop GUI
 │   └── results/            # Bundle reader/writer/render helpers
+├── packaging/              # PyInstaller spec and Windows build script
 ├── tests/                  # Test files
-│   ├── __init__.py
 │   ├── test_main.py
-│   ├── test_audio_processor.py
-│   ├── test_octave_filter.py
-│   └── test_music_analyzer.py
+│   ├── test_results_render.py
+│   └── test_gui_*.py
 ├── docs/                   # Documentation
-│   └── musicanalyser.m     # Original MATLAB script
+│   ├── analysis_result_bundle.md
+│   ├── performance_notes.md
+│   └── windows_gui_packaging.md
+├── proofs/                 # Analysis proof work and validation notes
 ├── .cursor/                # Cursor IDE rules
 │   └── rules/
 ├── venv/                   # Virtual environment (not in git)
@@ -467,18 +502,6 @@ audio-analyser/
 └── README.md              # This file
 ```
 
-## Comparison with MATLAB Version
-
-This Python implementation replicates the functionality of the original MATLAB `musicanalyser.m` script:
-
-| MATLAB Function | Python Equivalent |
-|----------------|-------------------|
-| `audioread()` | `librosa.load()` |
-| `octdsgn()` / `poctave()` | `OctaveBandFilter.create_octave_bank()` |
-| `filter()` | FFT weighting plus inverse FFT per band |
-| `semilogx()` | `matplotlib.pyplot.semilogx()` |
-| `histogram()` | `matplotlib.pyplot.hist()` |
-
 ## Dependencies
 
 ### Core Libraries
@@ -489,6 +512,7 @@ This Python implementation replicates the functionality of the original MATLAB `
 - **pandas**: Data manipulation, bundle tables, and optional legacy CSV export
 - **soundfile**: Audio file I/O
 - **click**: Command-line interface
+- **PySide6**: Desktop GUI
 
 ### Development Tools
 - **pytest**: Testing framework
@@ -496,7 +520,15 @@ This Python implementation replicates the functionality of the original MATLAB `
 - **flake8**: Linting
 - **mypy**: Type checking
 - **isort**: Import sorting
+- **PyInstaller**: Windows GUI executable packaging
 
 ## License
 
-MIT License - see LICENSE file for details.
+GPL-3.0 license.
+
+## Citation
+
+If you use Audio Analyser in published or shared work, cite:
+
+Michael Hedges, Audio Analyser, GitHub repository,
+https://github.com/mjdhedges/AudioAnalyser

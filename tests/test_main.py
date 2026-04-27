@@ -19,6 +19,9 @@ def test_main_help():
     assert result.exit_code == 0
     assert "Audio Analyser" in result.output
     assert "--tracks-dir" in result.output
+    assert "--max-memory-gb" in result.output
+    assert "--batch-workers" in result.output
+    assert "--progress-json" in result.output
 
 
 def test_main_with_nonexistent_file():

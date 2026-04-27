@@ -233,6 +233,7 @@ def test_generate_bundle_report_writes_markdown(tmp_path):
     assert "Source bundle: `render_test.aaresults`" in report_text
     assert "Crest Factor Analysis" in report_text
     assert "Group Plots" in report_text
+    assert "T3, T6, T9, and T12 are recovery-time measurements" in report_text
 
 
 def test_render_dpi_uses_override_then_config():

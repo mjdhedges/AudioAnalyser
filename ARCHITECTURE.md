@@ -8,34 +8,26 @@ The Audio Analyser is a Python application that performs comprehensive octave ba
 
 ### High-Level Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
-│                        CLI Entry Point                          │
-│                         (src/main.py)                           │
-│                                                                 │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │                     Batch Processing                      │  │
-│  │   ┌───────────┐  ┌───────────┐  ┌───────────┐           │  │
-│  │   │ Worker 1  │  │ Worker 2  │  │ Worker 3  │  ...      │  │
-│  │   └───────────┘  └───────────┘  └───────────┘           │  │
-│  └──────────────────────────────────────────────────────────┘  │
-└────────────────────┬────────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    Core Processing Pipeline                      │
-│                   (analyze_single_track)                         │
-│                                                                 │
-│  ┌─────────────┐   ┌─────────────┐   ┌──────────────┐         │
-│  │   Audio     │──▶│   Octave    │──▶│  Analysis &  │         │
-│  │  Processor  │   │   Filter    │   │ Visualization│         │
-│  └─────────────┘   └─────────────┘   └──────────────┘         │
-│         │                  │                    │               │
-│         ▼                  ▼                    ▼               │
-│     ┌──────┐         ┌────────┐           ┌────────┐          │
-│     │ Mono │         │ Cached │           │  CSV   │          │
-│     │Conv. │         │ Filters│           │ Export │          │
-│     └──────┘         └────────┘           └────────┘          │
+│                         User Entry Points                       │
+│        src/main.py | src/render.py | src/gui/app.py             │
+└───────────────┬───────────────────────────────┬─────────────────┘
+                │                               │
+                ▼                               ▼
+┌─────────────────────────────────┐   ┌───────────────────────────┐
+│        Analysis Pipeline         │   │       Render Pipeline      │
+│       analyze_single_track       │   │       src/results/render   │
+│                                 │   │                           │
+│ Audio → Octave Bank → Metrics   │   │ .aaresults → plots/report │
+│                  ↓              │   │                           │
+│          .aaresults bundle      │   │ rendered/ output folder   │
+└─────────────────────────────────┘   └───────────────────────────┘
+                ▲                               ▲
+                │                               │
+┌───────────────┴───────────────────────────────┴─────────────────┐
+│                  Desktop GUI Control Layer                       │
+│   PySide6 UI + QProcess + structured progress events             │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -74,14 +66,14 @@ The Audio Analyser is a Python application that performs comprehensive octave ba
                               │
                               ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│                    Analysis & Visualization                       │
+│                    Analysis & Bundle Export                       │
 │                  (src/music_analyzer.py)                          │
 │  • Octave band statistical analysis                               │
 │  • Time-domain chunk analysis                                     │
 │  • Extreme chunk identification                                   │
 │  • Advanced statistics (clipping, dynamics, etc.)                │
-│  • Plot generation (Matplotlib with Agg backend)                  │
-│  • CSV data export                                                │
+│  • Per-channel metrics and metadata                               │
+│  • .aaresults bundle export                                       │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -258,6 +250,29 @@ The Audio Analyser is a Python application that performs comprehensive octave ba
 8. Independent envelope plots
 9. Group crest-factor, octave-spectrum, peak-decay, and worst-channel outputs
 
+### 9. Desktop GUI (`src/gui`)
+
+**Responsibilities:**
+- Provide a small PySide6 desktop front end for the existing analysis and render CLIs
+- Let users choose an input file/folder and one project folder
+- Write analysis bundles to `<project>/analysis/` and rendered output to `<project>/rendered/`
+- Expose batch worker and octave memory controls without editing `config.toml`
+- Show raw process output plus per-file progress states
+
+**Key Components:**
+- `src/gui/app.py`: GUI entry point
+- `src/gui/main_window.py`: Main window, options, process orchestration, log panel, and progress table
+- `src/gui/commands.py`: Builds development and frozen subprocess commands
+- `src/gui/progress.py`: Tracks `Waiting`, `Running`, `Finished`, and `Failed` file states
+- `src/gui/assets.py`: Resolves icon assets in development and packaged builds
+- `src/gui/about.py`: About dialog content and project metadata
+
+**Packaged Runtime:**
+- `AudioAnalyser.exe`: Windowed desktop GUI
+- `AudioAnalyserCli.exe`: Console companion used internally by the GUI for analysis/render subprocesses
+- `packaging/audio-analyser-gui.spec`: PyInstaller build definition
+- `packaging/build_windows_gui.ps1`: Windows build helper
+
 ## Data Flow
 
 ### Analysis Pipeline
@@ -292,11 +307,17 @@ The Audio Analyser is a Python application that performs comprehensive octave ba
    ↓
 6. Save Cache Metadata in manifest.json
    ↓
-7. Render Pass:
+7. Optional structured progress events for GUI/status consumers
+   ↓
+8. Render Pass:
    ├─► Read .aaresults bundle
    ├─► Generate graphs and group outputs
    └─► Generate analysis.md report
 ```
+
+The desktop GUI does not duplicate analysis or rendering logic. It launches the
+same CLI paths with `QProcess`, parses `AA_PROGRESS` JSON events from
+`src.main --progress-json`, and updates the file table and progress bar.
 
 ### Caching Strategy
 
@@ -353,7 +374,6 @@ use_float32 = true                  # Memory optimization
 
 [plotting]
 dpi = 300                           # High quality plots
-batch_dpi = 150                     # Faster batch plots
 render_dpi = 150                    # Bundle render pass DPI
 
 [export]
@@ -436,21 +456,22 @@ pytest tests/ --cov       # Coverage report
 ## Future Enhancements
 
 ### Planned
+- GUI packaging smoke test on a clean Windows machine
+- Optional bundled ffmpeg/ffprobe for MKV/TrueHD workflows
 - Incremental result updates
 - Cache size management
-- Distributed processing
 
 ### Potential
 - Real-time analysis
-- Web interface
+- Web or TUI interface
 - Database storage
 - Machine learning analysis
 
 ## References
 
 - **README.md**: User guide and quick start
-- **FINAL_PERFORMANCE_SUMMARY.md**: Performance optimization details
-- **PHASE3_OPTIMIZATION_SUMMARY.md**: Latest optimization batch
+- **docs/analysis_result_bundle.md**: Bundle layout and render hand-off
+- **docs/performance_notes.md**: Performance optimization notes
+- **docs/windows_gui_packaging.md**: PyInstaller GUI packaging notes
 - **config.toml**: Default configuration values
-- **docs/musicanalyser.m**: Original MATLAB implementation
 
