@@ -140,12 +140,19 @@ python -m src.render --results "analysis_output/Music/song.aaresults" --output-d
 # Render graphs and reports from all bundles under a directory
 python -m src.render --results "analysis_output" --output-dir "rendered" --reports
 
+# Launch the desktop GUI
+python -m src.gui.app
+
 # Custom sample rate for batch processing
 python -m src.main --sample-rate 48000
 
 # Get help
 python -m src.main --help
 ```
+
+The GUI asks for an input file or folder and one project folder. It writes
+analysis bundles to `<project>/analysis/` and rendered plots/reports to
+`<project>/rendered/`.
 
 ### Command Line Options
 
