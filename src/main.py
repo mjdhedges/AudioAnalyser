@@ -64,6 +64,15 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+PROGRESS_PREFIX = "AA_PROGRESS "
+
+
+def _emit_progress(enabled: bool, event: str, **payload: object) -> None:
+    """Emit a machine-readable progress event for GUI consumers."""
+    if not enabled:
+        return
+    message = {"event": event, **payload}
+    click.echo(f"{PROGRESS_PREFIX}{json.dumps(message, default=str)}")
 
 
 def get_cache_path(track_path: Path, cache_dir: Path) -> Path:
@@ -674,6 +683,11 @@ def analyze_single_track(
     type=click.IntRange(min=1),
     help="Maximum concurrent track analyses in batch mode; 1 runs sequentially.",
 )
+@click.option(
+    "--progress-json/--no-progress-json",
+    default=False,
+    help="Emit machine-readable progress events for GUI consumers.",
+)
 def main(
     input: Optional[Path],
     tracks_dir: Optional[Path],
@@ -701,6 +715,7 @@ def main(
     peak_hold_tau: Optional[float],
     max_memory_gb: Optional[float],
     batch_workers: Optional[int],
+    progress_json: bool,
 ) -> None:
     """Audio Analyser - Analyze audio files using octave band filtering.
 
@@ -1007,6 +1022,23 @@ def main(
                 sys.exit(1)
 
             logger.info(f"Found {len(audio_files)} audio files to analyze")
+            _emit_progress(
+                progress_json,
+                "analysis_started",
+                mode="batch",
+                input=str(tracks_dir),
+                output_dir=str(output_dir),
+                total_tracks=len(audio_files),
+            )
+            for idx, track_path in enumerate(sorted(audio_files), 1):
+                _emit_progress(
+                    progress_json,
+                    "file_queued",
+                    index=idx,
+                    total=len(audio_files),
+                    path=str(track_path),
+                    name=track_path.name,
+                )
 
             # Process tracks (parallel or sequential based on config)
             successful_analyses = 0
@@ -1035,6 +1067,7 @@ def main(
 
                 with ProcessPoolExecutor(max_workers=max_workers) as executor:
                     # Submit all tasks
+                    sorted_audio_files = sorted(audio_files)
                     future_to_track = {
                         executor.submit(
                             analyze_single_track,
@@ -1047,8 +1080,17 @@ def main(
                             skip_octave_crest_factor_time=skip_octave_cf_time,
                             export_octave_crest_factor_time_data=export_octave_cf_time_data,
                         ): (idx, track_path, total_tracks)
-                        for idx, track_path in enumerate(sorted(audio_files), 1)
+                        for idx, track_path in enumerate(sorted_audio_files, 1)
                     }
+                    for idx, track_path in enumerate(sorted_audio_files, 1):
+                        _emit_progress(
+                            progress_json,
+                            "file_submitted",
+                            index=idx,
+                            total=total_tracks,
+                            path=str(track_path),
+                            name=track_path.name,
+                        )
 
                     # Collect results as they complete
                     for future in as_completed(future_to_track):
@@ -1060,16 +1102,46 @@ def main(
                             per_track_timings.append((track_path, elapsed_s, success))
                             if success:
                                 successful_analyses += 1
+                                _emit_progress(
+                                    progress_json,
+                                    "file_finished",
+                                    index=idx,
+                                    total=total_tracks,
+                                    path=str(track_path),
+                                    name=track_path.name,
+                                    success=True,
+                                    elapsed_seconds=elapsed_s,
+                                )
                                 logger.info(
                                     f"[{idx}/{total_tracks}] ✓ {track_path.name}"
                                 )
                             else:
                                 failed_analyses += 1
+                                _emit_progress(
+                                    progress_json,
+                                    "file_finished",
+                                    index=idx,
+                                    total=total_tracks,
+                                    path=str(track_path),
+                                    name=track_path.name,
+                                    success=False,
+                                    elapsed_seconds=elapsed_s,
+                                )
                                 logger.error(
                                     f"[{idx}/{total_tracks}] ✗ {track_path.name}"
                                 )
                         except Exception as e:
                             failed_analyses += 1
+                            _emit_progress(
+                                progress_json,
+                                "file_finished",
+                                index=idx,
+                                total=total_tracks,
+                                path=str(track_path),
+                                name=track_path.name,
+                                success=False,
+                                error=str(e),
+                            )
                             logger.error(
                                 f"[{idx}/{total_tracks}] ✗ {track_path.name}: {e}"
                             )
@@ -1080,6 +1152,14 @@ def main(
                     logger.info(f"\n{'='*60}")
                     logger.info(
                         f"Processing track {idx}/{total_tracks} ({100*idx/total_tracks:.1f}%) - {track_path.name}"
+                    )
+                    _emit_progress(
+                        progress_json,
+                        "file_started",
+                        index=idx,
+                        total=total_tracks,
+                        path=str(track_path),
+                        name=track_path.name,
                     )
 
                     success, elapsed_s = analyze_single_track(
@@ -1097,6 +1177,16 @@ def main(
                         successful_analyses += 1
                     else:
                         failed_analyses += 1
+                    _emit_progress(
+                        progress_json,
+                        "file_finished",
+                        index=idx,
+                        total=total_tracks,
+                        path=str(track_path),
+                        name=track_path.name,
+                        success=success,
+                        elapsed_seconds=elapsed_s,
+                    )
 
             # Summary
             logger.info(f"\n{'='*60}")
@@ -1106,6 +1196,14 @@ def main(
             logger.info(f"Results saved to: {output_dir}")
             batch_elapsed_s = time.perf_counter() - batch_started
             logger.info(f"Total batch wall time: {batch_elapsed_s:.2f}s")
+            _emit_progress(
+                progress_json,
+                "analysis_finished",
+                mode="batch",
+                successful=successful_analyses,
+                failed=failed_analyses,
+                elapsed_seconds=batch_elapsed_s,
+            )
             if per_track_timings:
                 # Slowest-first; NaNs go last.
                 per_track_timings_sorted = sorted(
@@ -1158,6 +1256,22 @@ def main(
                 sys.exit(1)
 
             logger.info(f"Single file analysis: {input}")
+            _emit_progress(
+                progress_json,
+                "analysis_started",
+                mode="single",
+                input=str(input),
+                output_dir=str(output_dir),
+                total_tracks=1,
+            )
+            _emit_progress(
+                progress_json,
+                "file_started",
+                index=1,
+                total=1,
+                path=str(input),
+                name=input.name,
+            )
 
             success, elapsed_s = analyze_single_track(
                 input,
@@ -1170,9 +1284,27 @@ def main(
                 export_octave_crest_factor_time_data=export_octave_cf_time_data,
             )
             if success:
+                _emit_progress(
+                    progress_json,
+                    "file_finished",
+                    index=1,
+                    total=1,
+                    path=str(input),
+                    name=input.name,
+                    success=True,
+                    elapsed_seconds=elapsed_s,
+                )
                 logger.info("Analysis complete!")
                 logger.info(f"Track wall time: {elapsed_s:.2f}s")
                 logger.info(f"Results saved to: {output_dir}")
+                _emit_progress(
+                    progress_json,
+                    "analysis_finished",
+                    mode="single",
+                    successful=1,
+                    failed=0,
+                    elapsed_seconds=elapsed_s,
+                )
                 # Post-process this track folder (if enabled)
                 if not skip_post:
                     if not config.get("export.generate_legacy_csv", False):
@@ -1213,6 +1345,24 @@ def main(
                 elif skip_post:
                     logger.info("Skipping post-processing (--skip-post).")
             else:
+                _emit_progress(
+                    progress_json,
+                    "file_finished",
+                    index=1,
+                    total=1,
+                    path=str(input),
+                    name=input.name,
+                    success=False,
+                    elapsed_seconds=elapsed_s,
+                )
+                _emit_progress(
+                    progress_json,
+                    "analysis_finished",
+                    mode="single",
+                    successful=0,
+                    failed=1,
+                    elapsed_seconds=elapsed_s,
+                )
                 logger.error("Analysis failed!")
                 logger.info(f"Track wall time: {elapsed_s:.2f}s")
                 sys.exit(1)

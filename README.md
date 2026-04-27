@@ -165,6 +165,7 @@ from the GUI.
 - `--export-csv/--no-export-csv`: Legacy CSV compatibility option. Bundle output is controlled by `export.generate_analysis_bundle`.
 - `--batch-workers`: Maximum concurrent track analyses in batch mode. Use `1` for sequential processing.
 - `--max-memory-gb`: Octave processing RAM budget in GB.
+- `--progress-json`: Emit machine-readable progress events for GUI/status consumers.
 - `--skip-post`: Legacy option retained for compatibility. Graph/report generation is now handled by `python -m src.render`.
 - `--post-only`, `--run-post`: Legacy post-processing paths for old CSV output. Bundle-only workflows should use `python -m src.render`.
 

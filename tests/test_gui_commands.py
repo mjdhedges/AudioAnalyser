@@ -39,6 +39,7 @@ def test_build_analysis_command_includes_gui_options() -> None:
         "3",
         "--max-memory-gb",
         "6.5",
+        "--progress-json",
     ]
 
 

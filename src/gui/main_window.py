@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import List, Optional
 
@@ -34,6 +35,8 @@ from src.gui.commands import (
     resolve_render_results_path,
 )
 
+PROGRESS_PREFIX = "AA_PROGRESS "
+
 
 class MainWindow(QMainWindow):
     """Small desktop wrapper around the existing analysis/render CLIs."""
@@ -46,6 +49,9 @@ class MainWindow(QMainWindow):
 
         self.process: Optional[QProcess] = None
         self.current_stage = ""
+        self.completed_files = 0
+        self.total_files = 0
+        self.process_text_buffer = ""
 
         self.input_path = QLineEdit()
         self.project_dir = QLineEdit("AudioAnalyserProject")
@@ -167,6 +173,7 @@ class MainWindow(QMainWindow):
             project_dir=Path(self.project_dir.text()),
             batch_workers=int(self.batch_workers.value()),
             max_memory_gb=float(self.max_memory_gb.value()),
+            progress_json=True,
         )
         self._start_command(build_analysis_command(options), "analysis")
 
@@ -196,6 +203,9 @@ class MainWindow(QMainWindow):
 
     def _start_command(self, command: List[str], stage: str) -> None:
         self.current_stage = stage
+        self.completed_files = 0
+        self.total_files = 0
+        self.process_text_buffer = ""
         self.status_label.setText(f"Running {stage}...")
         self.start_button.setEnabled(False)
         self.cancel_button.setEnabled(True)
@@ -222,7 +232,50 @@ class MainWindow(QMainWindow):
         if self.process is None:
             return
         data = bytes(self.process.readAllStandardOutput())
-        self._append_log(data.decode(errors="replace").rstrip())
+        self._handle_process_text(data.decode(errors="replace"))
+
+    def _handle_process_text(self, text: str) -> None:
+        self.process_text_buffer += text
+        lines = self.process_text_buffer.splitlines(keepends=True)
+        if lines and not lines[-1].endswith(("\n", "\r")):
+            self.process_text_buffer = lines.pop()
+        else:
+            self.process_text_buffer = ""
+
+        for raw_line in lines:
+            line = raw_line.rstrip("\r\n")
+            if line.startswith(PROGRESS_PREFIX):
+                self._handle_progress_event(line[len(PROGRESS_PREFIX) :])
+            else:
+                self._append_log(line)
+
+    def _handle_progress_event(self, payload: str) -> None:
+        try:
+            event = json.loads(payload)
+        except json.JSONDecodeError:
+            self._append_log(f"Invalid progress event: {payload}")
+            return
+
+        event_name = event.get("event")
+        if event_name == "analysis_started":
+            self.total_files = int(event.get("total_tracks") or 0)
+            self.completed_files = 0
+            self.status_label.setText(f"Analysis started: {self.total_files} file(s)")
+        elif event_name == "file_started":
+            self.status_label.setText(
+                f"Running {event.get('index')}/{event.get('total')}: {event.get('name')}"
+            )
+        elif event_name == "file_finished":
+            self.completed_files += 1
+            status = "finished" if event.get("success") else "failed"
+            self.status_label.setText(
+                f"{self.completed_files}/{self.total_files} {status}: {event.get('name')}"
+            )
+        elif event_name == "analysis_finished":
+            self.status_label.setText(
+                "Analysis complete: "
+                f"{event.get('successful', 0)} OK, {event.get('failed', 0)} failed"
+            )
 
     def _process_finished(
         self,
@@ -231,6 +284,8 @@ class MainWindow(QMainWindow):
     ) -> None:
         stage = self.current_stage
         success = exit_code == 0 and exit_status == QProcess.NormalExit
+        if self.process_text_buffer:
+            self._handle_process_text("\n")
         self._append_log(f"{stage.capitalize()} finished with exit code {exit_code}.")
 
         if success and stage == "analysis" and self.render_after_analysis.isChecked():

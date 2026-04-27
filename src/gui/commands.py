@@ -16,6 +16,7 @@ class AnalysisCommandOptions:
     project_dir: Path
     batch_workers: int
     max_memory_gb: float
+    progress_json: bool = True
 
 
 @dataclass(frozen=True)
@@ -61,7 +62,7 @@ def build_analysis_command(
         raise ValueError("max_memory_gb must be > 0")
 
     executable = python_executable or sys.executable
-    return [
+    command = [
         executable,
         "-m",
         "src.main",
@@ -74,6 +75,9 @@ def build_analysis_command(
         "--max-memory-gb",
         f"{options.max_memory_gb:g}",
     ]
+    if options.progress_json:
+        command.append("--progress-json")
+    return command
 
 
 def build_render_command(
