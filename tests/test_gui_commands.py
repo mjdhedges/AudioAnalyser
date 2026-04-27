@@ -6,6 +6,7 @@ import pytest
 
 from src.gui.commands import (
     AnalysisCommandOptions,
+    FROZEN_CLI_EXE,
     RenderCommandOptions,
     analysis_output_dir,
     build_analysis_command,
@@ -13,6 +14,7 @@ from src.gui.commands import (
     render_output_dir,
     resolve_render_results_path,
 )
+from src.gui.cli import ANALYSIS_CLI_ARG, RENDER_CLI_ARG
 
 
 def test_build_analysis_command_includes_gui_options() -> None:
@@ -66,6 +68,46 @@ def test_build_analysis_command_rejects_invalid_options() -> None:
         )
 
 
+def test_build_analysis_command_uses_internal_cli_when_frozen(monkeypatch) -> None:
+    """Packaged GUI should launch analysis through the same executable."""
+    monkeypatch.setattr("sys.frozen", True, raising=False)
+
+    command = build_analysis_command(
+        AnalysisCommandOptions(
+            input_path=Path("track.wav"),
+            project_dir=Path("Project"),
+            batch_workers=1,
+            max_memory_gb=4.0,
+        ),
+        python_executable="AudioAnalyser.exe",
+    )
+
+    assert command[:2] == ["AudioAnalyser.exe", ANALYSIS_CLI_ARG]
+
+
+def test_build_analysis_command_uses_cli_companion_when_available(
+    monkeypatch, tmp_path
+) -> None:
+    """Frozen GUI should prefer the console companion executable."""
+    monkeypatch.setattr("sys.frozen", True, raising=False)
+    gui_executable = tmp_path / "AudioAnalyser.exe"
+    cli_executable = tmp_path / FROZEN_CLI_EXE
+    gui_executable.touch()
+    cli_executable.touch()
+
+    command = build_analysis_command(
+        AnalysisCommandOptions(
+            input_path=Path("track.wav"),
+            project_dir=Path("Project"),
+            batch_workers=1,
+            max_memory_gb=4.0,
+        ),
+        python_executable=str(gui_executable),
+    )
+
+    assert command[:2] == [str(cli_executable), ANALYSIS_CLI_ARG]
+
+
 def test_build_render_command_adds_reports_flag() -> None:
     """Render command should optionally request Markdown reports."""
     command = build_render_command(
@@ -101,6 +143,21 @@ def test_build_render_command_can_skip_reports() -> None:
     )
 
     assert "--reports" not in command
+
+
+def test_build_render_command_uses_internal_cli_when_frozen(monkeypatch) -> None:
+    """Packaged GUI should launch rendering through the same executable."""
+    monkeypatch.setattr("sys.frozen", True, raising=False)
+
+    command = build_render_command(
+        RenderCommandOptions(
+            results_dir=Path("analysis"),
+            output_dir=Path("rendered"),
+        ),
+        python_executable="AudioAnalyser.exe",
+    )
+
+    assert command[:2] == ["AudioAnalyser.exe", RENDER_CLI_ARG]
 
 
 def test_resolve_render_results_path_uses_single_file_bundle(tmp_path) -> None:

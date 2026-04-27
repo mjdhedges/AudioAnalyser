@@ -7,6 +7,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
+from src.gui.cli import ANALYSIS_CLI_ARG, RENDER_CLI_ARG
+
+FROZEN_CLI_EXE = "AudioAnalyserCli.exe"
+
 
 @dataclass(frozen=True)
 class AnalysisCommandOptions:
@@ -62,19 +66,23 @@ def build_analysis_command(
         raise ValueError("max_memory_gb must be > 0")
 
     executable = python_executable or sys.executable
-    command = [
-        executable,
-        "-m",
-        "src.main",
-        "--input",
-        str(options.input_path),
-        "--output-dir",
-        str(analysis_output_dir(options.project_dir)),
-        "--batch-workers",
-        str(options.batch_workers),
-        "--max-memory-gb",
-        f"{options.max_memory_gb:g}",
-    ]
+    command = _module_command(
+        executable=executable,
+        module="src.main",
+        frozen_arg=ANALYSIS_CLI_ARG,
+    )
+    command.extend(
+        [
+            "--input",
+            str(options.input_path),
+            "--output-dir",
+            str(analysis_output_dir(options.project_dir)),
+            "--batch-workers",
+            str(options.batch_workers),
+            "--max-memory-gb",
+            f"{options.max_memory_gb:g}",
+        ]
+    )
     if options.progress_json:
         command.append("--progress-json")
     return command
@@ -94,18 +102,33 @@ def build_render_command(
         Command list suitable for ``QProcess.start(program, arguments)``.
     """
     executable = python_executable or sys.executable
-    command = [
-        executable,
-        "-m",
-        "src.render",
-        "--results",
-        str(options.results_dir),
-        "--output-dir",
-        str(options.output_dir),
-    ]
+    command = _module_command(
+        executable=executable,
+        module="src.render",
+        frozen_arg=RENDER_CLI_ARG,
+    )
+    command.extend(
+        [
+            "--results",
+            str(options.results_dir),
+            "--output-dir",
+            str(options.output_dir),
+        ]
+    )
     if options.reports:
         command.append("--reports")
     return command
+
+
+def _module_command(executable: str, module: str, frozen_arg: str) -> List[str]:
+    """Return a subprocess command prefix for development or frozen builds."""
+    if getattr(sys, "frozen", False):
+        executable_path = Path(executable)
+        cli_executable = executable_path.with_name(FROZEN_CLI_EXE)
+        if cli_executable.exists():
+            return [str(cli_executable), frozen_arg]
+        return [executable, frozen_arg]
+    return [executable, "-m", module]
 
 
 def resolve_render_results_path(input_path: Path, analysis_output_dir: Path) -> Path:

@@ -1,18 +1,14 @@
-"""Desktop GUI entry point."""
+"""Console entry point used by frozen GUI builds."""
 
 from __future__ import annotations
 
 import sys
 
-from PySide6.QtWidgets import QApplication
-
-from src.gui.assets import app_icon
 from src.gui.cli import ANALYSIS_CLI_ARG, RENDER_CLI_ARG
-from src.gui.main_window import MainWindow
 
 
 def main() -> int:
-    """Run the Audio Analyser desktop GUI."""
+    """Dispatch packaged subprocess calls to the analysis or render CLI."""
     if len(sys.argv) > 1 and sys.argv[1] == ANALYSIS_CLI_ARG:
         from src.main import main as analysis_main
 
@@ -30,12 +26,9 @@ def main() -> int:
             standalone_mode=True,
         )
 
-    app = QApplication(sys.argv)
-    icon = app_icon()
-    app.setWindowIcon(icon)
-    window = MainWindow(icon=icon)
-    window.show()
-    return app.exec()
+    message = f"Expected {ANALYSIS_CLI_ARG} or {RENDER_CLI_ARG}."
+    print(message, file=sys.stderr)
+    return 2
 
 
 if __name__ == "__main__":

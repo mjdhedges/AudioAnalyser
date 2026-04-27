@@ -444,6 +444,7 @@ The tool analyzes audio using 1/1-octave band centers (IEC 16 Hz-16 kHz) plus **
 - **[ARCHITECTURE.md](ARCHITECTURE.md)**: Comprehensive system architecture and design details
 - **[docs/analysis_result_bundle.md](docs/analysis_result_bundle.md)**: `.aaresults` bundle layout and render workflow
 - **[docs/performance_notes.md](docs/performance_notes.md)**: Performance optimization notes and caveats
+- **[docs/windows_gui_packaging.md](docs/windows_gui_packaging.md)**: Windows GUI executable build notes
 
 ## Development Commands
 
