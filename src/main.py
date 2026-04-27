@@ -87,23 +87,34 @@ def resolve_track_output_dir(
     output_dir: Path,
     track_path: Path,
     batch_tracks_root: Optional[Path],
+    include_track_name: bool = True,
 ) -> Path:
     """Resolve the folder where one track's analysis outputs are stored.
 
     In batch mode, mirror the directory layout under ``batch_tracks_root`` so that
     ``tracks/Music/a.flac`` becomes ``output_dir/Music/a`` (extension stripped).
-    Single-file / non-batch uses a single folder named after the file stem.
+    Bundle-only output omits the final track folder so ``a.aaresults`` can live
+    directly in the mirrored parent directory.
     """
     if batch_tracks_root is not None:
         try:
             rel = track_path.resolve().relative_to(batch_tracks_root.resolve())
-            return (output_dir / rel).with_suffix("")
+            if include_track_name:
+                return (output_dir / rel).with_suffix("")
+            return output_dir / rel.parent
         except ValueError:
             logger.warning(
                 "Track path is not under batch tracks directory; using flat output folder: %s",
                 track_path,
             )
-    return output_dir / track_path.stem
+    if include_track_name:
+        return output_dir / track_path.stem
+    return output_dir
+
+
+def _result_bundle_dir(track_output_dir: Path, track_path: Path) -> Path:
+    """Return the expected result bundle path for ``track_path``."""
+    return track_output_dir / f"{track_path.stem}.aaresults"
 
 
 def _is_channel_output_folder_name(name: str) -> bool:
@@ -212,30 +223,25 @@ def check_result_cache(
     if not use_cache:
         return False
 
-    manifest_paths = list(track_output_dir.rglob("*.aaresults/manifest.json"))
-    if not manifest_paths:
+    manifest_path = _result_bundle_dir(track_output_dir, track_path) / "manifest.json"
+    if not manifest_path.exists():
         return False
 
     try:
-        manifests = [
-            json.loads(manifest_path.read_text(encoding="utf-8"))
-            for manifest_path in manifest_paths
-        ]
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
         # Check if source file has been modified
-        for manifest in manifests:
-            cache_meta = manifest.get("cache", {})
-            if cache_meta.get("source_mtime", 0) != track_path.stat().st_mtime:
-                return False
+        cache_meta = manifest.get("cache", {})
+        if cache_meta.get("source_mtime", 0) != track_path.stat().st_mtime:
+            return False
 
-            # Check if config has changed
-            if cache_meta.get("config_hash") != config_hash:
-                return False
+        # Check if config has changed
+        if cache_meta.get("config_hash") != config_hash:
+            return False
 
         # Check if all cached data artifacts are newer than source
-        for file_path in manifest_paths:
-            if file_path.stat().st_mtime <= track_path.stat().st_mtime:
-                return False
+        if manifest_path.stat().st_mtime <= track_path.stat().st_mtime:
+            return False
 
         return True
     except Exception as e:
@@ -260,18 +266,17 @@ def save_result_cache(
         "cache_date": pd.Timestamp.now().isoformat(),
     }
 
-    manifest_paths = list(track_output_dir.rglob("*.aaresults/manifest.json"))
-    if not manifest_paths:
-        logger.warning("No result bundle manifests found for cache metadata")
+    manifest_path = _result_bundle_dir(track_output_dir, track_path) / "manifest.json"
+    if not manifest_path.exists():
+        logger.warning("No result bundle manifest found for cache metadata")
         return
 
-    for manifest_path in manifest_paths:
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            manifest["cache"] = cache_meta
-            manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-        except Exception as e:
-            logger.warning(f"Failed to save cache metadata to {manifest_path}: {e}")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["cache"] = cache_meta
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    except Exception as e:
+        logger.warning(f"Failed to save cache metadata to {manifest_path}: {e}")
 
 
 def analyze_single_track(
@@ -315,10 +320,15 @@ def analyze_single_track(
 
     started = time.perf_counter()
     try:
-        # Create track-specific output directory (mirror batch folder layout when applicable)
+        # Resolve the output directory. Bundle-only output stores ``*.aaresults``
+        # directly here; legacy CSV mode keeps the old per-track folder.
         track_name = track_path.stem  # Get filename without extension
+        legacy_csv_enabled = bool(config.get("export.generate_legacy_csv", False))
         track_output_dir = resolve_track_output_dir(
-            output_dir, track_path, batch_tracks_root
+            output_dir,
+            track_path,
+            batch_tracks_root,
+            include_track_name=legacy_csv_enabled,
         )
         track_output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -428,8 +438,6 @@ def analyze_single_track(
             channel_folder_name = get_channel_folder_name(
                 channel_index, num_channels, channel_layout
             )
-
-            legacy_csv_enabled = bool(config.get("export.generate_legacy_csv", False))
 
             # Resolve channel-specific output directory for optional legacy exports.
             if num_channels == 1:

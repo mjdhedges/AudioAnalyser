@@ -17,7 +17,7 @@
 # Sample rate for audio processing (Hz)
 # Audio files will be resampled to this rate if different
 # Common values: 44100 (CD quality), 48000 (professional), 96000 (high-res)
-sample_rate = 44100
+sample_rate = 48000
 
 # Duration of each analysis chunk in seconds
 # Audio is processed in chunks for memory efficiency
@@ -25,9 +25,10 @@ sample_rate = 44100
 # Larger chunks = more memory but faster overall
 chunk_duration_seconds = 2.0
 
-# Time constant (seconds) for the crest-factor peak-hold envelope (IEC SLOW style)
-# Increase to make the held peak decay more slowly; decrease for faster response
-peak_hold_tau_seconds = 2.0
+# Time constant (seconds) for the crest-factor peak-hold envelope.
+# The peak-hold proof found 0.8s best matched a 1s fixed-block reference while
+# keeping the RMS detector anchored to the IEC Slow 1.0s time constant below.
+peak_hold_tau_seconds = 0.8
 
 # Time-domain crest factor mode
 # Options:
@@ -86,7 +87,7 @@ octave_fft_block_duration_seconds = 30.0
 # is estimated above this limit, the app switches to large-block FFT processing.
 # If the octave-bank time-series output itself is larger than this limit, it is
 # stored as a temporary disk-backed memmap while downstream analysis runs.
-octave_max_memory_gb = 4.0
+octave_max_memory_gb = 8.0
 
 # Residual bands capture energy outside the nominal 8 Hz-16 kHz octave range.
 # The low band represents 4 Hz and below. The high band represents energy above

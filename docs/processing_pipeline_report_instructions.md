@@ -21,10 +21,10 @@ the engineering in plain language while staying technically accurate.
 
 ## Source Files to Review
 
-- `src/main.py`: CLI flow, batch/single-file processing, result caching, post-processing.
+- `src/main.py`: CLI flow, batch/single-file processing, bundle output layout, and result caching.
 - `src/audio_processor.py`: input loading, ffprobe/ffmpeg handling, sample-rate conversion,
   multi-channel preservation, normalization helpers.
-- `src/channel_mapping.py`: RP22-style channel naming and output folder naming.
+- `src/channel_mapping.py`: RP22-style channel naming and bundle metadata labels.
 - `src/track_processor.py`: per-channel pipeline orchestration.
 - `src/octave_filter.py`: octave-band filter bank design and processing modes.
 - `src/music_analyzer.py`: octave-band statistics, time-domain analysis selection, extreme
@@ -32,11 +32,10 @@ the engineering in plain language while staying technically accurate.
 - `src/time_domain_metrics.py`: slow and fixed-window crest-factor methods.
 - `src/envelope_analyzer.py`: peak envelope, pattern, independent event, and sustained-peak
   analysis.
-- `src/data_export.py`: CSV sections and metric definitions.
-- `src/post/*.py`: group-level plots, worst-channel selection, LFE and screen/surround
-  deep-dive plots.
-- `src/report_generator.py` and `src/generate_reports.py`: Markdown report structure and
-  local image asset handling.
+- `src/data_export.py`: legacy CSV sections and metric definitions still reused by bundle exports.
+- `src/results/bundle.py` and `src/results/reader.py`: `.aaresults` writer and reader.
+- `src/results/render.py` and `src/render.py`: bundle graph rendering, group outputs, and render CLI.
+- `src/report_generator.py`: bundle-native Markdown report generation and local image asset handling.
 - `config.toml`: current default analysis, filtering, envelope, plotting, export, and
   performance settings.
 
@@ -44,21 +43,21 @@ the engineering in plain language while staying technically accurate.
 
 1. Title and short purpose statement.
 2. Executive summary of what the pipeline measures.
-3. End-to-end processing flow from input file to reports.
+3. End-to-end processing flow from input file to `.aaresults` bundle to rendered reports.
 4. Input handling and channel mapping.
 5. Normalization and dBFS reference explanation.
 6. Octave-band filtering approach.
 7. Time-domain crest factor approach, including slow vs fixed-window behavior.
 8. Envelope, peak, and recovery analysis.
-9. Data export and report generation.
+9. Bundle export and report generation.
 10. Interpretation guidance and limitations.
 11. Reproducibility notes.
 
 ## Accuracy Rules
 
 - Describe multi-channel processing as per-channel analysis with group-level summaries.
-- State that current report image assets are copied into each report folder under `images/`.
-- Explain that generated report prose should read run metadata from CSV exports where possible.
+- State that rendered report image assets are referenced from the render output folder.
+- Explain that generated report prose should read run metadata and tables from `.aaresults` bundle artifacts.
 - Distinguish whole-track octave statistics from time-domain sampled statistics.
 - Explain that octave-band filtering uses the FFT power-complementary design
   proven in `proofs/octave_band_energy_closure/`, including low/high residual
@@ -87,10 +86,10 @@ the engineering in plain language while staying technically accurate.
 
 - Re-read the source files above before editing the report.
 - Update the report if defaults in `config.toml` change.
-- Regenerate track reports with:
+- Regenerate track reports from bundles with:
 
 ```powershell
-.\venv\Scripts\python.exe -m src.generate_reports
+.\venv\Scripts\python.exe -m src.render --results analysis --output-dir rendered --reports
 ```
 
 - Verify report image links after regeneration.

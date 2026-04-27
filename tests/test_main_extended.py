@@ -11,11 +11,32 @@ import soundfile as sf
 from pathlib import Path
 from click.testing import CliRunner
 
-from src.main import _warn_legacy_post_disabled, analyze_single_track, main
+from src.main import (
+    _warn_legacy_post_disabled,
+    analyze_single_track,
+    main,
+    resolve_track_output_dir,
+)
 
 
 class TestMainExtended:
     """Extended test cases for main module."""
+
+    def test_bundle_only_batch_output_uses_category_parent(self, tmp_path):
+        """Bundle-only batch output should avoid redundant per-track folders."""
+        tracks_root = tmp_path / "tracks"
+        track_path = tracks_root / "Film" / "A Star Is Born.wav"
+        output_dir = tmp_path / "analysis"
+
+        assert (
+            resolve_track_output_dir(
+                output_dir,
+                track_path,
+                tracks_root,
+                include_track_name=False,
+            )
+            == output_dir / "Film"
+        )
 
     def test_legacy_post_warns_for_bundle_only_output(self, tmp_path, caplog):
         """Legacy post path should point bundle users to src.render."""
@@ -106,14 +127,12 @@ class TestMainExtended:
                 assert success is True
                 assert elapsed_seconds >= 0
 
-                # For mono, output should be directly in track folder
                 track_name = Path(tmp_path).stem
-                track_output_dir = output_dir / track_name
-                assert track_output_dir.exists()
 
-                bundle_dir = track_output_dir / f"{track_name}.aaresults"
+                bundle_dir = output_dir / f"{track_name}.aaresults"
                 assert (bundle_dir / "manifest.json").exists()
-                assert not list(track_output_dir.rglob("analysis_results.csv"))
+                assert not (output_dir / track_name).exists()
+                assert not list(output_dir.rglob("analysis_results.csv"))
         finally:
             Path(tmp_path).unlink(missing_ok=True)
 
@@ -147,15 +166,14 @@ class TestMainExtended:
                 assert elapsed_seconds >= 0
 
                 track_name = Path(tmp_path).stem
-                track_output_dir = output_dir / track_name
-                assert track_output_dir.exists()
 
-                bundle_dir = track_output_dir / f"{track_name}.aaresults"
+                bundle_dir = output_dir / f"{track_name}.aaresults"
                 assert (bundle_dir / "manifest.json").exists()
                 assert (bundle_dir / "channels" / "channel_01").exists()
                 assert (bundle_dir / "channels" / "channel_02").exists()
-                assert not (track_output_dir / "Channel 1 Left").exists()
-                assert not (track_output_dir / "Channel 2 Right").exists()
+                assert not (output_dir / track_name).exists()
+                assert not (output_dir / "Channel 1 Left").exists()
+                assert not (output_dir / "Channel 2 Right").exists()
         finally:
             Path(tmp_path).unlink(missing_ok=True)
 

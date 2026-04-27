@@ -104,7 +104,7 @@ The Audio Analyser is a Python application that performs comprehensive octave ba
 - `save_result_cache()`: Cache metadata storage
 
 **Processing Modes:**
-- **Single File**: Analyze one track with high-quality plots
+- **Single File**: Analyze one track into a `.aaresults` bundle
 - **Batch (Sequential)**: Process tracks one at a time
 - **Batch (Parallel)**: Process multiple tracks simultaneously
 
@@ -118,9 +118,9 @@ The Audio Analyser is a Python application that performs comprehensive octave ba
 
 **Configuration Sections:**
 - `[analysis]`: Core analysis parameters (sample rate, chunk duration, etc.)
-- `[plotting]`: Visualization settings (DPI, figure sizes, axes)
+- `[plotting]`: Render settings (DPI, figure sizes, axes)
 - `[advanced_stats]`: Thresholds for clipping detection, etc.
-- `[export]`: CSV export options
+- `[export]`: Bundle output and legacy CSV compatibility options
 - `[performance]`: Optimization settings (caching, parallel processing)
 - `[multi_channel]`: Multi-channel processing settings (enable/disable)
 - `[mkv_support]`: MKV container and TrueHD audio extraction settings
@@ -184,12 +184,12 @@ The Audio Analyser is a Python application that performs comprehensive octave ba
 
 **Responsibilities:**
 - Map channel indices to RP22 standard channel names
-- Generate channel folder names for output organization
+- Generate human-readable channel labels for metadata and legacy output
 - Support stereo and multi-channel layouts
 
 **Key Functions:**
 - `get_channel_name()`: Returns RP22 channel name (FL, FC, FR, etc.) or generic "Channel N"
-- `get_channel_folder_name()`: Returns formatted folder name (e.g., "Channel 1 FL")
+- `get_channel_folder_name()`: Returns formatted legacy folder/display name (e.g., "Channel 1 FL")
 
 **Channel Naming:**
 - **Stereo**: Channel 1 Left, Channel 2 Right
@@ -208,9 +208,8 @@ The Audio Analyser is a Python application that performs comprehensive octave ba
 - `MusicAnalyzer`: Main analysis class using composition pattern
 
 **Composition:**
-- `PlotGenerator`: Handles all visualization (delegated from `visualization.py`)
 - `EnvelopeAnalyzer`: Handles envelope processing (delegated from `envelope_analyzer.py`)
-- `DataExporter`: Handles CSV export (delegated from `data_export.py`)
+- `DataExporter`: Calculates advanced statistics and optional legacy CSV exports
 
 **Analysis Types:**
 1. **Octave Band Analysis**: HS RMS, peak, dynamic range, crest factor per band
@@ -223,8 +222,8 @@ The Audio Analyser is a Python application that performs comprehensive octave ba
 
 **Responsibilities:**
 - Single channel processing pipeline
-- Orchestration of analysis, plotting, and export for one channel
-- Channel-specific output directory management
+- Orchestration of analysis and bundle export for one channel
+- Optional legacy channel-specific CSV output management
 
 **Key Classes:**
 - `TrackProcessor`: Handles complete processing pipeline for a single channel
@@ -233,18 +232,20 @@ The Audio Analyser is a Python application that performs comprehensive octave ba
 1. Normalize channel audio
 2. Create octave bank
 3. Perform comprehensive analysis
-4. Generate plots
-5. Analyze envelope statistics
-6. Export results to CSV
+4. Analyze envelope statistics
+5. Write/update the track `.aaresults` bundle
+6. Optionally write legacy `analysis_results.csv`
 
-### 8. Visualization (`src/visualization.py`)
+### 8. Bundle Rendering (`src/render.py`, `src/results/render.py`)
 
 **Responsibilities:**
-- All plotting and visualization functionality
-- Matplotlib-based chart generation
+- Read `.aaresults` bundles
+- Generate channel plots, envelope plots, group plots, worst-channel manifests, and reports
+- Keep graph/report generation out of the audio analysis pass
 
 **Key Classes:**
-- `PlotGenerator`: Handles all visualization operations
+- `ResultBundle`: Reader-facing bundle abstraction
+- `ChannelResult`: Per-channel bundle abstraction
 
 **Visualizations:**
 1. Octave spectrum plot
@@ -253,8 +254,9 @@ The Audio Analyser is a Python application that performs comprehensive octave ba
 4. Octave band crest factor time plot
 5. Linear amplitude histograms
 6. Log dBFS amplitude histograms
-7. Pattern envelope plots (saved in `pattern_envelopes/` subfolder)
-8. Independent envelope plots (saved in `independent_envelopes/` subfolder)
+7. Pattern envelope plots
+8. Independent envelope plots
+9. Group crest-factor, octave-spectrum, peak-decay, and worst-channel outputs
 
 ## Data Flow
 
@@ -284,16 +286,16 @@ The Audio Analyser is a Python application that performs comprehensive octave ba
    │   ├─► Octave band statistics
    │   ├─► Time-domain chunking
    │   └─► Extreme chunk analysis
-   ├─► Generate Visualizations
-   │   ├─► Spectrum plots (vectorized calculation)
-   │   ├─► Time-domain plots
-   │   ├─► Histograms
-   │   ├─► Pattern envelopes
-   │   └─► Independent envelopes
-   ├─► Export CSV Data (with channel metadata)
-   └─► Save Results to Channel Folder
+   ├─► Analyze envelope and sustained-peak data
+   ├─► Write per-channel CSV/JSON artifacts
+   └─► Update .aaresults manifest
    ↓
-6. Save Cache Metadata
+6. Save Cache Metadata in manifest.json
+   ↓
+7. Render Pass:
+   ├─► Read .aaresults bundle
+   ├─► Generate graphs and group outputs
+   └─► Generate analysis.md report
 ```
 
 ### Caching Strategy
@@ -352,22 +354,30 @@ use_float32 = true                  # Memory optimization
 [plotting]
 dpi = 300                           # High quality plots
 batch_dpi = 150                     # Faster batch plots
+render_dpi = 150                    # Bundle render pass DPI
+
+[export]
+generate_analysis_bundle = true     # Default analysis artifact
+generate_legacy_csv = false         # Optional compatibility export
 ```
 
 ### Cache Directories
 
 ```
-cache/
-├── octave_banks/           # Cached octave filter outputs
-│   └── track_name_hash.npy
-└── (future: results/)      # Result caching (Planned)
-
 analysis/
+└── Music/
+    └── Track Name.aaresults/
+        ├── manifest.json   # Bundle index plus cache metadata
+        └── channels/
+            ├── channel_01/
+            └── channel_02/
+
+rendered/
 └── Track Name/
-    ├── .cache_meta.json    # Cache validation metadata
     ├── octave_spectrum.png
-    ├── analysis_results.csv
-    └── ...
+    ├── peak_decay_groups.png
+    ├── worst_channels_manifest.csv
+    └── analysis.md
 ```
 
 ## Error Handling & Reliability
@@ -393,13 +403,13 @@ analysis/
 ### Adding New Analyzers
 1. Add method to `MusicAnalyzer` class
 2. Integrate into `analyze_comprehensive()`
-3. Add visualization if needed
-4. Update CSV export
+3. Persist the derived data in the `.aaresults` bundle
+4. Update renderer/report consumers if the new data should be visualized
 
 ### Adding New Visualizations
-1. Create plotting method in `MusicAnalyzer`
-2. Call from `analyze_single_track()`
-3. Add to output file list for caching
+1. Add or extend a renderer in `src.results.render`
+2. Read only from `ResultBundle` artifacts
+3. Add focused tests for bundle replay and CLI rendering
 
 ### Adding New Optimizations
 1. Identify bottleneck (use profiling)

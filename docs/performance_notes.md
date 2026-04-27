@@ -49,9 +49,9 @@ These deltas are considered acceptable for performance work, but any downstream 
 
 ## 2026-04: Skip expensive octave crest-factor time plot
 
-- **Change**: CLI flag `--skip-octave-cf-time` to skip `octave_crest_factor_time.png` generation.
-- **Why**: profiling showed `visualization.create_octave_crest_factor_time_plot` as a major wall-time contributor.
-- **Note**: per-octave crest-factor-over-time data is not currently persisted in `analysis_results.csv`.
+- **Change**: move `octave_crest_factor_time.png` generation out of `src.main` and into the bundle render pass.
+- **Why**: profiling showed direct plot generation as a major wall-time contributor, and analysis should now produce data only.
+- **Note**: per-octave crest-factor-over-time data is persisted in `.aaresults` as `octave_time_metrics.csv` and can be rendered later with `python -m src.render`.
 
 ## 2026-04: Peak-hold envelope + sampled window maxima acceleration
 

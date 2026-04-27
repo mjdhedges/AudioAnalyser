@@ -32,7 +32,11 @@ rendering code can recreate plots without reloading the source audio.
 
 Analysis writes `.aaresults` bundles by default. The old per-channel
 `analysis_results.csv` export is controlled by `export.generate_legacy_csv` and
-is disabled by default.
+is disabled by default. In bundle-only mode, batch analysis writes bundles
+directly into the mirrored parent folder, for example
+`analysis/Film/A Star Is Born.aaresults` rather than
+`analysis/Film/A Star Is Born/A Star Is Born.aaresults`. Enabling legacy CSV
+output keeps the old per-track folder layout for compatibility.
 
 ## Plot Replay Data
 

@@ -54,7 +54,7 @@ class Config:
                 "sample_rate": 44100,
                 "tracks_dir": "Tracks",
                 "output_dir": "analysis",
-                "peak_hold_tau_seconds": 2.0,
+                "peak_hold_tau_seconds": 0.8,
                 "time_domain_crest_factor_mode": "slow",
                 "time_domain_slow_window_seconds": 1.0,
                 "time_domain_slow_step_seconds": 1.0,

@@ -71,13 +71,12 @@ def test_analyze_single_track():
             assert success is True
             assert elapsed_seconds >= 0
 
-            # Check that output directory was created
             track_name = Path(tmp_path).stem
-            track_output_dir = output_dir / track_name
 
-            bundle_dir = track_output_dir / f"{track_name}.aaresults"
+            bundle_dir = output_dir / f"{track_name}.aaresults"
             assert (bundle_dir / "manifest.json").exists()
-            assert not list(track_output_dir.rglob("analysis_results.csv"))
+            assert not (output_dir / track_name).exists()
+            assert not list(output_dir.rglob("analysis_results.csv"))
 
     finally:
         # Clean up
@@ -112,18 +111,13 @@ def test_main_with_valid_audio_file():
         # Check that it completed successfully
         assert result.exit_code == 0
 
-        # Check that output directory was created
         output_dir = Path("test_output")
         track_name = Path(tmp_path).stem
-        track_output_dir = output_dir / track_name
 
-        # For mono files, output goes directly to track folder
-        # For multi-channel, it goes to channel subfolders
-        assert track_output_dir.exists()
-
-        bundle_dir = track_output_dir / f"{track_name}.aaresults"
+        bundle_dir = output_dir / f"{track_name}.aaresults"
         assert (bundle_dir / "manifest.json").exists()
-        assert not list(track_output_dir.rglob("analysis_results.csv"))
+        assert not (output_dir / track_name).exists()
+        assert not list(output_dir.rglob("analysis_results.csv"))
 
     finally:
         # Clean up
