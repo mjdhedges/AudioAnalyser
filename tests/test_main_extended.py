@@ -11,11 +11,19 @@ import soundfile as sf
 from pathlib import Path
 from click.testing import CliRunner
 
-from src.main import analyze_single_track, main
+from src.main import _warn_legacy_post_disabled, analyze_single_track, main
 
 
 class TestMainExtended:
     """Extended test cases for main module."""
+
+    def test_legacy_post_warns_for_bundle_only_output(self, tmp_path, caplog):
+        """Legacy post path should point bundle users to src.render."""
+        bundle_dir = tmp_path / "track.aaresults"
+        bundle_dir.mkdir()
+
+        assert _warn_legacy_post_disabled(tmp_path) is True
+        assert "python -m src.render" in caplog.text
 
     def test_analyze_single_track_empty_audio(self):
         """Test analyzing empty audio file."""
@@ -103,14 +111,14 @@ class TestMainExtended:
                 track_output_dir = output_dir / track_name
                 assert track_output_dir.exists()
 
-                # Should have analysis files
-                csv_files = list(track_output_dir.rglob("analysis_results.csv"))
-                assert len(csv_files) > 0
+                bundle_dir = track_output_dir / f"{track_name}.aaresults"
+                assert (bundle_dir / "manifest.json").exists()
+                assert not list(track_output_dir.rglob("analysis_results.csv"))
         finally:
             Path(tmp_path).unlink(missing_ok=True)
 
     def test_analyze_single_track_stereo_output_structure(self):
-        """Test that stereo files create channel-specific folders."""
+        """Test that stereo files create channel entries in the result bundle."""
         tmp_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
         tmp_path = tmp_file.name
         tmp_file.close()
@@ -138,19 +146,16 @@ class TestMainExtended:
                 assert success is True
                 assert elapsed_seconds >= 0
 
-                # Should have channel folders
                 track_name = Path(tmp_path).stem
                 track_output_dir = output_dir / track_name
                 assert track_output_dir.exists()
 
-                # Check for channel folders
-                channel_folders = [d for d in track_output_dir.iterdir() if d.is_dir()]
-                assert len(channel_folders) == 2  # Left and Right
-
-                # Verify channel folder names
-                folder_names = [f.name for f in channel_folders]
-                assert "Channel 1 Left" in folder_names
-                assert "Channel 2 Right" in folder_names
+                bundle_dir = track_output_dir / f"{track_name}.aaresults"
+                assert (bundle_dir / "manifest.json").exists()
+                assert (bundle_dir / "channels" / "channel_01").exists()
+                assert (bundle_dir / "channels" / "channel_02").exists()
+                assert not (track_output_dir / "Channel 1 Left").exists()
+                assert not (track_output_dir / "Channel 2 Right").exists()
         finally:
             Path(tmp_path).unlink(missing_ok=True)
 

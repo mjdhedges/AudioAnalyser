@@ -5,11 +5,15 @@ from __future__ import annotations
 import logging
 import sys
 from pathlib import Path
+from typing import Optional
 
 import click
 
-from src.results import find_result_bundles, load_result_bundle
+from src.config import Config
+from src.results import find_result_bundles, generate_bundle_report, load_result_bundle
 from src.results.render import (
+    render_bundle_envelope_plots,
+    render_bundle_group_outputs,
     render_bundle_histograms,
     render_bundle_spectrum_plots,
     render_bundle_time_plots,
@@ -39,7 +43,18 @@ logger = logging.getLogger(__name__)
     help="Directory where rendered plots will be written.",
 )
 @click.option(
-    "--dpi", type=int, default=300, show_default=True, help="Plot output DPI."
+    "--config",
+    "config_path",
+    type=click.Path(path_type=Path),
+    default=Path("config.toml"),
+    show_default=True,
+    help="Configuration file used for render settings.",
+)
+@click.option(
+    "--dpi",
+    type=int,
+    default=None,
+    help="Override plot output DPI. Defaults to plotting.render_dpi from config.",
 )
 @click.option(
     "--spectrum-plots/--no-spectrum-plots",
@@ -59,15 +74,39 @@ logger = logging.getLogger(__name__)
     show_default=True,
     help="Render crest-factor time plots from bundle data.",
 )
+@click.option(
+    "--envelope-plots/--no-envelope-plots",
+    default=True,
+    show_default=True,
+    help="Render pattern and independent envelope plots from bundle data.",
+)
+@click.option(
+    "--group-plots/--no-group-plots",
+    default=True,
+    show_default=True,
+    help="Render group plots and worst-channel manifest from bundle data.",
+)
+@click.option(
+    "--reports/--no-reports",
+    default=False,
+    show_default=True,
+    help="Generate Markdown reports from bundle data and rendered plots.",
+)
 def main(
     results_path: Path,
     output_dir: Path,
+    config_path: Path,
     dpi: int,
     spectrum_plots: bool,
     histograms: bool,
     time_plots: bool,
+    envelope_plots: bool,
+    group_plots: bool,
+    reports: bool,
 ) -> None:
     """Render plots from processed result bundles without loading source audio."""
+    config = Config(config_path)
+    render_dpi = _resolve_render_dpi(config, dpi)
     bundles = find_result_bundles(results_path)
     if not bundles:
         logger.error("No .aaresults bundles found under %s", results_path)
@@ -83,7 +122,7 @@ def main(
                 render_bundle_spectrum_plots(
                     bundle=bundle,
                     output_dir=bundle_output_dir,
-                    dpi=dpi,
+                    dpi=render_dpi,
                 )
             )
         if histograms:
@@ -91,7 +130,7 @@ def main(
                 render_bundle_histograms(
                     bundle=bundle,
                     output_dir=bundle_output_dir,
-                    dpi=dpi,
+                    dpi=render_dpi,
                 )
             )
         if time_plots:
@@ -99,11 +138,49 @@ def main(
                 render_bundle_time_plots(
                     bundle=bundle,
                     output_dir=bundle_output_dir,
-                    dpi=dpi,
+                    dpi=render_dpi,
+                )
+            )
+        if envelope_plots:
+            generated.extend(
+                render_bundle_envelope_plots(
+                    bundle=bundle,
+                    output_dir=bundle_output_dir,
+                    dpi=render_dpi,
+                )
+            )
+        if group_plots:
+            generated.extend(
+                render_bundle_group_outputs(
+                    bundle=bundle,
+                    output_dir=bundle_output_dir,
+                    dpi=render_dpi,
+                )
+            )
+        if reports:
+            generated.append(
+                generate_bundle_report(
+                    bundle=bundle,
+                    rendered_output_dir=bundle_output_dir,
                 )
             )
 
-    logger.info("Rendered %d plot file(s).", len(generated))
+    logger.info("Generated %d output file(s).", len(generated))
+
+
+def _resolve_render_dpi(config: Config, override_dpi: Optional[int]) -> int:
+    """Resolve runtime render DPI from CLI override or configuration."""
+    if override_dpi is not None:
+        return int(override_dpi)
+    for key_path in (
+        "plotting.render_dpi",
+        "plotting.batch_dpi",
+        "plotting.dpi",
+    ):
+        value = config.get(key_path)
+        if value is not None:
+            return int(value)
+    return 150
 
 
 if __name__ == "__main__":

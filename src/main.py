@@ -33,6 +33,7 @@ from src.post.lfe_octave_time import (
     generate_lfe_full_channel_plot,
 )
 from src.post.channel_deep_dive import generate_channel_deep_dive_plot
+from src.results import find_result_bundles
 
 
 def determine_content_type(track_path: Path) -> str:
@@ -136,6 +137,20 @@ def find_track_output_dirs(base: Path) -> list[Path]:
     return sorted(inferred)
 
 
+def _warn_legacy_post_disabled(output_dir: Path) -> bool:
+    """Warn when legacy post-processing is requested for bundle-only output."""
+    bundles = find_result_bundles(output_dir)
+    if not bundles:
+        return False
+    logger.warning(
+        "Legacy post-processing reads analysis_results.csv and is deprecated for "
+        "bundle-only analysis output. Use `python -m src.render --results %s "
+        "--output-dir <rendered> --reports` instead.",
+        output_dir,
+    )
+    return True
+
+
 def get_config_hash() -> str:
     """Generate a hash of relevant configuration parameters.
 
@@ -197,46 +212,28 @@ def check_result_cache(
     if not use_cache:
         return False
 
-    # Check if all required output files exist
-    required_files = [
-        "octave_spectrum.png",
-        "crest_factor.png",
-        "histograms.png",
-        "histograms_log_db.png",
-        "crest_factor_time.png",
-        "analysis_results.csv",
-    ]
-    if require_octave_crest_factor_time:
-        required_files.append("octave_crest_factor_time.png")
-    if require_octave_crest_factor_time_csv:
-        required_files.append("octave_crest_factor_time.csv")
-
-    for filename in required_files:
-        file_path = track_output_dir / filename
-        if not file_path.exists():
-            return False
-
-    # Check if cache metadata exists
-    cache_meta_path = track_output_dir / ".cache_meta.json"
-    if not cache_meta_path.exists():
+    manifest_paths = list(track_output_dir.rglob("*.aaresults/manifest.json"))
+    if not manifest_paths:
         return False
 
-    # Load cache metadata
     try:
-        with open(cache_meta_path, "r") as f:
-            cache_meta = json.load(f)
+        manifests = [
+            json.loads(manifest_path.read_text(encoding="utf-8"))
+            for manifest_path in manifest_paths
+        ]
 
         # Check if source file has been modified
-        if cache_meta.get("source_mtime", 0) != track_path.stat().st_mtime:
-            return False
+        for manifest in manifests:
+            cache_meta = manifest.get("cache", {})
+            if cache_meta.get("source_mtime", 0) != track_path.stat().st_mtime:
+                return False
 
-        # Check if config has changed
-        if cache_meta.get("config_hash") != config_hash:
-            return False
+            # Check if config has changed
+            if cache_meta.get("config_hash") != config_hash:
+                return False
 
-        # Check if all cached files are newer than source
-        for filename in required_files:
-            file_path = track_output_dir / filename
+        # Check if all cached data artifacts are newer than source
+        for file_path in manifest_paths:
             if file_path.stat().st_mtime <= track_path.stat().st_mtime:
                 return False
 
@@ -256,8 +253,6 @@ def save_result_cache(
         track_output_dir: Directory where this track's artifacts are stored
         config_hash: Hash of current configuration
     """
-    track_output_dir.mkdir(parents=True, exist_ok=True)
-
     cache_meta = {
         "source_path": str(track_path),
         "source_mtime": track_path.stat().st_mtime,
@@ -265,12 +260,18 @@ def save_result_cache(
         "cache_date": pd.Timestamp.now().isoformat(),
     }
 
-    cache_meta_path = track_output_dir / ".cache_meta.json"
-    try:
-        with open(cache_meta_path, "w") as f:
-            json.dump(cache_meta, f, indent=2)
-    except Exception as e:
-        logger.warning(f"Failed to save cache metadata: {e}")
+    manifest_paths = list(track_output_dir.rglob("*.aaresults/manifest.json"))
+    if not manifest_paths:
+        logger.warning("No result bundle manifests found for cache metadata")
+        return
+
+    for manifest_path in manifest_paths:
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["cache"] = cache_meta
+            manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        except Exception as e:
+            logger.warning(f"Failed to save cache metadata to {manifest_path}: {e}")
 
 
 def analyze_single_track(
@@ -428,13 +429,14 @@ def analyze_single_track(
                 channel_index, num_channels, channel_layout
             )
 
-            # Create channel-specific output directory
+            legacy_csv_enabled = bool(config.get("export.generate_legacy_csv", False))
+
+            # Resolve channel-specific output directory for optional legacy exports.
             if num_channels == 1:
-                # Mono: use track directory directly (backward compatibility)
                 channel_output_dir = track_output_dir
             else:
-                # Multi-channel: create channel subfolder
                 channel_output_dir = track_output_dir / channel_folder_name
+            if legacy_csv_enabled:
                 channel_output_dir.mkdir(parents=True, exist_ok=True)
 
             # Apply channel filters if provided
@@ -636,8 +638,8 @@ def analyze_single_track(
 )
 @click.option(
     "--skip-post/--run-post",
-    default=False,
-    help="Skip post-processing (group plots, deep dives, manifests).",
+    default=True,
+    help="Skip legacy post-processing during analysis. Use --run-post for old graph/manifest generation.",
 )
 @click.option(
     "--skip-octave-cf-time/--run-octave-cf-time",
@@ -682,9 +684,9 @@ def main(
 ) -> None:
     """Audio Analyser - Analyze audio files using octave band filtering.
 
-    This tool performs comprehensive octave band analysis on audio files,
-    similar to the MATLAB musicanalyser.m script. It generates frequency
-    analysis, statistical measures, and visualizations.
+    This tool performs comprehensive octave band analysis on audio files and
+    writes processed data bundles. Use ``python -m src.render`` to create
+    graphs from those bundles.
 
     Examples:
         # Analyze all tracks in Tracks directory
@@ -713,9 +715,8 @@ def main(
             peak_hold_tau=peak_hold_tau,
         )
 
-        if skip_post and post_only:
-            logger.error("--skip-post cannot be combined with --post-only mode.")
-            sys.exit(1)
+        if post_only:
+            skip_post = False
 
         # Update logging level if specified
         if log_level:
@@ -883,7 +884,10 @@ def main(
         # Post-only mode: skip analysis and just run post-processing
         if post_only:
             logger.info("Post-only mode: running post-processing on existing results")
-            for td in find_track_output_dirs(output_dir):
+            track_output_dirs = find_track_output_dirs(output_dir)
+            if not track_output_dirs and _warn_legacy_post_disabled(output_dir):
+                return
+            for td in track_output_dirs:
                 if generate_manifest:
                     _run_select_worst_channels(td)
                 if generate_decay_plot:
@@ -1081,6 +1085,15 @@ def main(
                         logger.info(f"       n/a  [{status}]  {p.name}")
             # Post-process generated track folders (if enabled)
             if not skip_post:
+                if not config.get("export.generate_legacy_csv", False):
+                    logger.warning(
+                        "Skipping legacy post-processing because "
+                        "export.generate_legacy_csv is false. Use "
+                        "`python -m src.render --results %s --output-dir <rendered> "
+                        "--reports` to render bundle outputs.",
+                        output_dir,
+                    )
+                    return
                 logger.info("Starting post-processing for generated tracks...")
                 for td in find_track_output_dirs(output_dir):
                     if generate_manifest:
@@ -1125,6 +1138,15 @@ def main(
                 logger.info(f"Results saved to: {output_dir}")
                 # Post-process this track folder (if enabled)
                 if not skip_post:
+                    if not config.get("export.generate_legacy_csv", False):
+                        logger.warning(
+                            "Skipping legacy post-processing because "
+                            "export.generate_legacy_csv is false. Use "
+                            "`python -m src.render --results %s --output-dir <rendered> "
+                            "--reports` to render bundle outputs.",
+                            output_dir,
+                        )
+                        return
                     track_dir = resolve_track_output_dir(output_dir, input, None)
                     if track_dir.exists():
                         if generate_manifest:

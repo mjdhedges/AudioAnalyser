@@ -7,17 +7,27 @@ import pandas as pd
 from click.testing import CliRunner
 
 from src.music_analyzer import MusicAnalyzer
-from src.render import main as render_main
-from src.results import load_result_bundle
+from src.render import _resolve_render_dpi, main as render_main
+from src.results import generate_bundle_report, load_result_bundle
 from src.results.bundle import write_channel_result_bundle
 from src.results.render import (
+    render_bundle_envelope_plots,
+    render_bundle_group_outputs,
     render_bundle_histograms,
     render_bundle_spectrum_plots,
     render_bundle_time_plots,
 )
 
 
-def _write_test_bundle(tmp_path):
+class _DummyConfig:
+    def __init__(self, values):
+        self.values = values
+
+    def get(self, key_path, default=None):
+        return self.values.get(key_path, default)
+
+
+def _write_test_bundle(tmp_path, include_envelopes=False):
     sample_rate = 1000
     time = np.arange(sample_rate * 2) / sample_rate
     channel_data = 0.5 * np.sin(2 * np.pi * 10 * time)
@@ -39,6 +49,30 @@ def _write_test_bundle(tmp_path):
         "peak_levels_dbfs": np.array([-6.0, -6.0]),
         "rms_levels_dbfs": np.array([-12.0, -12.0]),
     }
+    envelope_statistics = {}
+    if include_envelopes:
+        envelope_statistics = {
+            "10.000": {
+                "pattern_analysis": {
+                    "patterns_detected": 1,
+                    "pattern_1": {
+                        "peak_times_seconds": [1.0],
+                        "envelope_windows": [np.array([-18.0, -6.0, -12.0])],
+                        "time_windows_ms": [np.array([-10.0, 0.0, 10.0])],
+                    },
+                },
+                "worst_case_envelopes": [
+                    {
+                        "rank": 1,
+                        "peak_value_db": -6.0,
+                        "peak_time_seconds": 1.0,
+                        "envelope_window": np.array([-18.0, -6.0, -12.0]),
+                        "time_window_ms": np.array([-10.0, 0.0, 10.0]),
+                        "decay_times": {"decay_6db_ms": 10.0},
+                    }
+                ],
+            }
+        }
     return write_channel_result_bundle(
         track_output_dir=tmp_path,
         track_metadata={
@@ -57,7 +91,7 @@ def _write_test_bundle(tmp_path):
         analysis_results=analysis_results,
         time_analysis=time_analysis,
         chunk_octave_analysis=None,
-        envelope_statistics={},
+        envelope_statistics=envelope_statistics,
         octave_bank=octave_bank,
         center_frequencies=center_frequencies,
         channel_data=channel_data,
@@ -141,6 +175,74 @@ def test_render_bundle_time_plots_writes_pngs(tmp_path):
     assert (output_dir / "channel_01" / "octave_crest_factor_time.png").exists()
 
 
+def test_render_bundle_envelope_plots_writes_pngs(tmp_path):
+    """Envelope rendering uses stored bundle window data."""
+    bundle_dir = _write_test_bundle(tmp_path, include_envelopes=True)
+    output_dir = tmp_path / "rendered_envelopes"
+
+    output_paths = render_bundle_envelope_plots(
+        bundle=load_result_bundle(bundle_dir),
+        output_dir=output_dir,
+        dpi=80,
+    )
+
+    assert len(output_paths) == 2
+    assert (
+        output_dir / "channel_01" / "pattern_envelopes" / "pattern_envelopes_10_000.png"
+    ).exists()
+    assert (
+        output_dir
+        / "channel_01"
+        / "independent_envelopes"
+        / "independent_envelopes_10_000.png"
+    ).exists()
+
+
+def test_render_bundle_group_outputs_writes_plots_and_manifest(tmp_path):
+    """Group rendering uses bundle channel tables."""
+    bundle_dir = _write_test_bundle(tmp_path)
+    output_dir = tmp_path / "rendered_groups"
+
+    output_paths = render_bundle_group_outputs(
+        bundle=load_result_bundle(bundle_dir),
+        output_dir=output_dir,
+        dpi=80,
+    )
+
+    assert len(output_paths) == 3
+    assert (output_dir / "All Channels" / "crest_factor_time.png").exists()
+    assert (output_dir / "All Channels" / "octave_spectrum.png").exists()
+    assert (output_dir / "worst_channels_manifest.csv").exists()
+
+
+def test_generate_bundle_report_writes_markdown(tmp_path):
+    """Reports can be generated from bundle tables without legacy CSVs."""
+    bundle_dir = _write_test_bundle(tmp_path)
+    bundle = load_result_bundle(bundle_dir)
+    output_dir = tmp_path / "rendered_report"
+    render_bundle_group_outputs(bundle=bundle, output_dir=output_dir, dpi=80)
+
+    report_path = generate_bundle_report(
+        bundle=bundle,
+        rendered_output_dir=output_dir,
+    )
+
+    report_text = report_path.read_text(encoding="utf-8")
+    assert report_path == output_dir / "analysis.md"
+    assert "# render_test - Audio Signal Analysis" in report_text
+    assert "Source bundle: `render_test.aaresults`" in report_text
+    assert "Crest Factor Analysis" in report_text
+    assert "Group Plots" in report_text
+
+
+def test_render_dpi_uses_override_then_config():
+    """Render DPI is configurable but still overridable from the CLI."""
+    config = _DummyConfig({"plotting.render_dpi": 150, "plotting.dpi": 300})
+
+    assert _resolve_render_dpi(config, None) == 150
+    assert _resolve_render_dpi(config, 80) == 80
+
+
 def test_render_cli_renders_histograms_from_bundle(tmp_path):
     """Render CLI scans bundles and writes plots."""
     bundle_dir = _write_test_bundle(tmp_path)
@@ -155,6 +257,7 @@ def test_render_cli_renders_histograms_from_bundle(tmp_path):
             str(output_dir),
             "--dpi",
             "80",
+            "--reports",
         ],
     )
 
@@ -174,6 +277,7 @@ def test_render_cli_renders_histograms_from_bundle(tmp_path):
     assert (
         output_dir / "render_test" / "channel_01" / "octave_crest_factor_time.png"
     ).exists()
+    assert (output_dir / "render_test" / "analysis.md").exists()
 
     manifest = json.loads((bundle_dir / "manifest.json").read_text())
     assert manifest["track"]["track_name"] == "render_test.wav"

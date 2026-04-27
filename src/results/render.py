@@ -298,6 +298,218 @@ def render_bundle_time_plots(
     return output_paths
 
 
+def render_bundle_envelope_plots(
+    bundle: ResultBundle,
+    output_dir: Path,
+    dpi: int = 300,
+) -> list[Path]:
+    """Render pattern and independent envelope plots for all channels."""
+    output_paths: list[Path] = []
+    for channel in bundle.channels():
+        channel_output_dir = output_dir / channel.channel_id
+        metadata = channel.read_json("metadata")
+        envelope_config = channel.read_json("envelope_config")
+        try:
+            envelope_data = channel.read_json("envelope_plot_data")
+        except (FileNotFoundError, KeyError):
+            continue
+
+        title_suffix = _title_suffix(bundle, channel, metadata)
+        output_paths.extend(
+            render_channel_pattern_envelopes(
+                envelope_data=envelope_data,
+                output_dir=channel_output_dir / "pattern_envelopes",
+                envelope_config=envelope_config,
+                title_suffix=title_suffix,
+                channel_name=str(metadata.get("channel_name") or channel.channel_name),
+                dpi=dpi,
+            )
+        )
+        output_paths.extend(
+            render_channel_independent_envelopes(
+                envelope_data=envelope_data,
+                output_dir=channel_output_dir / "independent_envelopes",
+                envelope_config=envelope_config,
+                title_suffix=title_suffix,
+                channel_name=str(metadata.get("channel_name") or channel.channel_name),
+                dpi=dpi,
+            )
+        )
+    return output_paths
+
+
+def render_bundle_group_outputs(
+    bundle: ResultBundle,
+    output_dir: Path,
+    dpi: int = 300,
+) -> list[Path]:
+    """Render group-level plots and manifest from bundle channel tables."""
+    output_paths: list[Path] = []
+    groups = _group_bundle_channels(bundle)
+    for group_name, channels in groups.items():
+        group_dir = output_dir / group_name
+        output_paths.append(
+            _render_group_crest_factor_time(
+                bundle=bundle,
+                group_name=group_name,
+                channels=channels,
+                output_path=group_dir / "crest_factor_time.png",
+                dpi=dpi,
+            )
+        )
+        output_paths.append(
+            _render_group_octave_spectrum(
+                bundle=bundle,
+                group_name=group_name,
+                channels=channels,
+                output_path=group_dir / "octave_spectrum.png",
+                dpi=dpi,
+            )
+        )
+    output_paths.append(_write_worst_channels_manifest(bundle, output_dir))
+    decay_path = _render_peak_decay_groups(
+        bundle, groups, output_dir / "peak_decay_groups.png", dpi
+    )
+    if decay_path is not None:
+        output_paths.append(decay_path)
+    return output_paths
+
+
+def render_channel_pattern_envelopes(
+    *,
+    envelope_data: dict,
+    output_dir: Path,
+    envelope_config: dict,
+    title_suffix: str = "",
+    channel_name: str = "",
+    dpi: int = 300,
+) -> list[Path]:
+    """Render repeating-pattern envelope plots from stored envelope windows."""
+    output_paths: list[Path] = []
+    num_envelopes = int(envelope_config.get("envelope_plots_num_pattern_envelopes", 10))
+    ylim = _envelope_ylim(envelope_config)
+    is_lfe_channel = "LFE" in channel_name.upper()
+
+    for frequency_label, band_data in envelope_data.items():
+        pattern_analysis = band_data.get("pattern_analysis", {})
+        pattern_envelopes = []
+        patterns_detected = int(pattern_analysis.get("patterns_detected", 0) or 0)
+        for pattern_num in range(1, patterns_detected + 1):
+            pattern = pattern_analysis.get(f"pattern_{pattern_num}", {})
+            windows = pattern.get("envelope_windows", []) or []
+            time_windows = pattern.get("time_windows_ms", []) or []
+            peak_times = pattern.get("peak_times_seconds", []) or []
+            for idx, envelope_window in enumerate(windows):
+                if envelope_window is None or idx >= len(time_windows):
+                    continue
+                time_window = time_windows[idx]
+                if time_window is None:
+                    continue
+                values = np.asarray(envelope_window, dtype=float)
+                times = np.asarray(time_window, dtype=float)
+                if not values.size or not times.size:
+                    continue
+                peak_value_db = float(np.nanmax(values))
+                peak_time_seconds = (
+                    _safe_float(peak_times[idx], 0.0) if idx < len(peak_times) else 0.0
+                )
+                pattern_envelopes.append(
+                    {
+                        "pattern_num": pattern_num,
+                        "time_ms": times,
+                        "envelope": values,
+                        "peak_value_db": peak_value_db,
+                        "peak_time_seconds": peak_time_seconds,
+                    }
+                )
+
+        if not pattern_envelopes:
+            continue
+        pattern_envelopes.sort(key=lambda item: item["peak_value_db"], reverse=True)
+        top_envelopes = pattern_envelopes[:num_envelopes]
+        output_path = (
+            output_dir
+            / f"pattern_envelopes_{_safe_frequency_filename(frequency_label)}.png"
+        )
+        _render_envelope_window_plot(
+            output_path=output_path,
+            envelopes=top_envelopes,
+            title=f"Top {len(top_envelopes)} Pattern Envelopes - {frequency_label}{title_suffix}",
+            ylim=ylim,
+            is_lfe_channel=is_lfe_channel,
+            dpi=dpi,
+            label_prefix="Pattern",
+        )
+        output_paths.append(output_path)
+    return output_paths
+
+
+def render_channel_independent_envelopes(
+    *,
+    envelope_data: dict,
+    output_dir: Path,
+    envelope_config: dict,
+    title_suffix: str = "",
+    channel_name: str = "",
+    dpi: int = 300,
+) -> list[Path]:
+    """Render independent worst-case envelope plots from stored windows."""
+    output_paths: list[Path] = []
+    num_envelopes = int(
+        envelope_config.get("envelope_plots_num_independent_envelopes", 3)
+    )
+    ylim = _envelope_ylim(envelope_config)
+    is_lfe_channel = "LFE" in channel_name.upper()
+
+    for frequency_label, band_data in envelope_data.items():
+        worst_cases = band_data.get("worst_case_envelopes", []) or []
+        envelopes = []
+        for envelope in worst_cases[:num_envelopes]:
+            envelope_window = envelope.get("envelope_window")
+            time_window = envelope.get("time_window_ms")
+            if envelope_window is None or time_window is None:
+                continue
+            values = np.asarray(envelope_window, dtype=float)
+            times = np.asarray(time_window, dtype=float)
+            if not values.size or not times.size:
+                continue
+            envelopes.append(
+                {
+                    "rank": envelope.get("rank"),
+                    "time_ms": times,
+                    "envelope": values,
+                    "peak_value_db": _safe_float(
+                        envelope.get("peak_value_db"),
+                        float(np.nanmax(values)),
+                    ),
+                    "peak_time_seconds": _safe_float(
+                        envelope.get("peak_time_seconds"),
+                        0.0,
+                    ),
+                    "decay_times": envelope.get("decay_times", {}),
+                }
+            )
+
+        if not envelopes:
+            continue
+        output_path = (
+            output_dir
+            / f"independent_envelopes_{_safe_frequency_filename(frequency_label)}.png"
+        )
+        _render_envelope_window_plot(
+            output_path=output_path,
+            envelopes=envelopes,
+            title=f"Top {len(envelopes)} Independent Envelopes - {frequency_label}{title_suffix}",
+            ylim=ylim,
+            is_lfe_channel=is_lfe_channel,
+            dpi=dpi,
+            label_prefix="Rank",
+            show_decay=True,
+        )
+        output_paths.append(output_path)
+    return output_paths
+
+
 def render_channel_crest_factor_time(
     *,
     channel: ChannelResult,
@@ -512,6 +724,483 @@ def _histogram_groups(dataframe: pd.DataFrame) -> list[tuple[str, pd.DataFrame]]
     ]
 
 
+def _render_envelope_window_plot(
+    *,
+    output_path: Path,
+    envelopes: list[dict],
+    title: str,
+    ylim: tuple[float, float],
+    is_lfe_channel: bool,
+    dpi: int,
+    label_prefix: str,
+    show_decay: bool = False,
+) -> None:
+    fig, ax = plt.subplots(figsize=(14, 8))
+    colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"]
+    x_bounds = []
+
+    for idx, envelope in enumerate(envelopes):
+        color = colors[idx % len(colors)]
+        time_ms = np.asarray(envelope["time_ms"], dtype=float)
+        values = np.asarray(envelope["envelope"], dtype=float)
+        peak_value_db = _safe_float(
+            envelope.get("peak_value_db"), float(np.nanmax(values))
+        )
+        peak_time_seconds = _safe_float(envelope.get("peak_time_seconds"), 0.0)
+        identifier = envelope.get("pattern_num", envelope.get("rank", idx + 1))
+        label = (
+            f"{label_prefix} {identifier} - Peak: {peak_value_db:.1f} dBFS "
+            f"@ {peak_time_seconds:.1f}s"
+        )
+
+        ax.plot(time_ms, values, color=color, linewidth=2, label=label, alpha=0.8)
+        ax.plot(
+            0,
+            peak_value_db,
+            "o",
+            color=color,
+            markersize=8,
+            markeredgecolor="black",
+            markeredgewidth=1,
+        )
+        x_bounds.extend([float(np.nanmin(time_ms)), float(np.nanmax(time_ms))])
+
+        if show_decay:
+            decay_times = envelope.get("decay_times", {}) or {}
+            for decay_db in (-3, -6, -9, -12):
+                decay_key = f"decay_{abs(decay_db)}db_ms"
+                decay_time_ms = decay_times.get(decay_key)
+                if decay_time_ms is None:
+                    continue
+                decay_level = peak_value_db + decay_db
+                ax.plot(
+                    _safe_float(decay_time_ms, 0.0),
+                    decay_level,
+                    "x",
+                    color=color,
+                    markersize=6,
+                    alpha=0.7,
+                )
+
+    ax.set_xlabel("Time (ms relative to peak)")
+    ax.set_ylabel("RMS Level (dBFS)")
+    ax.set_title(title)
+    ax.grid(True, alpha=0.3)
+    ax.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
+    ax.set_ylim(ylim)
+    add_calibrated_spl_axis(ax, ylim, is_lfe=is_lfe_channel)
+    if x_bounds:
+        ax.set_xlim([min(x_bounds), max(x_bounds)])
+
+    plt.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(output_path, dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+    logger.info("Rendered envelope plot: %s", output_path)
+
+
+def _render_group_crest_factor_time(
+    *,
+    bundle: ResultBundle,
+    group_name: str,
+    channels: list[ChannelResult],
+    output_path: Path,
+    dpi: int,
+) -> Path:
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
+    colors = _channel_colors()
+    all_peak_levels = []
+    all_rms_levels = []
+    all_crest_factors = []
+
+    for idx, channel in enumerate(channels):
+        data = channel.read_table("time_domain_analysis")
+        if data.empty:
+            continue
+        color = colors[idx % len(colors)]
+        label = _channel_label(channel.channel_name)
+        time_seconds = data["time_seconds"].to_numpy(dtype=float)
+        crest_db = _finite_series(data["crest_factor_db"].to_numpy(dtype=float), 0.0)
+        peak_dbfs = _finite_series(
+            data["peak_level_dbfs"].to_numpy(dtype=float), -120.0
+        )
+        rms_dbfs = _finite_series(data["rms_level_dbfs"].to_numpy(dtype=float), -120.0)
+        peak_linear = np.power(10.0, peak_dbfs / 20.0)
+        rms_linear = np.power(10.0, rms_dbfs / 20.0)
+
+        all_crest_factors.extend(crest_db[np.isfinite(crest_db)].tolist())
+        all_peak_levels.extend(peak_linear[peak_linear > 0].tolist())
+        all_rms_levels.extend(rms_linear[rms_linear > 0].tolist())
+
+        ax1.plot(
+            time_seconds, crest_db, color=color, linewidth=1.5, alpha=0.8, label=label
+        )
+        ax2.plot(
+            time_seconds,
+            peak_dbfs,
+            color=color,
+            linewidth=1.5,
+            alpha=0.8,
+            label=f"{label} Peak",
+        )
+        ax2.plot(
+            time_seconds,
+            rms_dbfs,
+            color=color,
+            linestyle="--",
+            linewidth=1.5,
+            alpha=0.8,
+            label=f"{label} RMS",
+        )
+
+    ax1.set_ylabel("Crest Factor (dB)")
+    ax1.set_title(f"Crest Factor Over Time - {group_name} - {_track_title(bundle)}")
+    ax1.grid(True, alpha=0.3)
+    ax1.legend(loc="upper right")
+    if all_crest_factors:
+        ax1.set_ylim([0, max(30, float(np.nanmax(all_crest_factors)) * 1.1)])
+
+    level_ylim = (-60, 3)
+    if all_peak_levels and all_rms_levels:
+        highest_peak = 20 * np.log10(max(all_peak_levels))
+        lowest_rms = 20 * np.log10(max(min(all_rms_levels), 1e-10))
+        level_ylim = (min(-60, lowest_rms - 3), max(3, highest_peak + 1))
+    ax2.set_xlabel("Time (seconds)")
+    ax2.set_ylabel("Level (dBFS)")
+    ax2.grid(True, alpha=0.3)
+    ax2.legend(loc="upper right", fontsize="small")
+    ax2.set_ylim(level_ylim)
+    add_calibrated_spl_axis(ax2, level_ylim, is_lfe=(group_name == "LFE"))
+
+    plt.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(output_path, dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+    logger.info("Rendered group crest factor time plot: %s", output_path)
+    return output_path
+
+
+def _render_group_octave_spectrum(
+    *,
+    bundle: ResultBundle,
+    group_name: str,
+    channels: list[ChannelResult],
+    output_path: Path,
+    dpi: int,
+) -> Path:
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10), sharex=True)
+    colors = _channel_colors()
+    all_freqs = []
+
+    for idx, channel in enumerate(channels):
+        octave_data = _octave_band_rows(channel)
+        if octave_data.empty:
+            continue
+        color = colors[idx % len(colors)]
+        label = _channel_label(channel.channel_name)
+        freqs = octave_data["frequency_numeric"].to_numpy(dtype=float)
+        crest_db = _finite_series(
+            octave_data["crest_factor_db"].to_numpy(dtype=float), 0.0
+        )
+        peak_db = _finite_series(
+            octave_data["max_amplitude_db"].to_numpy(dtype=float), -60.0
+        )
+        rms_db = _finite_series(octave_data["rms_db"].to_numpy(dtype=float), -60.0)
+        all_freqs.extend(freqs.tolist())
+
+        ax1.semilogx(
+            freqs,
+            np.maximum(crest_db, 0.0),
+            color=color,
+            marker="o",
+            linewidth=2,
+            alpha=0.8,
+            label=label,
+        )
+        ax2.semilogx(
+            freqs,
+            peak_db,
+            color=color,
+            marker="o",
+            linewidth=2,
+            alpha=0.8,
+            label=f"{label} Peak",
+        )
+        ax2.semilogx(
+            freqs,
+            rms_db,
+            color=color,
+            marker="s",
+            linestyle="--",
+            linewidth=2,
+            alpha=0.8,
+            label=f"{label} RMS",
+        )
+
+    ax1.set_ylabel("Crest Factor (dB)")
+    ax1.set_title(f"Octave Spectrum by Channel - {group_name} - {_track_title(bundle)}")
+    ax1.grid(True, alpha=0.3)
+    ax1.legend(loc="upper right")
+    ax1.set_ylim([0, 30])
+
+    ax2.set_xlabel("Frequency (Hz)")
+    ax2.set_ylabel("Level (dBFS)")
+    ax2.grid(True, alpha=0.3)
+    ax2.legend(loc="lower left", fontsize="small")
+    ax2.set_ylim([-60, 3])
+    if all_freqs:
+        freqs_array = np.asarray(all_freqs, dtype=float)
+        _set_octave_ticks(ax2, freqs_array)
+        ax2.set_xlim([max(3.0, float(np.nanmin(freqs_array)) / 1.25), 40000.0])
+
+    plt.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(output_path, dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+    logger.info("Rendered group octave spectrum plot: %s", output_path)
+    return output_path
+
+
+def _write_worst_channels_manifest(bundle: ResultBundle, output_dir: Path) -> Path:
+    rows = []
+    candidates: dict[str, tuple[ChannelResult, float, str]] = {}
+    for channel in bundle.channels():
+        group = _worst_channel_group(channel.channel_name)
+        if group is None:
+            continue
+        score, metric_used = _channel_worst_score(channel)
+        previous = candidates.get(group)
+        if previous is None or score > previous[1]:
+            candidates[group] = (channel, score, metric_used)
+
+    for group, (channel, score, metric_used) in candidates.items():
+        rows.append(
+            {
+                "group": group,
+                "folder": channel.channel_name,
+                "score": score,
+                "metric_used": metric_used,
+            }
+        )
+    manifest_path = output_dir / "worst_channels_manifest.csv"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(rows, columns=["group", "folder", "score", "metric_used"]).to_csv(
+        manifest_path,
+        index=False,
+    )
+    logger.info("Rendered worst-channel manifest: %s", manifest_path)
+    return manifest_path
+
+
+def _render_peak_decay_groups(
+    bundle: ResultBundle,
+    groups: dict[str, list[ChannelResult]],
+    output_path: Path,
+    dpi: int,
+) -> Optional[Path]:
+    group_rows: dict[str, list[dict]] = {}
+    group_peak_levels: dict[str, list[float]] = {}
+    for group_name, channels in groups.items():
+        rows = []
+        peaks = []
+        for channel in channels:
+            sustained = channel.read_table("sustained_peaks_summary")
+            if sustained.empty:
+                continue
+            full_spectrum = sustained[sustained["frequency_hz"] == "Full Spectrum"]
+            if full_spectrum.empty:
+                continue
+            rows.append(full_spectrum.iloc[0].to_dict())
+            advanced = channel.read_table("advanced_statistics")
+            if not advanced.empty:
+                values = dict(zip(advanced["parameter"], advanced["value"]))
+                peaks.append(_safe_float(values.get("max_true_peak_dbfs"), 0.0))
+        if rows:
+            group_rows[group_name] = rows
+            group_peak_levels[group_name] = peaks
+
+    if not group_rows:
+        return None
+
+    max_time = 0.0
+    for rows in group_rows.values():
+        times_ms, _ = _aggregate_decay_times(rows)
+        if times_ms.size and np.any(times_ms > 0):
+            max_time = max(max_time, float(np.nanmax(times_ms)))
+    x_max = max(200, int(max_time * 1.2)) if max_time > 0 else 200
+    t_axis = np.linspace(0, x_max, 400)
+    colors = {
+        "Screen": "#1f77b4",
+        "Surround+Height": "#2ca02c",
+        "LFE": "#d62728",
+        "All Channels": "#ff7f0e",
+    }
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for group_name, rows in group_rows.items():
+        times_ms, levels_db = _aggregate_decay_times(rows)
+        valid_mask = times_ms > 0
+        if not np.any(valid_mask):
+            continue
+        times_valid = times_ms[valid_mask]
+        levels_valid = levels_db[valid_mask]
+        tau, amplitude = _fit_decay_curve(times_valid, levels_valid)
+        curve_db = -amplitude * np.log1p(t_axis / max(tau, 1e-3))
+        peaks = group_peak_levels.get(group_name, [])
+        peak_dbfs = max(peaks) if peaks else 0.0
+        peak_label = f"Peak: {peak_dbfs:.1f} dBFS" if peak_dbfs > -60 else "Peak: N/A"
+        ax.plot(
+            t_axis,
+            curve_db,
+            label=f"{group_name} (tau~{tau:.1f} ms, {peak_label})",
+            color=colors.get(group_name),
+            linewidth=2,
+        )
+        ax.scatter(
+            times_valid,
+            levels_valid,
+            color=colors.get(group_name),
+            marker="o",
+            s=50,
+            zorder=5,
+        )
+
+    ax.set_xlabel("Time after peak (ms)")
+    ax.set_ylabel("Relative level (dB)")
+    ax.set_title(
+        f"Worst Case (P95) Peak Decay by Channel Group - {_track_title(bundle)}"
+    )
+    ax.set_ylim([-20, 0])
+    ax.set_yticks(np.arange(-21, 1, 3))
+    ax.set_yticks(np.arange(-20, 1, 1), minor=True)
+    ax.grid(True, alpha=0.3, which="major", linewidth=1.0)
+    ax.grid(True, alpha=0.15, which="minor", linewidth=0.5)
+    ax.legend()
+    ax.set_xlim([0, x_max])
+    plt.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(output_path, dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+    logger.info("Rendered peak decay group plot: %s", output_path)
+    return output_path
+
+
+def _aggregate_decay_times(rows: list[dict]) -> tuple[np.ndarray, np.ndarray]:
+    times = []
+    for threshold in (3, 6, 9, 12):
+        p95_key = f"t{threshold}_ms_p95"
+        p90_key = f"t{threshold}_ms_p90"
+        values = [_safe_float(row.get(p95_key), 0.0) for row in rows]
+        values = [value for value in values if value > 0]
+        if not values:
+            times.append(0.0)
+            continue
+        aggregated = max(values)
+        if aggregated >= 4950.0:
+            fallback_values = [_safe_float(row.get(p90_key), 0.0) for row in rows]
+            fallback_values = [value for value in fallback_values if value > 0]
+            if fallback_values:
+                aggregated = max(fallback_values)
+        times.append(aggregated)
+    return np.asarray(times, dtype=float), -np.asarray([3, 6, 9, 12], dtype=float)
+
+
+def _fit_decay_curve(
+    times_ms: np.ndarray, levels_db: np.ndarray
+) -> tuple[float, float]:
+    if len(times_ms) < 2 or np.any(times_ms <= 0) or np.any(levels_db >= 0):
+        return 50.0, 12.0
+    mid_idx = len(times_ms) // 2
+    tau = float(times_ms[mid_idx])
+    amplitude = abs(float(levels_db[mid_idx])) / 0.693
+    return max(tau, 1.0), max(amplitude, 1.0)
+
+
+def _group_bundle_channels(bundle: ResultBundle) -> dict[str, list[ChannelResult]]:
+    grouped = {"Screen": [], "Surround+Height": [], "LFE": [], "All Channels": []}
+    for channel in bundle.channels():
+        name = channel.channel_name
+        if name in {"Channel 1 FL", "Channel 2 FR", "Channel 3 FC"}:
+            grouped["Screen"].append(channel)
+        elif "LFE" in name:
+            grouped["LFE"].append(channel)
+        elif any(
+            name.startswith(prefix)
+            for prefix in (
+                "Channel 5",
+                "Channel 6",
+                "Channel 7",
+                "Channel 8",
+                "Channel 9",
+                "Channel 10",
+                "Channel 11",
+                "Channel 12",
+            )
+        ):
+            grouped["Surround+Height"].append(channel)
+        else:
+            grouped["All Channels"].append(channel)
+    return {name: channels for name, channels in grouped.items() if channels}
+
+
+def _channel_worst_score(channel: ChannelResult) -> tuple[float, str]:
+    sustained = channel.read_table("sustained_peaks_summary")
+    if not sustained.empty:
+        full_spectrum = sustained[sustained["frequency_hz"] == "Full Spectrum"]
+        if not full_spectrum.empty:
+            row = full_spectrum.iloc[0]
+            for key in (
+                "t6_ms_p95",
+                "t9_ms_p95",
+                "t3_ms_p95",
+                "t12_ms_p95",
+                "hold_ms_p95",
+            ):
+                if key in row:
+                    return _safe_float(row[key], 0.0), f"sustained:{key}"
+    advanced = channel.read_table("advanced_statistics")
+    if not advanced.empty:
+        values = dict(zip(advanced["parameter"], advanced["value"]))
+        for key in ("peak_saturation_percent", "clip_events_rate_per_sec"):
+            if key in values:
+                return _safe_float(values[key], 0.0), f"advanced:{key}"
+    return 0.0, "none"
+
+
+def _worst_channel_group(channel_name: str) -> Optional[str]:
+    if channel_name in {"Channel 1 FL", "Channel 2 FR", "Channel 3 FC"}:
+        return "screen"
+    if "LFE" in channel_name:
+        return "lfe"
+    if channel_name.startswith(("Channel 5", "Channel 6", "Channel 7", "Channel 8")):
+        return "surround"
+    return None
+
+
+def _channel_colors() -> list[str]:
+    return [
+        "#1f77b4",
+        "#ff7f0e",
+        "#2ca02c",
+        "#d62728",
+        "#9467bd",
+        "#8c564b",
+        "#e377c2",
+        "#7f7f7f",
+    ]
+
+
+def _envelope_ylim(envelope_config: dict) -> tuple[float, float]:
+    return (
+        float(envelope_config.get("envelope_plots_ylim_min", -30)),
+        float(envelope_config.get("envelope_plots_ylim_max", 0)),
+    )
+
+
+def _safe_frequency_filename(frequency_label: str) -> str:
+    return str(frequency_label).replace(" ", "_").replace(".", "_")
+
+
 def _octave_band_rows(channel: ChannelResult) -> pd.DataFrame:
     octave_data = channel.read_table("octave_band_analysis")
     if octave_data.empty:
@@ -688,3 +1377,7 @@ def _title_suffix(
     channel_name = metadata.get("channel_name") or channel.channel_name
     parts = [part for part in (track_name, channel_name) if part]
     return f" - {' - '.join(parts)}" if parts else ""
+
+
+def _track_title(bundle: ResultBundle) -> str:
+    return Path(str(bundle.track.get("track_name") or bundle.path.stem)).stem

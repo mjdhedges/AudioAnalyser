@@ -13,6 +13,9 @@ from typing import Dict, List, Optional, Tuple
 from urllib.parse import quote
 
 import numpy as np
+import pandas as pd
+
+from src.results.reader import ChannelResult, ResultBundle
 
 logger = logging.getLogger(__name__)
 
@@ -409,6 +412,542 @@ def _group_plot_reference(
             report_folder / base_rel / group_name / filename
         ).resolve()
     return plot_path, rel_path, abs_path_from_reports
+
+
+def generate_bundle_report(
+    bundle: ResultBundle,
+    rendered_output_dir: Path,
+    output_path: Optional[Path] = None,
+) -> Path:
+    """Generate a rich Markdown report from a `.aaresults` bundle.
+
+    Args:
+        bundle: Loaded analysis result bundle.
+        rendered_output_dir: Directory containing plots rendered from the bundle.
+        output_path: Optional output Markdown path. Defaults to `analysis.md`
+            in `rendered_output_dir`.
+
+    Returns:
+        Path to the written report.
+    """
+    report_path = output_path or rendered_output_dir / "analysis.md"
+    report_folder = report_path.parent
+    report_folder.mkdir(parents=True, exist_ok=True)
+
+    track_name = Path(str(bundle.track.get("track_name") or bundle.path.stem)).stem
+    groups = _bundle_channel_groups(bundle)
+    group_data = {
+        group_name: _bundle_group_summary(channels)
+        for group_name, channels in groups.items()
+        if channels
+    }
+    time_summary = _select_time_domain_summary(group_data)
+    metadata = _bundle_report_metadata(bundle)
+    time_sample_label = _time_domain_sample_label(time_summary)
+    time_calculation_sentence = _time_domain_calculation_sentence(time_summary)
+    octave_processing_sentence = _octave_processing_sentence(metadata)
+
+    lines: List[str] = []
+    lines.append(f"# {track_name} - Audio Signal Analysis")
+    lines.append("")
+    lines.append("## What This Report Tells You")
+    lines.append("")
+    lines.append(
+        "- **Group comparison:** Statistical analysis across channel groups "
+        f"({', '.join(groups.keys())})"
+    )
+    lines.append(
+        "- **Peak occurrence and duty cycle:** Frequency of peaks near full scale "
+        "and time spent at peak levels"
+    )
+    lines.append(
+        "- **Peak hold and recovery times:** How long peaks are sustained and "
+        "recovery times to -3/-6/-9/-12 dB"
+    )
+    lines.append(
+        "- **Frequency-dependent crest factor behavior:** Wideband and octave-band "
+        "dynamic range characteristics"
+    )
+    lines.append("")
+    lines.append("## Processing Summary")
+    lines.append("")
+    lines.append(f"- Source bundle: `{bundle.path.name}`")
+    lines.append(f"- Rendered output folder: `{rendered_output_dir.name}`")
+    lines.append(f"- Channels: {len(bundle.channels())}")
+    lines.append(
+        f"- Duration: {_format_number(float(bundle.track.get('duration_seconds', 0.0)), 1)} s"
+    )
+    lines.append(
+        f"- Sample rate: {_format_number(float(bundle.track.get('sample_rate', 0.0)), 0)} Hz"
+    )
+    lines.append(f"- {octave_processing_sentence}")
+    lines.append("")
+
+    lines.extend(
+        _bundle_crest_factor_section(
+            group_data, time_sample_label, time_calculation_sentence
+        )
+    )
+    lines.extend(_bundle_group_plot_section(rendered_output_dir, report_folder, groups))
+    lines.extend(
+        _bundle_frequency_section(group_data, rendered_output_dir, report_folder)
+    )
+    lines.extend(_bundle_sustained_peak_section(group_data))
+    lines.extend(_bundle_peak_decay_section(rendered_output_dir, report_folder))
+    lines.extend(_bundle_peak_occurrence_section(group_data))
+    lines.extend(_bundle_envelope_section(bundle, rendered_output_dir, report_folder))
+    lines.extend(_bundle_appendix(bundle, group_data))
+
+    report_path.write_text("\n".join(lines), encoding="utf-8")
+    logger.info("Bundle report written to: %s", report_path)
+    return report_path
+
+
+def _bundle_crest_factor_section(
+    group_data: Dict[str, Dict],
+    time_sample_label: str,
+    time_calculation_sentence: str,
+) -> List[str]:
+    lines = [
+        "## Crest Factor Analysis",
+        "",
+        "Crest factor (peak-to-RMS ratio) indicates the dynamic range of the audio signal. "
+        f"This section provides statistical analysis using {time_sample_label} "
+        "from all channels within each group. "
+        f"{time_calculation_sentence}",
+        "",
+        "**Percentile Definitions:** P90 indicates that 90% of exported time-domain "
+        "samples have a crest factor at or below this value. P95 indicates the same "
+        "for 95% of exported samples.",
+        "",
+        _format_table_row(
+            [
+                "Group",
+                "Min (dB)",
+                "P95 (dB)",
+                "P90 (dB)",
+                "Mean (dB)",
+                "Median (dB)",
+                "Max (dB)",
+                "Std Dev (dB)",
+            ]
+        ),
+        _format_table_row(["---"] * 8),
+    ]
+    for group_name in sorted(group_data.keys()):
+        values = group_data[group_name].get("crest_values", np.array([]))
+        if values.size == 0:
+            continue
+        lines.append(
+            _format_table_row(
+                [
+                    group_name,
+                    _format_number(float(np.min(values)), 1),
+                    _format_number(float(np.percentile(values, 95)), 1),
+                    _format_number(float(np.percentile(values, 90)), 1),
+                    _format_number(float(np.mean(values)), 1),
+                    _format_number(float(np.median(values)), 1),
+                    _format_number(float(np.max(values)), 1),
+                    _format_number(float(np.std(values)), 1),
+                ]
+            )
+        )
+    lines.append("")
+    return lines
+
+
+def _bundle_group_plot_section(
+    rendered_output_dir: Path,
+    report_folder: Path,
+    groups: Dict[str, List[ChannelResult]],
+) -> List[str]:
+    lines = ["## Group Plots", ""]
+    for group_name in groups.keys():
+        lines.append(f"### {group_name}")
+        lines.append("")
+        crest_plot = rendered_output_dir / group_name / "crest_factor_time.png"
+        octave_plot = rendered_output_dir / group_name / "octave_spectrum.png"
+        if crest_plot.exists():
+            lines.append(
+                _markdown_report_image(
+                    f"Crest Factor Over Time - {group_name}",
+                    crest_plot,
+                    report_folder,
+                    f"{group_name}_crest_factor_time.png",
+                )
+            )
+        else:
+            lines.append("*Crest factor time plot not available*")
+        lines.append("")
+        if octave_plot.exists():
+            lines.append(
+                _markdown_report_image(
+                    f"Octave Spectrum - {group_name}",
+                    octave_plot,
+                    report_folder,
+                    f"{group_name}_octave_spectrum.png",
+                )
+            )
+        else:
+            lines.append("*Octave spectrum plot not available*")
+        lines.append("")
+    return lines
+
+
+def _bundle_frequency_section(
+    group_data: Dict[str, Dict],
+    rendered_output_dir: Path,
+    report_folder: Path,
+) -> List[str]:
+    lines = [
+        "## Frequency Spectrum Summary",
+        "",
+        "The table below summarizes the wideband full-spectrum row for each group. "
+        "Detailed per-channel octave-band plots are generated beside the report.",
+        "",
+        _format_table_row(
+            [
+                "Group",
+                "Peak (dBFS)",
+                "RMS (dBFS)",
+                "Crest Factor (dB)",
+                "Dynamic Range (dB)",
+            ]
+        ),
+        _format_table_row(["---"] * 5),
+    ]
+    for group_name, data in group_data.items():
+        octave = data.get("octave", {})
+        lines.append(
+            _format_table_row(
+                [
+                    group_name,
+                    _format_optional_number(octave.get("max_amplitude_db"), 1),
+                    _format_optional_number(octave.get("rms_db"), 1),
+                    _format_optional_number(octave.get("crest_factor_db"), 1),
+                    _format_optional_number(octave.get("dynamic_range_db"), 1),
+                ]
+            )
+        )
+    lines.append("")
+    lines.append("### Per-Channel Core Plots")
+    lines.append("")
+    for group in group_data.values():
+        for channel in group.get("channels", []):
+            channel_dir = rendered_output_dir / channel.channel_id
+            lines.append(f"#### {channel.channel_name}")
+            lines.append("")
+            for filename, title in (
+                ("octave_spectrum.png", "Octave Spectrum"),
+                ("crest_factor.png", "Crest Factor Spectrum"),
+                ("crest_factor_time.png", "Crest Factor Over Time"),
+                ("octave_crest_factor_time.png", "Octave Crest Factor Over Time"),
+                ("histograms.png", "Linear Histogram"),
+                ("histograms_log_db.png", "Log dB Histogram"),
+            ):
+                plot_path = channel_dir / filename
+                if plot_path.exists():
+                    lines.append(
+                        _markdown_report_image(
+                            f"{title} - {channel.channel_name}",
+                            plot_path,
+                            report_folder,
+                            f"{channel.channel_id}_{filename}",
+                        )
+                    )
+                    lines.append("")
+    return lines
+
+
+def _bundle_sustained_peak_section(group_data: Dict[str, Dict]) -> List[str]:
+    lines = [
+        "## Sustained-Peak Recovery Summary",
+        "",
+        "This section summarizes independent peaks and recovery times from the "
+        "full-spectrum sustained-peak table. P95 values are used as realistic "
+        "worst-case recovery indicators.",
+        "",
+        _format_table_row(
+            [
+                "Group",
+                "Peaks",
+                "Hold Mean (ms)",
+                "Hold P95 (ms)",
+                "T3 P95 (ms)",
+                "T6 P95 (ms)",
+                "T9 P95 (ms)",
+                "T12 P95 (ms)",
+            ]
+        ),
+        _format_table_row(["---"] * 8),
+    ]
+    for group_name, data in group_data.items():
+        sustained = data.get("sustained", {})
+        lines.append(
+            _format_table_row(
+                [
+                    group_name,
+                    _format_optional_number(sustained.get("n_peaks"), 0),
+                    _format_optional_number(sustained.get("hold_ms_mean"), 1),
+                    _format_optional_number(sustained.get("hold_ms_p95"), 1),
+                    _format_optional_number(sustained.get("t3_ms_p95"), 1),
+                    _format_optional_number(sustained.get("t6_ms_p95"), 1),
+                    _format_optional_number(sustained.get("t9_ms_p95"), 1),
+                    _format_optional_number(sustained.get("t12_ms_p95"), 1),
+                ]
+            )
+        )
+    lines.append("")
+    return lines
+
+
+def _bundle_peak_decay_section(
+    rendered_output_dir: Path, report_folder: Path
+) -> List[str]:
+    lines = ["## Peak Decay Characteristics", ""]
+    decay_plot = rendered_output_dir / "peak_decay_groups.png"
+    if decay_plot.exists():
+        lines.append(
+            _markdown_report_image(
+                "Peak Decay Curves",
+                decay_plot,
+                report_folder,
+                "peak_decay_groups.png",
+            )
+        )
+    else:
+        lines.append("*Peak decay plot not available*")
+    lines.append("")
+    return lines
+
+
+def _bundle_peak_occurrence_section(group_data: Dict[str, Dict]) -> List[str]:
+    lines = [
+        "## Peak Occurrence and Duty Cycle",
+        "",
+        "This section analyzes the frequency of peak events at different amplitude "
+        "thresholds and the percentage of time the signal spends above -3 dBFS.",
+        "",
+        _format_table_row(
+            [
+                "Group",
+                "Peaks >-3dB/s",
+                "Peaks >-1dB/s",
+                "Peaks >-0.1dB/s",
+                "Loud duty % (>-3 dBFS)",
+            ]
+        ),
+        _format_table_row(["---"] * 5),
+    ]
+    for group_name, data in group_data.items():
+        advanced = data.get("advanced", {})
+        lines.append(
+            _format_table_row(
+                [
+                    group_name,
+                    _format_optional_number(
+                        advanced.get("peaks_above_minus3db_per_sec"), 1
+                    ),
+                    _format_optional_number(
+                        advanced.get("peaks_above_minus1db_per_sec"), 1
+                    ),
+                    _format_optional_number(
+                        advanced.get("peaks_above_minus0_1db_per_sec"), 2
+                    ),
+                    _format_optional_number(
+                        advanced.get("peak_distribution_loud_percent"), 4
+                    ),
+                ]
+            )
+        )
+    lines.append("")
+    for group_name, data in group_data.items():
+        advanced = data.get("advanced", {})
+        peaks_minus0_1 = float(advanced.get("peaks_above_minus0_1db_per_sec", 0.0))
+        peaks_minus1 = float(advanced.get("peaks_above_minus1db_per_sec", 0.0))
+        loud_duty = float(advanced.get("peak_distribution_loud_percent", 0.0))
+        if peaks_minus0_1 > 0.1:
+            highlight = (
+                f"frequent near-clipping peaks ({peaks_minus0_1:.2f}/s above -0.1 dBFS)"
+            )
+        elif peaks_minus1 > 1.0:
+            highlight = f"moderate hot peaks ({peaks_minus1:.1f}/s above -1 dBFS)"
+        else:
+            highlight = "low near-clipping activity"
+        lines.append(
+            f"**{group_name}:** {highlight} with {loud_duty:.4f}% duty cycle above -3 dBFS."
+        )
+        lines.append("")
+    return lines
+
+
+def _bundle_envelope_section(
+    bundle: ResultBundle,
+    rendered_output_dir: Path,
+    report_folder: Path,
+) -> List[str]:
+    lines = [
+        "## Envelope Analysis",
+        "",
+        "Pattern and independent envelope plots are rendered from compact stored "
+        "envelope windows in `envelope_plot_data.json`.",
+        "",
+    ]
+    for channel in bundle.channels():
+        lines.append(f"### {channel.channel_name}")
+        lines.append("")
+        for folder_name, label in (
+            ("pattern_envelopes", "Pattern envelope plots"),
+            ("independent_envelopes", "Independent envelope plots"),
+        ):
+            folder = rendered_output_dir / channel.channel_id / folder_name
+            png_count = len(list(folder.glob("*.png"))) if folder.exists() else 0
+            rel_folder = Path(os.path.relpath(folder, report_folder)).as_posix()
+            lines.append(f"- {label}: `{rel_folder}` ({png_count} plot files)")
+        lines.append("")
+    return lines
+
+
+def _bundle_appendix(bundle: ResultBundle, group_data: Dict[str, Dict]) -> List[str]:
+    lines = [
+        "## Appendix: Data Sources",
+        "",
+        "### Bundle Artifacts Used",
+        "",
+        "- `metadata.json`: Track and channel metadata",
+        "- `octave_band_analysis.csv`: Wideband and octave-band peak/RMS/crest data",
+        "- `time_domain_analysis.csv`: Time-sampled peak/RMS/crest metrics",
+        "- `advanced_statistics.csv`: Peak rates and duty-cycle statistics",
+        "- `sustained_peaks_summary.csv`: Peak hold and recovery statistics",
+        "- `envelope_plot_data.json`: Pattern and independent envelope replay windows",
+        "",
+        "### Channel Sources",
+        "",
+    ]
+    for group_name, data in group_data.items():
+        channels = data.get("channels", [])
+        channel_list = ", ".join(channel.channel_name for channel in channels)
+        lines.append(f"- **{group_name}:** {channel_list}")
+    lines.append("")
+    lines.append("### Bundle Location")
+    lines.append("")
+    lines.append(f"- `{bundle.path}`")
+    lines.append("")
+    return lines
+
+
+def _bundle_channel_groups(bundle: ResultBundle) -> Dict[str, List[ChannelResult]]:
+    grouped: Dict[str, List[ChannelResult]] = {
+        "Screen": [],
+        "Surround+Height": [],
+        "LFE": [],
+        "All Channels": [],
+    }
+    for channel in bundle.channels():
+        name = channel.channel_name
+        if name in {
+            "Channel 1 FL",
+            "Channel 2 FR",
+            "Channel 3 FC",
+            "Channel 1 Front Left",
+            "Channel 2 Front Right",
+            "Channel 3 Front Center",
+        }:
+            grouped["Screen"].append(channel)
+        elif "LFE" in name:
+            grouped["LFE"].append(channel)
+        elif any(
+            name.startswith(prefix)
+            for prefix in (
+                "Channel 5",
+                "Channel 6",
+                "Channel 7",
+                "Channel 8",
+                "Channel 9",
+                "Channel 10",
+                "Channel 11",
+                "Channel 12",
+            )
+        ):
+            grouped["Surround+Height"].append(channel)
+        else:
+            grouped["All Channels"].append(channel)
+    return {key: value for key, value in grouped.items() if value}
+
+
+def _bundle_group_summary(channels: List[ChannelResult]) -> Dict:
+    crest_values: List[float] = []
+    sustained_rows: List[Dict] = []
+    advanced_rows: List[Dict] = []
+    octave_rows: List[Dict] = []
+    time_summary_rows: List[Dict[str, str]] = []
+    for channel in channels:
+        time_data = channel.read_table("time_domain_analysis")
+        if not time_data.empty and "crest_factor_db" in time_data:
+            values = pd.to_numeric(time_data["crest_factor_db"], errors="coerce")
+            crest_values.extend(values[np.isfinite(values)].tolist())
+
+        sustained = channel.read_table("sustained_peaks_summary")
+        _append_full_spectrum_row(sustained, sustained_rows)
+
+        octave = channel.read_table("octave_band_analysis")
+        _append_full_spectrum_row(octave, octave_rows)
+
+        advanced = channel.read_table("advanced_statistics")
+        if not advanced.empty:
+            advanced_rows.append(dict(zip(advanced["parameter"], advanced["value"])))
+
+        time_summary = channel.read_table("time_domain_summary")
+        if not time_summary.empty:
+            time_summary_rows.append(
+                {
+                    str(row["parameter"]): str(row["value"])
+                    for _, row in time_summary.iterrows()
+                }
+            )
+
+    return {
+        "channels": channels,
+        "channel_folder": channels[0].channel_name if channels else "",
+        "crest_values": np.asarray(crest_values, dtype=float),
+        "sustained": _mean_numeric_dicts(sustained_rows),
+        "advanced": _mean_numeric_dicts(advanced_rows),
+        "octave": _mean_numeric_dicts(octave_rows),
+        "time_summary": time_summary_rows[0] if time_summary_rows else {},
+        "track_metadata": channels[0].read_json("metadata") if channels else {},
+    }
+
+
+def _bundle_report_metadata(bundle: ResultBundle) -> Dict[str, str]:
+    for channel in bundle.channels():
+        metadata = channel.read_json("metadata")
+        return {str(key): str(value) for key, value in metadata.items()}
+    return {str(key): str(value) for key, value in bundle.track.items()}
+
+
+def _append_full_spectrum_row(dataframe, rows: List[Dict]) -> None:
+    if dataframe.empty:
+        return
+    full_spectrum = dataframe[dataframe["frequency_hz"] == "Full Spectrum"]
+    if not full_spectrum.empty:
+        rows.append(full_spectrum.iloc[0].to_dict())
+
+
+def _mean_numeric_dicts(rows: List[Dict]) -> Dict[str, float]:
+    values: Dict[str, List[float]] = defaultdict(list)
+    for row in rows:
+        for key, value in row.items():
+            parsed = _as_float(value)
+            if parsed is not None:
+                values[str(key)].append(parsed)
+    return {key: float(np.mean(items)) for key, items in values.items() if items}
+
+
+def _format_optional_number(value: object, decimals: int = 1) -> str:
+    parsed = _as_float(value)
+    if parsed is None:
+        return "N/A"
+    return _format_number(parsed, decimals)
 
 
 def _generate_lfe_deep_dive(

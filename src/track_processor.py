@@ -9,9 +9,7 @@ from __future__ import annotations
 import gc
 import logging
 from pathlib import Path
-from typing import Optional
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -22,7 +20,6 @@ from src.envelope_analyzer import EnvelopeAnalyzer
 from src.music_analyzer import MusicAnalyzer
 from src.octave_filter import OctaveBandFilter
 from src.results import write_channel_result_bundle
-from src.visualization import PlotGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -107,12 +104,6 @@ class TrackProcessor:
                 time_domain_crest_factor_mode=time_domain_mode,
                 analysis_config=config.get("analysis", {}),
             )
-            plot_generator = PlotGenerator(
-                sample_rate=self.sample_rate,
-                original_peak=original_peak,
-                dpi=plot_dpi,
-                peak_hold_tau=peak_hold_tau,
-            )
             envelope_analyzer = EnvelopeAnalyzer(
                 sample_rate=self.sample_rate, original_peak=original_peak
             )
@@ -167,83 +158,6 @@ class TrackProcessor:
                 },
             }
 
-            # Extract track name from path (remove extension)
-            track_name = track_path.stem
-
-            # Generate plots
-            logger.info(f"Generating plots for channel {channel_name}...")
-            plot_generator.create_octave_spectrum_plot(
-                analysis_results,
-                output_path=str(channel_output_dir / "octave_spectrum.png"),
-                time_analysis=time_analysis,
-                chunk_octave_analysis=chunk_octave_analysis,
-                track_name=track_name,
-                channel_name=channel_name,
-            )
-            plot_generator.create_crest_factor_plot(
-                analysis_results,
-                output_path=str(channel_output_dir / "crest_factor.png"),
-                time_analysis=time_analysis,
-                chunk_octave_analysis=chunk_octave_analysis,
-                track_name=track_name,
-                channel_name=channel_name,
-            )
-            plot_generator.create_histogram_plots(
-                analysis_results,
-                output_dir=str(channel_output_dir),
-                octave_bank=octave_bank,
-                track_name=track_name,
-                channel_name=channel_name,
-            )
-            plot_generator.create_histogram_plots_log_db(
-                analysis_results,
-                output_dir=str(channel_output_dir),
-                config=config.get_plotting_config(),
-                octave_bank=octave_bank,
-                track_name=track_name,
-                channel_name=channel_name,
-            )
-            plot_generator.create_crest_factor_time_plot(
-                time_analysis,
-                output_path=str(channel_output_dir / "crest_factor_time.png"),
-                track_name=track_name,
-                channel_name=channel_name,
-            )
-            octave_cf_png = str(channel_output_dir / "octave_crest_factor_time.png")
-            if skip_octave_crest_factor_time:
-                if export_octave_crest_factor_time_data:
-                    # Reuse the existing computation path by calling the plot method with a .png output;
-                    # it will also emit a sibling .csv (same stem) for later processing.
-                    plot_generator.create_octave_crest_factor_time_plot(
-                        octave_bank,
-                        time_analysis,
-                        center_frequencies,
-                        output_path=octave_cf_png,
-                        track_name=track_name,
-                        channel_name=channel_name,
-                    )
-                    # Remove the PNG if it was created (we only want data in this mode).
-                    try:
-                        Path(octave_cf_png).unlink(missing_ok=True)
-                    except Exception:
-                        pass
-                    logger.info(
-                        "Skipped octave crest factor PNG; exported octave_crest_factor_time.csv for later use."
-                    )
-                else:
-                    logger.info(
-                        "Skipping octave crest factor time plot (octave_crest_factor_time.png)."
-                    )
-            else:
-                plot_generator.create_octave_crest_factor_time_plot(
-                    octave_bank,
-                    time_analysis,
-                    center_frequencies,
-                    output_path=octave_cf_png,
-                    track_name=track_name,
-                    channel_name=channel_name,
-                )
-
             # Envelope statistics analysis
             logger.info(
                 f"Performing envelope statistics analysis for channel {channel_name}..."
@@ -254,33 +168,13 @@ class TrackProcessor:
                 config=config.get("envelope_analysis", {}),
             )
 
-            # Create envelope visualization plots
             logger.info(
-                f"Creating envelope visualization plots for channel {channel_name}..."
-            )
-            plot_generator.create_pattern_envelope_plots(
-                envelope_stats,
-                center_frequencies,
-                output_dir=str(channel_output_dir),
-                config=config.get("envelope_analysis", {}),
-                track_name=track_name,
-                channel_name=channel_name,
-            )
-            plot_generator.create_independent_envelope_plots(
-                envelope_stats,
-                center_frequencies,
-                output_dir=str(channel_output_dir),
-                config=config.get("envelope_analysis", {}),
-                track_name=track_name,
-                channel_name=channel_name,
+                "Analysis data ready for channel %s; graph rendering is handled by src.render.",
+                channel_name,
             )
 
             # Memory cleanup
-            plt.close("all")
             gc.collect()
-
-            # Export results to CSV
-            logger.info(f"Exporting results to CSV for channel {channel_name}...")
 
             # Prepare channel-specific metadata
             track_metadata = {
@@ -300,15 +194,27 @@ class TrackProcessor:
                 **octave_processing_metadata,
             }
 
-            data_exporter.export_comprehensive_results(
+            logger.info(
+                f"Calculating advanced statistics for channel {channel_name}..."
+            )
+            advanced_statistics = data_exporter.calculate_advanced_statistics(
+                channel_data,
                 analysis_results,
                 time_analysis,
-                track_metadata,
-                str(channel_output_dir / "analysis_results.csv"),
-                chunk_octave_analysis=chunk_octave_analysis,
-                audio_data=channel_data,
-                envelope_statistics=envelope_stats,
             )
+
+            if config.get("export.generate_legacy_csv", False):
+                logger.info(f"Exporting legacy CSV for channel {channel_name}...")
+                channel_output_dir.mkdir(parents=True, exist_ok=True)
+                data_exporter.export_comprehensive_results(
+                    analysis_results,
+                    time_analysis,
+                    track_metadata,
+                    str(channel_output_dir / "analysis_results.csv"),
+                    chunk_octave_analysis=chunk_octave_analysis,
+                    audio_data=channel_data,
+                    envelope_statistics=envelope_stats,
+                )
 
             if config.get("export.generate_analysis_bundle", True):
                 write_channel_result_bundle(
@@ -324,6 +230,7 @@ class TrackProcessor:
                     plotting_config=config.get_plotting_config(),
                     envelope_config=config.get("envelope_analysis", {}),
                     analysis_config=config.get("analysis", {}),
+                    advanced_statistics=advanced_statistics,
                 )
 
             # Memory cleanup

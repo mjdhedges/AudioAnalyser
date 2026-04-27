@@ -75,14 +75,9 @@ def test_analyze_single_track():
             track_name = Path(tmp_path).stem
             track_output_dir = output_dir / track_name
 
-            # For stereo files, channels are processed separately
-            # Check for channel folders
-            channel_folders = [d for d in track_output_dir.iterdir() if d.is_dir()]
-            assert len(channel_folders) >= 1  # At least one channel folder
-
-            # Check that CSV exists (might be in channel folder or root)
-            csv_files = list(track_output_dir.rglob("analysis_results.csv"))
-            assert len(csv_files) > 0
+            bundle_dir = track_output_dir / f"{track_name}.aaresults"
+            assert (bundle_dir / "manifest.json").exists()
+            assert not list(track_output_dir.rglob("analysis_results.csv"))
 
     finally:
         # Clean up
@@ -126,9 +121,9 @@ def test_main_with_valid_audio_file():
         # For multi-channel, it goes to channel subfolders
         assert track_output_dir.exists()
 
-        # CSV might be in track folder or channel subfolder
-        csv_files = list(track_output_dir.rglob("analysis_results.csv"))
-        assert len(csv_files) > 0
+        bundle_dir = track_output_dir / f"{track_name}.aaresults"
+        assert (bundle_dir / "manifest.json").exists()
+        assert not list(track_output_dir.rglob("analysis_results.csv"))
 
     finally:
         # Clean up

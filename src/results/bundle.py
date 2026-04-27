@@ -37,6 +37,7 @@ def write_channel_result_bundle(
     plotting_config: Dict[str, Any],
     envelope_config: Dict[str, Any],
     analysis_config: Dict[str, Any],
+    advanced_statistics: Optional[Dict[str, Any]] = None,
 ) -> Path:
     """Write or update one channel inside a per-track result bundle.
 
@@ -72,6 +73,11 @@ def write_channel_result_bundle(
 
     _write_octave_band_table(channel_dir / "octave_band_analysis.csv", analysis_results)
     _write_time_domain_table(channel_dir / "time_domain_analysis.csv", time_analysis)
+    _write_time_domain_summary(channel_dir / "time_domain_summary.csv", time_analysis)
+    _write_key_value_table(
+        channel_dir / "advanced_statistics.csv",
+        advanced_statistics or {},
+    )
     _write_extreme_chunk_table(
         channel_dir / "extreme_chunks_octave_analysis.csv",
         analysis_results,
@@ -91,18 +97,22 @@ def write_channel_result_bundle(
         sample_rate=int(track_metadata.get("sample_rate", 44100)),
         peak_hold_tau=float(analysis_config.get("peak_hold_tau_seconds", 1.0)),
     )
-    if envelope_statistics is not None:
-        _write_json(
-            channel_dir / "envelope_plot_data.json",
-            _json_safe(envelope_statistics),
-        )
-
+    _write_envelope_summary_tables(channel_dir, envelope_statistics or {})
     _update_manifest(
         bundle_dir=bundle_dir,
         track_metadata=metadata,
         channel_id=channel_id,
         channel_dir=channel_dir,
     )
+    if envelope_statistics is not None:
+        try:
+            _write_json(
+                channel_dir / "envelope_plot_data.json",
+                _extract_envelope_plot_data(envelope_statistics),
+            )
+        except Exception as exc:
+            logger.warning("Could not write envelope plot data: %s", exc)
+
     logger.info("Analysis result bundle updated: %s", bundle_dir)
     return bundle_dir
 
@@ -155,10 +165,16 @@ def _update_manifest(
             "envelope_config": "envelope_config.json",
             "octave_band_analysis": "octave_band_analysis.csv",
             "time_domain_analysis": "time_domain_analysis.csv",
+            "time_domain_summary": "time_domain_summary.csv",
+            "advanced_statistics": "advanced_statistics.csv",
             "extreme_chunks_octave_analysis": "extreme_chunks_octave_analysis.csv",
             "histogram_linear": "histogram_linear.csv",
             "histogram_log_db": "histogram_log_db.csv",
             "octave_time_metrics": "octave_time_metrics.csv",
+            "envelope_statistics": "envelope_statistics.csv",
+            "envelope_pattern_analysis": "envelope_pattern_analysis.csv",
+            "sustained_peaks_summary": "sustained_peaks_summary.csv",
+            "sustained_peaks_events": "sustained_peaks_events.csv",
             "envelope_plot_data": "envelope_plot_data.json",
         },
     }
@@ -220,6 +236,44 @@ def _write_time_domain_table(path: Path, time_analysis: Dict[str, Any]) -> None:
     _write_dataframe(path, pd.DataFrame(rows))
 
 
+def _write_time_domain_summary(path: Path, time_analysis: Dict[str, Any]) -> None:
+    valid_crest_db = np.asarray(time_analysis.get("crest_factors_db", []), dtype=float)
+    valid_peak_dbfs = np.asarray(time_analysis.get("peak_levels_dbfs", []), dtype=float)
+    valid_rms_dbfs = np.asarray(time_analysis.get("rms_levels_dbfs", []), dtype=float)
+    valid_crest_db = valid_crest_db[np.isfinite(valid_crest_db)]
+    valid_peak_dbfs = valid_peak_dbfs[np.isfinite(valid_peak_dbfs)]
+    valid_rms_dbfs = valid_rms_dbfs[np.isfinite(valid_rms_dbfs)]
+
+    summary = {
+        "chunk_duration_seconds": time_analysis.get("chunk_duration"),
+        "total_chunks": time_analysis.get("num_chunks"),
+        "time_domain_mode": time_analysis.get("time_domain_mode", "unknown"),
+        "time_domain_time_step_seconds": time_analysis.get("time_step_seconds"),
+        "time_domain_rms_method": time_analysis.get(
+            "time_domain_rms_method", "unknown"
+        ),
+        "time_domain_peak_method": time_analysis.get(
+            "time_domain_peak_method", "unknown"
+        ),
+        "crest_factor_mean_db": _array_stat(valid_crest_db, np.mean),
+        "crest_factor_std_db": _array_stat(valid_crest_db, np.std),
+        "crest_factor_min_db": _array_stat(valid_crest_db, np.min),
+        "crest_factor_max_db": _array_stat(valid_crest_db, np.max),
+        "peak_level_mean_dbfs": _array_stat(valid_peak_dbfs, np.mean),
+        "peak_level_std_dbfs": _array_stat(valid_peak_dbfs, np.std),
+        "rms_level_mean_dbfs": _array_stat(valid_rms_dbfs, np.mean),
+        "rms_level_std_dbfs": _array_stat(valid_rms_dbfs, np.std),
+    }
+    _write_key_value_table(path, summary)
+
+
+def _write_key_value_table(path: Path, values: Dict[str, Any]) -> None:
+    rows = [
+        {"parameter": key, "value": _json_safe(value)} for key, value in values.items()
+    ]
+    _write_dataframe(path, pd.DataFrame(rows))
+
+
 def _write_extreme_chunk_table(
     path: Path,
     analysis_results: Dict[str, Any],
@@ -252,6 +306,97 @@ def _write_extreme_chunk_table(
                     }
                 )
     _write_dataframe(path, pd.DataFrame(rows))
+
+
+def _write_envelope_summary_tables(
+    channel_dir: Path,
+    envelope_statistics: Dict[str, Any],
+) -> None:
+    envelope_rows = []
+    pattern_rows = []
+    sustained_rows = []
+    event_rows = []
+
+    for frequency_hz, band_data in envelope_statistics.items():
+        for envelope in band_data.get("worst_case_envelopes", []):
+            decay = envelope.get("decay_times", {})
+            envelope_rows.append(
+                {
+                    "frequency_hz": frequency_hz,
+                    "analysis_type": "worst_case",
+                    "rank": envelope.get("rank"),
+                    "peak_value_db": envelope.get("peak_value_db"),
+                    "peak_time_seconds": envelope.get("peak_time_seconds"),
+                    "attack_time_ms": envelope.get("attack_time_ms"),
+                    "peak_hold_time_ms": envelope.get("peak_hold_time_ms"),
+                    "decay_3db_ms": decay.get("decay_3db_ms"),
+                    "decay_6db_ms": decay.get("decay_6db_ms"),
+                    "decay_9db_ms": decay.get("decay_9db_ms"),
+                    "decay_12db_ms": decay.get("decay_12db_ms"),
+                    "decay_12db_reached": decay.get("decay_12db_reached", False),
+                }
+            )
+
+        pattern_analysis = band_data.get("pattern_analysis", {})
+        patterns_detected = int(pattern_analysis.get("patterns_detected", 0) or 0)
+        for pattern_num in range(1, patterns_detected + 1):
+            pattern = pattern_analysis.get(f"pattern_{pattern_num}")
+            if not pattern:
+                continue
+            pattern_rows.append(
+                {
+                    "frequency_hz": frequency_hz,
+                    "pattern_num": pattern_num,
+                    "num_repetitions": pattern.get("num_repetitions"),
+                    "mean_interval_seconds": pattern.get("mean_interval_seconds"),
+                    "std_interval_seconds": pattern.get("std_interval_seconds"),
+                    "median_interval_seconds": pattern.get("median_interval_seconds"),
+                    "min_interval_seconds": pattern.get("min_interval_seconds"),
+                    "max_interval_seconds": pattern.get("max_interval_seconds"),
+                    "pattern_regularity_score": pattern.get("pattern_regularity_score"),
+                    "pattern_confidence": pattern.get("pattern_confidence"),
+                    "beats_per_minute": pattern.get("beats_per_minute"),
+                }
+            )
+
+        sustained = band_data.get("sustained_peaks_summary", {})
+        if sustained:
+            row = {"frequency_hz": frequency_hz, "n_peaks": sustained.get("n_peaks", 0)}
+            for metric in ("hold_ms", "t3_ms", "t6_ms", "t9_ms", "t12_ms"):
+                stats = sustained.get(metric, {})
+                for stat_name in ("mean", "median", "p90", "p95", "max"):
+                    row[f"{metric}_{stat_name}"] = stats.get(stat_name, 0.0)
+            sustained_rows.append(row)
+
+        for event in band_data.get("sustained_peaks_events", []):
+            event_rows.append(
+                {
+                    "frequency_hz": frequency_hz,
+                    "peak_time_seconds": event.get("peak_time_seconds", 0.0),
+                    "peak_value_db": event.get("peak_value_db", 0.0),
+                    "hold_ms": event.get("hold_ms", 0.0),
+                    "t3_ms": event.get("t3_ms", 0.0),
+                    "t6_ms": event.get("t6_ms", 0.0),
+                    "t9_ms": event.get("t9_ms", 0.0),
+                    "t12_ms": event.get("t12_ms", 0.0),
+                }
+            )
+
+    _write_dataframe(
+        channel_dir / "envelope_statistics.csv", pd.DataFrame(envelope_rows)
+    )
+    _write_dataframe(
+        channel_dir / "envelope_pattern_analysis.csv",
+        pd.DataFrame(pattern_rows),
+    )
+    _write_dataframe(
+        channel_dir / "sustained_peaks_summary.csv",
+        pd.DataFrame(sustained_rows),
+    )
+    _write_dataframe(
+        channel_dir / "sustained_peaks_events.csv",
+        pd.DataFrame(event_rows),
+    )
 
 
 def _write_histogram_tables(
@@ -412,6 +557,54 @@ def _frequency_from_label(label: Any) -> Optional[float]:
         return None
 
 
+def _extract_envelope_plot_data(envelope_statistics: Dict[str, Any]) -> Dict[str, Any]:
+    """Extract compact envelope fields needed for plot replay."""
+    plot_data: Dict[str, Any] = {}
+    for frequency_label, band_data in envelope_statistics.items():
+        band_plot_data: Dict[str, Any] = {}
+        pattern_analysis = band_data.get("pattern_analysis", {})
+        patterns_detected = int(pattern_analysis.get("patterns_detected", 0) or 0)
+        compact_patterns: Dict[str, Any] = {"patterns_detected": patterns_detected}
+        for pattern_num in range(1, patterns_detected + 1):
+            pattern_key = f"pattern_{pattern_num}"
+            pattern = pattern_analysis.get(pattern_key)
+            if not pattern:
+                continue
+            compact_patterns[pattern_key] = {
+                "num_repetitions": pattern.get("num_repetitions"),
+                "mean_interval_seconds": pattern.get("mean_interval_seconds"),
+                "std_interval_seconds": pattern.get("std_interval_seconds"),
+                "median_interval_seconds": pattern.get("median_interval_seconds"),
+                "min_interval_seconds": pattern.get("min_interval_seconds"),
+                "max_interval_seconds": pattern.get("max_interval_seconds"),
+                "pattern_regularity_score": pattern.get("pattern_regularity_score"),
+                "pattern_confidence": pattern.get("pattern_confidence"),
+                "beats_per_minute": pattern.get("beats_per_minute"),
+                "peak_times_seconds": pattern.get("peak_times_seconds", []),
+                "envelope_windows": pattern.get("envelope_windows", []),
+                "time_windows_ms": pattern.get("time_windows_ms", []),
+            }
+        band_plot_data["pattern_analysis"] = compact_patterns
+
+        compact_worst_cases = []
+        for envelope in band_data.get("worst_case_envelopes", []):
+            compact_worst_cases.append(
+                {
+                    "rank": envelope.get("rank"),
+                    "peak_value_db": envelope.get("peak_value_db"),
+                    "peak_time_seconds": envelope.get("peak_time_seconds"),
+                    "attack_time_ms": envelope.get("attack_time_ms"),
+                    "peak_hold_time_ms": envelope.get("peak_hold_time_ms"),
+                    "decay_times": envelope.get("decay_times", {}),
+                    "envelope_window": envelope.get("envelope_window"),
+                    "time_window_ms": envelope.get("time_window_ms"),
+                }
+            )
+        band_plot_data["worst_case_envelopes"] = compact_worst_cases
+        plot_data[str(frequency_label)] = band_plot_data
+    return _json_safe(plot_data)
+
+
 def _write_dataframe(path: Path, dataframe: pd.DataFrame) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     dataframe.to_csv(path, index=False)
@@ -420,6 +613,10 @@ def _write_dataframe(path: Path, dataframe: pd.DataFrame) -> None:
 def _write_json(path: Path, data: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def _array_stat(values: np.ndarray, func) -> Optional[float]:
+    return float(func(values)) if values.size else None
 
 
 def _json_safe(value: Any) -> Any:

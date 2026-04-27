@@ -361,6 +361,11 @@ batch_dpi = 150
 # Used when processing individual files
 high_quality_dpi = 300
 
+# DPI used by python -m src.render when --dpi is not supplied.
+# Keep this at 150 to match historical generated graph dimensions, or increase
+# it for higher-quality standalone renders.
+render_dpi = 150
+
 # Bounding box for saved plots
 # "tight" removes excess whitespace around plots
 bbox_inches = "tight"
@@ -500,6 +505,10 @@ exclude_atmos = true
 # This is the future rendering/UI boundary and stores derived data needed
 # to recreate graphs without reloading the original audio.
 generate_analysis_bundle = true
+
+# Also write the old per-channel analysis_results.csv files.
+# Disabled by default now that .aaresults is the analysis/render boundary.
+generate_legacy_csv = false
 
 # Include track metadata section in CSV
 # Metadata includes: filename, duration, sample rate, channels, etc.

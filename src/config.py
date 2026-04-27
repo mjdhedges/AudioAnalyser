@@ -100,6 +100,9 @@ class Config:
                 "log_histogram_max_db": 0,
                 "log_histogram_max_bin_size_db": 3.0,
                 "dpi": 300,
+                "render_dpi": 150,
+                "batch_dpi": 150,
+                "high_quality_dpi": 300,
                 "bbox_inches": "tight",
             },
             "advanced_stats": {
@@ -128,6 +131,7 @@ class Config:
             },
             "export": {
                 "generate_analysis_bundle": True,
+                "generate_legacy_csv": False,
                 "include_track_metadata": True,
                 "include_advanced_statistics": True,
                 "include_octave_band_analysis": True,

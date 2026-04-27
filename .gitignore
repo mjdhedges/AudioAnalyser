@@ -178,10 +178,14 @@ Tracks/
 
 # Analysis output directory
 analysis/
+*.aaresults/
 
 # Additional generated analysis/report directories
 analysis_test/
+e2e_analysis/
+e2e_render/
 reports/
+rendered/
 
 # Cache directory
 cache/

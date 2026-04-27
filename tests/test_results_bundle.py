@@ -98,6 +98,7 @@ def test_write_channel_result_bundle_contains_plot_replay_data(tmp_path):
         },
         envelope_config={"envelope_plots_num_pattern_envelopes": 10},
         analysis_config={"peak_hold_tau_seconds": 1.0},
+        advanced_statistics={"true_peak_to_rms_ratio_db": 12.0},
     )
 
     channel_dir = bundle_dir / "channels" / "channel_01"
@@ -110,6 +111,12 @@ def test_write_channel_result_bundle_contains_plot_replay_data(tmp_path):
     assert (channel_dir / "histogram_linear.csv").exists()
     assert (channel_dir / "histogram_log_db.csv").exists()
     assert (channel_dir / "octave_time_metrics.csv").exists()
+    assert (channel_dir / "advanced_statistics.csv").exists()
+    assert (channel_dir / "time_domain_summary.csv").exists()
+    assert (channel_dir / "envelope_statistics.csv").exists()
+    assert (channel_dir / "envelope_pattern_analysis.csv").exists()
+    assert (channel_dir / "sustained_peaks_summary.csv").exists()
+    assert (channel_dir / "sustained_peaks_events.csv").exists()
     assert (channel_dir / "envelope_plot_data.json").exists()
 
     octave_time = pd.read_csv(channel_dir / "octave_time_metrics.csv")
@@ -121,6 +128,12 @@ def test_write_channel_result_bundle_contains_plot_replay_data(tmp_path):
         "rms_dbfs",
     }
     assert set(octave_time["frequency_hz"]) == {10.0, 20.0}
+
+    advanced_statistics = pd.read_csv(channel_dir / "advanced_statistics.csv")
+    assert "true_peak_to_rms_ratio_db" in set(advanced_statistics["parameter"])
+
+    envelope_summary = pd.read_csv(channel_dir / "envelope_statistics.csv")
+    assert envelope_summary.loc[0, "peak_value_db"] == -6.0
 
     envelope_data = json.loads((channel_dir / "envelope_plot_data.json").read_text())
     assert envelope_data["10.000"]["worst_case_envelopes"][0]["envelope_window"] == [
