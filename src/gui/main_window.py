@@ -61,10 +61,10 @@ class MainWindow(QMainWindow):
         self.max_memory_gb.setValue(8.0)
         self.max_memory_gb.setSuffix(" GB")
 
-        self.render_after_analysis = QCheckBox(
-            "Render graphs and report after analysis"
-        )
+        self.render_after_analysis = QCheckBox("Render graphs after analysis")
         self.render_after_analysis.setChecked(True)
+        self.generate_report = QCheckBox("Generate Markdown report")
+        self.generate_report.setChecked(True)
 
         self.status_label = QLabel("Ready")
         self.status_label.setAlignment(Qt.AlignLeft)
@@ -87,6 +87,7 @@ class MainWindow(QMainWindow):
         form.addRow("Batch workers", self.batch_workers)
         form.addRow("Max memory", self.max_memory_gb)
         form.addRow("", self.render_after_analysis)
+        form.addRow("", self.generate_report)
 
         button_row = QHBoxLayout()
         button_row.addWidget(self.start_button)
@@ -134,6 +135,7 @@ class MainWindow(QMainWindow):
     def _connect_signals(self) -> None:
         self.start_button.clicked.connect(self.start_analysis)
         self.cancel_button.clicked.connect(self.cancel_process)
+        self.render_after_analysis.toggled.connect(self.generate_report.setEnabled)
 
     def _choose_input_file(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -205,6 +207,7 @@ class MainWindow(QMainWindow):
             self._append_log(f"Analysis output: {analysis_output_dir(project_dir)}")
             if self.render_after_analysis.isChecked():
                 self._append_log(f"Render output: {render_output_dir(project_dir)}")
+                self._append_log(f"Markdown report: {self.generate_report.isChecked()}")
         self._append_log(f"$ {' '.join(command)}")
 
         self.process = QProcess(self)
@@ -239,7 +242,7 @@ class MainWindow(QMainWindow):
                     analysis_output_dir=analysis_dir,
                 ),
                 output_dir=render_output_dir(project_dir),
-                reports=True,
+                reports=self.generate_report.isChecked(),
             )
             self._start_command(build_render_command(render_options), "render")
             return

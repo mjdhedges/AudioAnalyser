@@ -88,6 +88,20 @@ def test_build_render_command_adds_reports_flag() -> None:
     ]
 
 
+def test_build_render_command_can_skip_reports() -> None:
+    """Render command should allow plot-only rendering."""
+    command = build_render_command(
+        RenderCommandOptions(
+            results_dir=Path("analysis"),
+            output_dir=Path("rendered"),
+            reports=False,
+        ),
+        python_executable="python",
+    )
+
+    assert "--reports" not in command
+
+
 def test_resolve_render_results_path_uses_single_file_bundle(tmp_path) -> None:
     """Single-file GUI runs should render only the just-created bundle."""
     input_path = tmp_path / "Sinewave 30sec.wav"

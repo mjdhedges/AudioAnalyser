@@ -152,7 +152,8 @@ python -m src.main --help
 
 The GUI asks for an input file or folder and one project folder. It writes
 analysis bundles to `<project>/analysis/` and rendered plots/reports to
-`<project>/rendered/`.
+`<project>/rendered/`. Rendering and Markdown report generation can be toggled
+from the GUI.
 
 ### Command Line Options
 
