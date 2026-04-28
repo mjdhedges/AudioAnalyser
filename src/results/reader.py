@@ -24,13 +24,18 @@ class ChannelResult:
     def read_json(self, artifact_name: str) -> Dict[str, Any]:
         """Read a JSON artifact for this channel."""
         path = self.artifact_path(artifact_name)
-        return json.loads(path.read_text(encoding="utf-8"))
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid JSON in artifact {artifact_name}: {path}") from exc
 
     def read_table(self, artifact_name: str) -> pd.DataFrame:
         """Read a tabular CSV artifact for this channel."""
         try:
             return pd.read_csv(self.artifact_path(artifact_name))
         except EmptyDataError:
+            return pd.DataFrame()
+        except Exception:
             return pd.DataFrame()
 
     def artifact_path(self, artifact_name: str) -> Path:

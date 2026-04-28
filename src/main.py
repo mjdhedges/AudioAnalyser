@@ -14,7 +14,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import click
 import numpy as np
@@ -259,6 +259,48 @@ def resolve_track_output_dir(
 def _result_bundle_dir(track_output_dir: Path, track_path: Path) -> Path:
     """Return the expected result bundle path for ``track_path``."""
     return track_output_dir / f"{track_path.stem}.aaresults"
+
+
+def _summarize_bundle_processing(bundle_dir: Path) -> Optional[str]:
+    """Best-effort summary of bundle processing warnings/missing artifacts."""
+    manifest_path = bundle_dir / "manifest.json"
+    if not manifest_path.exists():
+        return None
+    try:
+        manifest: dict[str, Any] = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+    channels = manifest.get("channels") or []
+    if not isinstance(channels, list) or not channels:
+        return None
+
+    missing_items: list[str] = []
+    warnings: list[str] = []
+    for channel in channels:
+        if not isinstance(channel, dict):
+            continue
+        processing = channel.get("processing") or {}
+        missing = processing.get("missing_artifacts") or []
+        if isinstance(missing, list) and missing:
+            channel_id = str(channel.get("channel_id") or "?")
+            missing_items.append(f"{channel_id}: {', '.join(map(str, missing))}")
+        channel_warnings = processing.get("warnings") or []
+        if isinstance(channel_warnings, list):
+            for msg in channel_warnings:
+                if msg:
+                    warnings.append(str(msg))
+
+    parts: list[str] = []
+    if missing_items:
+        parts.append("missing artifacts: " + "; ".join(missing_items[:4]))
+        if len(missing_items) > 4:
+            parts.append(f"+{len(missing_items) - 4} more channels")
+    if warnings:
+        parts.append("warnings: " + "; ".join(warnings[:2]))
+        if len(warnings) > 2:
+            parts.append(f"+{len(warnings) - 2} more")
+    return " | ".join(parts) if parts else None
 
 
 def _is_channel_output_folder_name(name: str) -> bool:
@@ -1328,6 +1370,22 @@ def main(
                                     )
                                 else:
                                     failed_analyses += 1
+                                    details = None
+                                    try:
+                                        legacy_csv_enabled = bool(
+                                            config.get("export.generate_legacy_csv", False)
+                                        )
+                                        track_output_dir = resolve_track_output_dir(
+                                            output_dir,
+                                            track_path,
+                                            tracks_dir,
+                                            include_track_name=legacy_csv_enabled,
+                                        )
+                                        details = _summarize_bundle_processing(
+                                            _result_bundle_dir(track_output_dir, track_path)
+                                        )
+                                    except Exception:
+                                        details = None
                                     _emit_progress(
                                         progress_json,
                                         "file_finished",
@@ -1337,6 +1395,7 @@ def main(
                                         name=track_path.name,
                                         success=False,
                                         elapsed_seconds=elapsed_s,
+                                        error=details,
                                     )
                                     logger.error(
                                         f"[{idx}/{total_tracks}] ✗ {track_path.name}"

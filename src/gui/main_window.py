@@ -113,11 +113,14 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(0)
         self.progress_bar.setFormat("0/0 files")
 
-        self.files_table = QTableWidget(0, 4)
-        self.files_table.setHorizontalHeaderLabels(["#", "File", "Status", "Time"])
+        self.files_table = QTableWidget(0, 5)
+        self.files_table.setHorizontalHeaderLabels(
+            ["#", "File", "Status", "Time", "Details"]
+        )
         self.files_table.verticalHeader().setVisible(False)
         self.files_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.files_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.files_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
 
         self.log_output = QTextEdit()
         self.log_output.setReadOnly(True)
@@ -352,6 +355,8 @@ class MainWindow(QMainWindow):
                 f"{self.progress_tracker.completed_files}/"
                 f"{self.progress_tracker.total_files} {status}: {event.get('name')}"
             )
+            if event.get("error"):
+                self._append_log(f"Details for {event.get('name')}: {event.get('error')}")
         elif event_name == "analysis_finished":
             self.status_label.setText(
                 "Analysis complete: "
@@ -370,11 +375,13 @@ class MainWindow(QMainWindow):
             if file_progress.elapsed_seconds is not None
             else ""
         )
+        details = file_progress.error or ""
         values = [
             str(file_progress.index),
             file_progress.name,
             file_progress.status,
             elapsed,
+            details,
         ]
         for column, value in enumerate(values):
             self.files_table.setItem(row, column, QTableWidgetItem(value))

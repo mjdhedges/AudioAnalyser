@@ -790,13 +790,24 @@ class EnvelopeAnalyzer:
             rms_envelope_db_clean[rms_envelope_db_clean == -np.inf] = -120.0
             
             # Detect peaks using scipy
-            peak_indices, peak_properties = sp_signal.find_peaks(
-                rms_envelope_db_clean,
-                height=min_height_db,
-                distance=min_distance_samples
+            try:
+                peak_indices, peak_properties = sp_signal.find_peaks(
+                    rms_envelope_db_clean,
+                    height=min_height_db,
+                    distance=min_distance_samples,
+                )
+            except MemoryError as exc:
+                logger.warning(
+                    "Skipping peak detection for %s due to memory pressure: %s",
+                    freq_label,
+                    exc,
+                )
+                peak_indices = np.array([], dtype=int)
+                peak_properties = {"peak_heights": np.array([], dtype=float)}
+
+            peak_values_db = (
+                rms_envelope_db_clean[peak_indices] if len(peak_indices) else np.array([])
             )
-            
-            peak_values_db = rms_envelope_db_clean[peak_indices]
             
             band_results = {}
             

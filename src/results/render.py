@@ -311,7 +311,7 @@ def render_bundle_envelope_plots(
         envelope_config = channel.read_json("envelope_config")
         try:
             envelope_data = channel.read_json("envelope_plot_data")
-        except (FileNotFoundError, KeyError):
+        except (FileNotFoundError, KeyError, ValueError):
             continue
 
         title_suffix = _title_suffix(bundle, channel, metadata)

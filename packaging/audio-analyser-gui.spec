@@ -7,7 +7,9 @@ from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
-ROOT = Path(SPECPATH).parent.parent
+# SPECPATH is the directory containing this spec file (``packaging/``).
+# We want the repository root (parent of ``packaging/``).
+ROOT = Path(SPECPATH).parent
 ICON = ROOT / "audioanalyser_icon.jpeg"
 
 datas = [

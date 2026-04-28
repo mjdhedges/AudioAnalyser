@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
@@ -64,6 +65,7 @@ def write_channel_result_bundle(
     channel_id = f"channel_{channel_index + 1:02d}"
     channel_dir = bundle_dir / "channels" / channel_id
     channel_dir.mkdir(parents=True, exist_ok=True)
+    processing_warnings: list[str] = []
 
     metadata = _json_safe(track_metadata)
     _write_json(channel_dir / "metadata.json", metadata)
@@ -83,11 +85,13 @@ def write_channel_result_bundle(
         analysis_results,
         chunk_octave_analysis,
     )
-    _write_histogram_tables(
+    processing_warnings.extend(
+        _write_histogram_tables(
         channel_dir=channel_dir,
         analysis_results=analysis_results,
         plotting_config=plotting_config,
         original_peak=float(track_metadata.get("original_peak", 1.0) or 1.0),
+    )
     )
     _write_octave_time_metrics(
         channel_dir / "octave_time_metrics.csv",
@@ -98,12 +102,6 @@ def write_channel_result_bundle(
         peak_hold_tau=float(analysis_config.get("peak_hold_tau_seconds", 1.0)),
     )
     _write_envelope_summary_tables(channel_dir, envelope_statistics or {})
-    _update_manifest(
-        bundle_dir=bundle_dir,
-        track_metadata=metadata,
-        channel_id=channel_id,
-        channel_dir=channel_dir,
-    )
     if envelope_statistics is not None:
         try:
             _write_json(
@@ -111,7 +109,17 @@ def write_channel_result_bundle(
                 _extract_envelope_plot_data(envelope_statistics),
             )
         except Exception as exc:
-            logger.warning("Could not write envelope plot data: %s", exc)
+            message = f"Could not write envelope plot data: {exc}"
+            processing_warnings.append(message)
+            logger.warning(message)
+
+    _update_manifest(
+        bundle_dir=bundle_dir,
+        track_metadata=metadata,
+        channel_id=channel_id,
+        channel_dir=channel_dir,
+        processing_warnings=processing_warnings,
+    )
 
     logger.info("Analysis result bundle updated: %s", bundle_dir)
     return bundle_dir
@@ -122,6 +130,7 @@ def _update_manifest(
     track_metadata: Dict[str, Any],
     channel_id: str,
     channel_dir: Path,
+    processing_warnings: Optional[list[str]] = None,
 ) -> None:
     manifest_path = bundle_dir / "manifest.json"
     if manifest_path.exists():
@@ -177,6 +186,19 @@ def _update_manifest(
             "sustained_peaks_events": "sustained_peaks_events.csv",
             "envelope_plot_data": "envelope_plot_data.json",
         },
+    }
+    artifacts = channels[channel_id]["artifacts"]
+    present: Dict[str, bool] = {}
+    missing: list[str] = []
+    for artifact_name, rel_path in artifacts.items():
+        is_present = (channel_dir / rel_path).exists()
+        present[str(artifact_name)] = bool(is_present)
+        if not is_present:
+            missing.append(str(artifact_name))
+    channels[channel_id]["processing"] = {
+        "warnings": list(processing_warnings or []),
+        "artifacts_present": present,
+        "missing_artifacts": missing,
     }
     manifest["channels"] = [
         channels[key]
@@ -404,7 +426,8 @@ def _write_histogram_tables(
     analysis_results: Dict[str, Any],
     plotting_config: Dict[str, Any],
     original_peak: float,
-) -> None:
+) -> list[str]:
+    warnings: list[str] = []
     band_data = analysis_results.get("band_data", {})
     linear_bins = int(plotting_config.get("histogram_bins", 51))
     linear_range = plotting_config.get("histogram_range", [-1.0, 1.0])
@@ -436,19 +459,44 @@ def _write_histogram_tables(
             )
 
         if clean_signal.size:
-            abs_signal = np.abs(clean_signal) * original_peak
-            abs_signal[abs_signal == 0] = 10 ** (noise_floor_db / 20)
-            signal_db = 20 * np.log10(abs_signal)
-            signal_db = signal_db[(signal_db >= noise_floor_db) & (signal_db <= max_db)]
-            if signal_db.size:
-                counts, edges = np.histogram(signal_db, bins=log_bin_edges)
-                density, _ = np.histogram(signal_db, bins=log_bin_edges, density=True)
-                log_rows.extend(
-                    _histogram_rows(label, frequency_hz, counts, density, edges)
+            try:
+                counts = np.zeros(len(log_bin_edges) - 1, dtype=np.int64)
+                total = 0
+                chunk_size = int(plotting_config.get("histogram_chunk_size", 2_000_000))
+                floor_linear = 10 ** (noise_floor_db / 20)
+                for start in range(0, clean_signal.size, chunk_size):
+                    chunk = np.asarray(clean_signal[start : start + chunk_size], dtype=np.float32)
+                    if chunk.size == 0:
+                        continue
+                    chunk = np.abs(chunk) * float(original_peak)
+                    chunk[chunk == 0] = floor_linear
+                    chunk_db = 20.0 * np.log10(chunk, dtype=np.float32)
+                    chunk_db = chunk_db[
+                        (chunk_db >= noise_floor_db) & (chunk_db <= max_db)
+                    ]
+                    if chunk_db.size == 0:
+                        continue
+                    c, _ = np.histogram(chunk_db, bins=log_bin_edges)
+                    counts += c.astype(np.int64, copy=False)
+                    total += int(chunk_db.size)
+
+                if total:
+                    edges = log_bin_edges
+                    bin_widths = np.diff(edges)
+                    density = counts / (max(total, 1) * np.maximum(bin_widths, 1e-12))
+                    log_rows.extend(
+                        _histogram_rows(label, frequency_hz, counts, density, edges)
+                    )
+            except MemoryError as exc:
+                message = (
+                    f"Skipping log histogram for {label} due to memory pressure: {exc}"
                 )
+                warnings.append(message)
+                logger.warning(message)
 
     _write_dataframe(channel_dir / "histogram_linear.csv", pd.DataFrame(linear_rows))
     _write_dataframe(channel_dir / "histogram_log_db.csv", pd.DataFrame(log_rows))
+    return warnings
 
 
 def _histogram_rows(
@@ -612,7 +660,17 @@ def _write_dataframe(path: Path, dataframe: pd.DataFrame) -> None:
 
 def _write_json(path: Path, data: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    payload = json.dumps(data, indent=2)
+    tmp_path = path.with_suffix(path.suffix + f".tmp.{os.getpid()}")
+    try:
+        tmp_path.write_text(payload, encoding="utf-8")
+        os.replace(tmp_path, path)
+    finally:
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except OSError:
+            pass
 
 
 def _array_stat(values: np.ndarray, func) -> Optional[float]:
