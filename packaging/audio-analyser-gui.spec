@@ -7,8 +7,7 @@ from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
-
-ROOT = Path(SPECPATH).parent
+ROOT = Path(SPECPATH).parent.parent
 ICON = ROOT / "audioanalyser_icon.jpeg"
 
 datas = [
@@ -102,4 +101,3 @@ coll = COLLECT(
     upx_exclude=[],
     name="AudioAnalyser",
 )
-

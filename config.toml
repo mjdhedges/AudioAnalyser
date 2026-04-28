@@ -73,8 +73,9 @@ octave_center_frequencies = [8.0, 16.0, 31.25, 62.5, 125.0, 250.0, 500.0, 1000.0
 
 # FFT power-complementary octave filter mode.
 # Options:
-#   "auto"      - use full-file FFT when estimated RAM is under octave_max_memory_gb,
-#                 otherwise switch to large-block FFT and disk-backed output if needed.
+#   "auto"      - use full-file FFT when estimated octave RAM is under
+#                 octave_max_memory_gb, otherwise switch to large-block FFT
+#                 and disk-backed output if needed.
 #   "full_file" - one FFT over the complete channel; best frequency resolution.
 #   "block"     - large non-overlapping FFT blocks; lower peak RAM for long files.
 octave_filter_mode = "auto"
@@ -83,9 +84,11 @@ octave_filter_mode = "auto"
 # Keep this in the tens of seconds for offline analysis and useful 4 Hz detail.
 octave_fft_block_duration_seconds = 30.0
 
-# Approximate RAM budget for octave-bank processing. If full-file FFT processing
-# is estimated above this limit, the app switches to large-block FFT processing.
-# If the octave-bank time-series output itself is larger than this limit, it is
+# Per-track memory estimate for octave-bank processing. This is not a hard cap:
+# multi-channel decode, resampling, envelope analysis, exports, Python overhead,
+# and concurrent workers can use additional RAM. If full-file FFT processing is
+# estimated above this value, the app switches to large-block FFT processing. If
+# the octave-bank time-series output itself is larger than this value, it is
 # stored as a temporary disk-backed memmap while downstream analysis runs.
 octave_max_memory_gb = 8.0
 
@@ -612,9 +615,12 @@ export_octave_cf_time_data = false
 # How it works (code: main batch path with ProcessPoolExecutor):
 #   - Each worker is a full Python process running analyze_single_track() for one file.
 #   - One track per worker at a time; workers pick the next file when idle.
-#   - RAM scales roughly with (max_batch_workers) × (memory per track)—surround, long files,
-#     and high sample rates increase per-track memory. Large max_batch_workers on a machine
-#     with many cores can still OOM if each track is heavy.
+#   - RAM scales roughly with active tracks. Surround, long files, and high sample
+#     rates increase per-track memory. Large max_batch_workers on a machine with
+#     many cores can still OOM if each track is heavy.
+#   - The scheduler uses octave_max_memory_gb as a per-track estimate and adds
+#     headroom for decoded audio and analysis overhead. It delays tracks when
+#     estimated active memory is high, but it is still advisory, not a hard OS cap.
 #
 # Tuning:
 #   - enable_parallel_batch = false: one track at a time (lowest peak RAM, slowest wall time).
@@ -627,8 +633,9 @@ export_octave_cf_time_data = false
 #
 enable_parallel_batch = true
 
-# Max concurrent TRACK analyses in batch mode (integer >= 1). Not the same as max_workers
-# above (octave bands within one channel). Raise this to use more cores when I/O and RAM allow.
+# Max concurrent TRACK analyses in batch mode (integer >= 1). Raise this to use
+# more cores when I/O and RAM allow; the batch scheduler may temporarily run fewer
+# tracks when large multi-channel files would exceed its memory estimate.
 max_batch_workers = 8
 
 

@@ -7,7 +7,9 @@ with support for command-line overrides.
 
 from __future__ import annotations
 
+import copy
 import logging
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -25,9 +27,29 @@ class Config:
         Args:
             config_path: Path to configuration file. If None, uses default config.toml
         """
-        self.config_path = config_path or Path("config.toml")
+        self.config_path = config_path or self._default_config_path()
         self._config: Dict[str, Any] = {}
         self._load_config()
+
+    @staticmethod
+    def _default_config_path() -> Path:
+        """Return the most likely default configuration file path."""
+        candidates = [Path.cwd() / "config.toml"]
+
+        frozen_root = getattr(sys, "_MEIPASS", None)
+        if frozen_root:
+            candidates.append(Path(frozen_root) / "config.toml")
+
+        executable = getattr(sys, "executable", None)
+        if executable:
+            candidates.append(Path(executable).resolve().parent / "config.toml")
+
+        candidates.append(Path(__file__).resolve().parents[1] / "config.toml")
+
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        return Path("config.toml")
 
     def _load_config(self) -> None:
         """Load configuration from TOML file."""
@@ -216,6 +238,14 @@ class Config:
 
         # Set the final value
         config[keys[-1]] = value
+
+    def as_dict(self) -> Dict[str, Any]:
+        """Return a deep copy of the active configuration."""
+        return copy.deepcopy(self._config)
+
+    def replace(self, values: Dict[str, Any]) -> None:
+        """Replace the active configuration with a copied dictionary."""
+        self._config = copy.deepcopy(values)
 
     def get_analysis_config(self) -> Dict[str, Any]:
         """Get analysis configuration section."""

@@ -54,7 +54,7 @@ class OctaveBandFilter:
             sample_rate: Sample rate of the audio signal.
             processing_mode: ``"auto"``, ``"full_file"``, or ``"block"``.
             block_duration_seconds: FFT block length for ``"block"`` mode.
-            max_memory_gb: Approximate RAM budget for octave-bank processing.
+            max_memory_gb: Per-track RAM estimate for octave-bank processing.
             include_low_residual_band: Include a 4 Hz-and-below residual band.
             include_high_residual_band: Include an above-16 kHz residual band.
             low_residual_center_hz: Representative center for the low residual.
@@ -246,17 +246,21 @@ class OctaveBandFilter:
 
         spectrum = np.fft.rfft(x)
         fft_freqs = np.fft.rfftfreq(x.size, d=1.0 / self.sample_rate)
-        weights = self._fft_power_complementary_weights(fft_freqs, band_centers)
-
-        filtered_signals = [x]
-        for weight in weights:
-            filtered_signals.append(np.fft.irfft(spectrum * weight, n=x.size))
+        output = self._allocate_octave_output(x.size, len(band_centers) + 1)
+        output[:, 0] = x
+        for band_idx in range(len(band_centers)):
+            weight = self._fft_power_complementary_weight(
+                fft_freqs,
+                band_centers,
+                band_idx,
+            )
+            output[:, band_idx + 1] = np.fft.irfft(spectrum * weight, n=x.size)
 
         logger.info(
             "Created FFT octave bank with %d bands using full-file mode",
             len(band_centers),
         )
-        return np.column_stack(filtered_signals)
+        return output
 
     def _create_block_fft_octave_bank(
         self,
@@ -285,8 +289,12 @@ class OctaveBandFilter:
 
             spectrum = np.fft.rfft(block)
             fft_freqs = np.fft.rfftfreq(block.size, d=1.0 / self.sample_rate)
-            weights = self._fft_power_complementary_weights(fft_freqs, band_centers)
-            for band_idx, weight in enumerate(weights):
+            for band_idx in range(len(band_centers)):
+                weight = self._fft_power_complementary_weight(
+                    fft_freqs,
+                    band_centers,
+                    band_idx,
+                )
                 output[start:end, band_idx + 1] = np.fft.irfft(
                     spectrum * weight,
                     n=block.size,
@@ -340,11 +348,12 @@ class OctaveBandFilter:
         """Estimate peak RAM for full-file FFT processing."""
         fft_bins = sample_count // 2 + 1
         output = OctaveBandFilter._estimate_output_bytes(sample_count, band_count)
-        weights = band_count * fft_bins * np.dtype(np.float64).itemsize
+        weight = fft_bins * np.dtype(np.float64).itemsize
         spectrum = fft_bins * np.dtype(np.complex128).itemsize
+        filtered_spectrum = fft_bins * np.dtype(np.complex128).itemsize
         source = sample_count * np.dtype(np.float64).itemsize
         filtered_band = sample_count * np.dtype(np.float64).itemsize
-        return output + weights + spectrum + source + filtered_band
+        return output + weight + spectrum + filtered_spectrum + source + filtered_band
 
     def _resolve_block_samples(self, sample_count: int, band_count: int) -> int:
         """Resolve a block size that keeps per-block FFT RAM under the limit."""
@@ -441,3 +450,47 @@ class OctaveBandFilter:
         weights[upper_idx, transition_bins] = np.sin(theta)
 
         return weights
+
+    @staticmethod
+    def _fft_power_complementary_weight(
+        fft_freqs: np.ndarray,
+        band_centers: list[float],
+        band_idx: int,
+    ) -> np.ndarray:
+        """Create one raised-cosine band weight without materializing all bands."""
+        center_array = np.asarray(band_centers, dtype=np.float64)
+        if np.any(center_array <= 0):
+            raise ValueError("band centers must be positive")
+        if np.any(np.diff(center_array) <= 0):
+            raise ValueError("band centers must be strictly ascending")
+        if band_idx < 0 or band_idx >= center_array.size:
+            raise IndexError("band_idx out of range")
+
+        weight = np.zeros(fft_freqs.size, dtype=np.float64)
+
+        if band_idx == 0:
+            weight[fft_freqs <= center_array[0]] = 1.0
+        if band_idx == center_array.size - 1:
+            weight[fft_freqs >= center_array[-1]] = 1.0
+
+        if band_idx > 0:
+            lower = center_array[band_idx - 1]
+            upper = center_array[band_idx]
+            mask = (fft_freqs > lower) & (fft_freqs < upper)
+            if np.any(mask):
+                position = (np.log(fft_freqs[mask]) - np.log(lower)) / (
+                    np.log(upper) - np.log(lower)
+                )
+                weight[mask] = np.sin(position * np.pi / 2.0)
+
+        if band_idx < center_array.size - 1:
+            lower = center_array[band_idx]
+            upper = center_array[band_idx + 1]
+            mask = (fft_freqs >= lower) & (fft_freqs < upper)
+            if np.any(mask):
+                position = (np.log(fft_freqs[mask]) - np.log(lower)) / (
+                    np.log(upper) - np.log(lower)
+                )
+                weight[mask] = np.cos(position * np.pi / 2.0)
+
+        return weight

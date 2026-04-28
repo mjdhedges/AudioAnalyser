@@ -22,7 +22,7 @@ Basic workflow:
 2. Run `AudioAnalyser.exe`.
 3. Select an input audio file or folder.
 4. Select a project folder.
-5. Choose simple options such as batch workers and octave memory limit.
+5. Choose simple options such as batch workers and per-track memory estimate.
 6. Start analysis and watch per-file progress in the GUI.
 
 The GUI writes portable analysis bundles to `<project>/analysis/` and rendered
@@ -105,7 +105,7 @@ tracks_dir = "Tracks"               # Default tracks directory
 output_dir = "analysis"             # Default output directory
 peak_hold_tau_seconds = 0.8         # Crest-factor peak-hold release time
 time_domain_slow_rms_tau_seconds = 1.0  # IEC Slow RMS time constant
-octave_max_memory_gb = 8.0          # Octave processing RAM budget
+octave_max_memory_gb = 8.0          # Per-track octave memory estimate, not a hard cap
 octave_center_frequencies = [8.0, 16.0, 31.25, 62.5, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0]
 
 [performance]
@@ -219,7 +219,7 @@ python -m src.main --help
 - `--batch/--single`: Deprecated. Mode is inferred from `--input` (file=single, dir=batch).
 - `--export-csv/--no-export-csv`: Legacy CSV compatibility option. Bundle output is controlled by `export.generate_analysis_bundle`.
 - `--batch-workers`: Maximum concurrent track analyses in batch mode. Use `1` for sequential processing.
-- `--max-memory-gb`: Octave processing RAM budget in GB.
+- `--max-memory-gb`: Per-track octave processing memory estimate in GB. This is used for mode selection and batch scheduling, not as a hard operating-system memory cap.
 - `--progress-json`: Emit machine-readable progress events for GUI/status consumers.
 - `--skip-post`: Legacy option retained for compatibility. Graph/report generation is now handled by `python -m src.render`.
 - `--post-only`, `--run-post`: Legacy post-processing paths for old CSV output. Bundle-only workflows should use `python -m src.render`.
@@ -492,7 +492,7 @@ The tool analyzes audio using 1/1-octave band centers (IEC 16 Hz-16 kHz) plus **
 - Octave-band RMS values are combined as linear power, not by adding dB values
 - Supports `auto`, full-file FFT, and large-block FFT modes
 - `auto` switches to block processing and disk-backed octave storage when the
-  configured RAM budget would be exceeded
+  configured per-track memory estimate would be exceeded
 
 ### Advanced Statistics
 - **Clipping Detection**: Hot peaks (>-1dBFS), clip events (>-0.1dBFS), peak saturation (>-3dBFS)

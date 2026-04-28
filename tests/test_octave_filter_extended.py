@@ -26,6 +26,47 @@ class TestOctaveFilterExtended:
 
         np.testing.assert_allclose(power_sum, np.ones_like(power_sum), atol=1e-12)
 
+    def test_per_band_weight_matches_full_weight_matrix(self) -> None:
+        """Test per-band generation is numerically identical to the old matrix form."""
+        fft_freqs = np.fft.rfftfreq(self.sample_rate * 2, d=1.0 / self.sample_rate)
+        band_centers = self.filter.get_band_center_frequencies()
+
+        weights = self.filter._fft_power_complementary_weights(fft_freqs, band_centers)
+        per_band_weights = np.vstack(
+            [
+                self.filter._fft_power_complementary_weight(
+                    fft_freqs,
+                    band_centers,
+                    band_idx,
+                )
+                for band_idx in range(len(band_centers))
+            ]
+        )
+
+        np.testing.assert_allclose(per_band_weights, weights, atol=1e-12)
+
+    def test_full_file_peak_estimate_uses_one_weight_vector(self) -> None:
+        """Test peak estimate no longer reserves memory for all band weights."""
+        sample_count = self.sample_rate * 60
+        band_count = len(self.filter.get_band_center_frequencies())
+        fft_bins = sample_count // 2 + 1
+        old_all_weights_bytes = band_count * fft_bins * np.dtype(np.float64).itemsize
+        new_one_weight_bytes = fft_bins * np.dtype(np.float64).itemsize
+
+        old_estimate = (
+            self.filter._estimate_output_bytes(sample_count, band_count)
+            + old_all_weights_bytes
+            + fft_bins * np.dtype(np.complex128).itemsize
+            + sample_count * np.dtype(np.float64).itemsize
+        )
+        new_estimate = self.filter._estimate_full_file_peak_bytes(
+            sample_count,
+            band_count,
+        )
+
+        assert new_estimate < old_estimate
+        assert new_estimate > new_one_weight_bytes
+
     def test_amplitude_sum_is_not_used_as_closure_criterion(self) -> None:
         """Test that overlapping bands are not simple-amplitude complementary."""
         fft_freqs = np.fft.rfftfreq(self.sample_rate * 2, d=1.0 / self.sample_rate)
@@ -58,7 +99,7 @@ class TestOctaveFilterExtended:
         assert float(np.max(np.abs(delta_db))) < 0.1
 
     def test_auto_mode_switches_to_block_and_memmap_under_low_ram_limit(self) -> None:
-        """Test auto mode records block/memmap metadata when RAM budget is tiny."""
+        """Test auto mode records block/memmap metadata with a tiny estimate."""
         rng = np.random.default_rng(123)
         test_signal = rng.normal(0.0, 1.0, self.sample_rate * 2)
         octave_filter = OctaveBandFilter(

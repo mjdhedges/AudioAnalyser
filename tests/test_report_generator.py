@@ -23,7 +23,7 @@ def test_octave_processing_sentence_reports_effective_auto_block_mode() -> None:
     assert "requested `auto`" in sentence
     assert "30-second FFT blocks" in sentence
     assert "`disk_memmap` octave-bank storage" in sentence
-    assert "4.0 GB RAM budget" in sentence
+    assert "4.0 GB per-track memory estimate" in sentence
 
 
 def test_octave_processing_sentence_handles_missing_metadata() -> None:

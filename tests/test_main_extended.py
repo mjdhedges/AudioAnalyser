@@ -11,7 +11,9 @@ import soundfile as sf
 from pathlib import Path
 from click.testing import CliRunner
 
+import src.main as main_module
 from src.main import (
+    _estimate_track_work_item,
     _warn_legacy_post_disabled,
     analyze_single_track,
     main,
@@ -45,6 +47,27 @@ class TestMainExtended:
 
         assert _warn_legacy_post_disabled(tmp_path) is True
         assert "python -m src.render" in caplog.text
+
+    def test_track_work_estimate_reflects_channel_count(self, tmp_path):
+        """Preflight estimates should scale multi-channel tracks above stereo."""
+        sample_rate = 48000
+        mono = np.zeros(sample_rate, dtype=np.float32)
+        stereo_path = tmp_path / "stereo.wav"
+        surround_path = tmp_path / "surround.wav"
+        sf.write(stereo_path, np.column_stack([mono, mono]), sample_rate)
+        sf.write(surround_path, np.column_stack([mono] * 8), sample_rate)
+        original_memory = main_module.config.get("analysis.octave_max_memory_gb")
+
+        try:
+            main_module.config.set("analysis.octave_max_memory_gb", 0.001)
+            stereo_item = _estimate_track_work_item(stereo_path, 1, sample_rate)
+            surround_item = _estimate_track_work_item(surround_path, 2, sample_rate)
+        finally:
+            main_module.config.set("analysis.octave_max_memory_gb", original_memory)
+
+        assert stereo_item.channels == 2
+        assert surround_item.channels == 8
+        assert surround_item.estimated_gb > stereo_item.estimated_gb
 
     def test_analyze_single_track_empty_audio(self):
         """Test analyzing empty audio file."""

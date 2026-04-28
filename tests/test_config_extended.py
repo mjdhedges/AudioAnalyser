@@ -233,3 +233,32 @@ dpi = 600
             assert config.get("plotting.dpi") == 600
         finally:
             tmp_path.unlink(missing_ok=True)
+
+    def test_config_default_path_uses_frozen_bundle_root(self, monkeypatch, tmp_path):
+        """Frozen builds should discover config.toml beside bundled resources."""
+        bundled_config = tmp_path / "config.toml"
+        bundled_config.write_text(
+            """
+[analysis]
+sample_rate = 48000
+""",
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path.parent)
+        monkeypatch.setattr("sys._MEIPASS", str(tmp_path), raising=False)
+
+        config = Config()
+
+        assert config.config_path == bundled_config
+        assert config.get("analysis.sample_rate") == 48000
+
+    def test_config_replace_uses_copy(self):
+        """Worker config replacement should not share mutable dictionaries."""
+        config = Config(config_path=Path("nonexistent.toml"))
+        values = config.as_dict()
+        values["analysis"]["sample_rate"] = 48000
+
+        config.replace(values)
+        values["analysis"]["sample_rate"] = 96000
+
+        assert config.get("analysis.sample_rate") == 48000

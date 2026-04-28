@@ -239,6 +239,6 @@ class TrackProcessor:
             logger.info(f"Analysis complete for channel {channel_name}")
             return True
 
-        except Exception as e:
-            logger.error(f"Error processing channel {channel_name}: {e}")
+        except Exception:
+            logger.exception("Error processing channel %s", channel_name)
             return False

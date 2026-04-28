@@ -156,7 +156,7 @@ The Audio Analyser is a Python application that performs comprehensive octave ba
 - Return same-length filtered time-series signals for each band
 - Support auto, full-file FFT, and large-block FFT processing
 - Use temporary disk-backed octave storage when the time-series bank would
-  exceed the configured RAM budget
+  exceed the configured per-track memory estimate
 
 **Key Classes:**
 - `OctaveBandFilter`: Main FFT octave-bank class
@@ -364,7 +364,7 @@ Re-run (File Changed):
 ```toml
 [analysis]
 octave_filter_mode = "auto"           # Auto full-file/block FFT selection
-octave_max_memory_gb = 4.0            # Octave processing RAM budget
+octave_max_memory_gb = 4.0            # Per-track octave memory estimate
 octave_fft_block_duration_seconds = 30.0
 
 [performance]

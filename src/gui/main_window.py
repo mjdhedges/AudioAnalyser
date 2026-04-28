@@ -90,12 +90,13 @@ class MainWindow(QMainWindow):
         self.max_memory_gb.setValue(8.0)
         self.max_memory_gb.setSuffix(" GB")
         self.max_memory_gb.setToolTip(
-            "Approximate RAM budget for octave-bank processing per track. "
-            "If the estimate exceeds this value, analysis switches to lower-memory "
-            "block/disk-backed processing."
+            "Per-track memory estimate used to choose octave processing mode and "
+            "schedule batch work. Actual RAM can be higher for multi-channel decode, "
+            "resampling, and export."
         )
         self.max_memory_help = QLabel(
-            "Per-track octave RAM budget. Higher can be faster; lower avoids memory pressure."
+            "Per-track memory estimate, not a hard cap. Higher can be faster; lower "
+            "switches large tracks to lower-memory processing sooner."
         )
         self.max_memory_help.setWordWrap(True)
 
@@ -141,7 +142,7 @@ class MainWindow(QMainWindow):
         form.addRow("Project folder", self._directory_row(self.project_dir))
         form.addRow("Batch workers", self.batch_workers)
         form.addRow("", self.batch_workers_help)
-        form.addRow("Max memory", self.max_memory_gb)
+        form.addRow("Memory estimate per track", self.max_memory_gb)
         form.addRow("", self.max_memory_help)
         form.addRow("", self.render_after_analysis)
         form.addRow("", self.generate_report)

@@ -9,16 +9,19 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 import click
 import numpy as np
 import pandas as pd
+import soundfile as sf
 
-from src.audio_processor import AudioProcessor
+from src.audio_processor import AudioProcessor, _ffmpeg_tool_command
 from src.music_analyzer import MusicAnalyzer
 from src.octave_filter import OctaveBandFilter
 from src.config import config, Config
@@ -65,6 +68,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 PROGRESS_PREFIX = "AA_PROGRESS "
+SCHEDULER_HEADROOM_FACTOR = 1.5
+
+
+@dataclass(frozen=True)
+class TrackWorkItem:
+    """Batch scheduling metadata for one track."""
+
+    index: int
+    path: Path
+    estimated_gb: float
+    channels: int
+    duration_seconds: float
+    sample_rate: int
 
 
 def _emit_progress(enabled: bool, event: str, **payload: object) -> None:
@@ -73,6 +89,125 @@ def _emit_progress(enabled: bool, event: str, **payload: object) -> None:
         return
     message = {"event": event, **payload}
     click.echo(f"{PROGRESS_PREFIX}{json.dumps(message, default=str)}")
+
+
+def _initialize_worker_config(config_values: dict) -> None:
+    """Install the parent process configuration in spawned batch workers."""
+    config.replace(config_values)
+
+
+def _log_parallel_resource_budget(max_workers: int) -> None:
+    """Log advisory memory semantics without changing user-selected workers."""
+    per_track_memory_gb = float(config.get("analysis.octave_max_memory_gb", 4.0))
+    logger.info(
+        "Parallel octave memory estimate: %.2f GB per track, %.2f GB nominal for %d workers",
+        per_track_memory_gb,
+        per_track_memory_gb * max_workers,
+        max_workers,
+    )
+
+
+def _estimate_track_work_item(
+    track_path: Path,
+    index: int,
+    target_sample_rate: int,
+) -> TrackWorkItem:
+    """Estimate track memory cost for advisory batch scheduling."""
+    duration_seconds, source_sample_rate, channels = _probe_track_shape(track_path)
+    effective_sample_rate = target_sample_rate or source_sample_rate
+    sample_count = max(1, int(duration_seconds * effective_sample_rate))
+    band_count = len(config.get_octave_center_frequencies())
+    if config.get("analysis.octave_include_low_residual_band", True):
+        band_count += 1
+    if config.get("analysis.octave_include_high_residual_band", True):
+        band_count += 1
+
+    octave_peak_gb = (
+        OctaveBandFilter._estimate_full_file_peak_bytes(sample_count, band_count)
+        / 1024**3
+    )
+    decoded_audio_gb = (
+        sample_count * max(channels, 1) * np.dtype(np.float32).itemsize / 1024**3
+    )
+    channel_analysis_gb = sample_count * np.dtype(np.float64).itemsize * 4 / 1024**3
+    estimated_gb = max(
+        float(config.get("analysis.octave_max_memory_gb", 4.0)),
+        octave_peak_gb + decoded_audio_gb + channel_analysis_gb,
+    )
+
+    return TrackWorkItem(
+        index=index,
+        path=track_path,
+        estimated_gb=estimated_gb,
+        channels=max(channels, 1),
+        duration_seconds=duration_seconds,
+        sample_rate=effective_sample_rate,
+    )
+
+
+def _probe_track_shape(track_path: Path) -> tuple[float, int, int]:
+    """Return approximate duration, sample rate, and channel count for scheduling."""
+    if track_path.suffix.lower() in {".mkv", ".mts", ".m2ts"}:
+        try:
+            cmd = [
+                _ffmpeg_tool_command("ffprobe"),
+                "-v",
+                "error",
+                "-select_streams",
+                "a:0",
+                "-show_entries",
+                "stream=channels,sample_rate:format=duration",
+                "-of",
+                "json",
+                str(track_path),
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            data = json.loads(result.stdout)
+            streams = data.get("streams") or []
+            stream = streams[0] if streams else {}
+            duration_seconds = float(data.get("format", {}).get("duration") or 0.0)
+            sample_rate = int(stream.get("sample_rate") or 44100)
+            channels = int(stream.get("channels") or 2)
+            if duration_seconds > 0:
+                return duration_seconds, sample_rate, channels
+        except Exception as exc:
+            logger.warning(
+                "Could not preflight %s with ffprobe; using conservative estimate: %s",
+                track_path.name,
+                exc,
+            )
+            return 600.0, 48000, 8
+
+    try:
+        info = sf.info(str(track_path))
+        return float(info.duration), int(info.samplerate), int(info.channels)
+    except Exception as exc:
+        logger.warning(
+            "Could not preflight %s; using conservative estimate: %s",
+            track_path.name,
+            exc,
+        )
+        return 300.0, 44100, 2
+
+
+def _estimate_batch_work(
+    audio_files: list[Path],
+    sample_rate: int,
+) -> list[TrackWorkItem]:
+    """Build scheduling metadata for all batch tracks."""
+    items = [
+        _estimate_track_work_item(track_path, idx, sample_rate)
+        for idx, track_path in enumerate(sorted(audio_files), 1)
+    ]
+    for item in sorted(items, key=lambda x: x.estimated_gb, reverse=True)[:10]:
+        logger.info(
+            "Preflight estimate: %.2f GB, %d channel(s), %.1fs - %s",
+            item.estimated_gb,
+            item.channels,
+            item.duration_seconds,
+            item.path.name,
+        )
+    return items
 
 
 def get_cache_path(track_path: Path, cache_dir: Path) -> Path:
@@ -676,7 +811,7 @@ def analyze_single_track(
 @click.option(
     "--max-memory-gb",
     type=click.FloatRange(min=0.1),
-    help="Octave processing RAM budget in GB (overrides config).",
+    help="Per-track octave memory estimate in GB (overrides config).",
 )
 @click.option(
     "--batch-workers",
@@ -788,7 +923,7 @@ def main(
         logger.info(f"Sample rate: {sample_rate} Hz")
         logger.info(f"Chunk duration: {chunk_duration} seconds")
         logger.info(
-            "Octave RAM budget: %.2f GB",
+            "Octave memory estimate per track: %.2f GB",
             float(config.get("analysis.octave_max_memory_gb", 4.0)),
         )
         logger.info(
@@ -1052,7 +1187,7 @@ def main(
 
             if enable_parallel_batch:
                 # PARALLEL PROCESSING: Process multiple tracks simultaneously
-                from concurrent.futures import ProcessPoolExecutor, as_completed
+                from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
                 import multiprocessing
 
                 max_workers = config.get("performance.max_batch_workers", None)
@@ -1060,18 +1195,52 @@ def main(
 
                 if max_workers is None:
                     max_workers = 2  # Default: 2 workers to keep memory reasonable
+                max_workers = int(max_workers)
+                _log_parallel_resource_budget(max_workers)
 
                 logger.info(
-                    f"Using parallel batch processing with {max_workers} workers"
+                    "Using parallel batch processing with %d workers (%d CPU cores available)",
+                    max_workers,
+                    available_cores,
                 )
 
-                with ProcessPoolExecutor(max_workers=max_workers) as executor:
-                    # Submit all tasks
-                    sorted_audio_files = sorted(audio_files)
-                    future_to_track = {
-                        executor.submit(
+                sorted_audio_files = sorted(audio_files)
+                work_items = _estimate_batch_work(sorted_audio_files, sample_rate)
+                per_track_memory_gb = float(
+                    config.get("analysis.octave_max_memory_gb", 4.0)
+                )
+                scheduler_memory_gb = max(
+                    per_track_memory_gb * max_workers * SCHEDULER_HEADROOM_FACTOR,
+                    max(item.estimated_gb for item in work_items),
+                )
+                logger.info(
+                    "Batch scheduler advisory memory pool: %.2f GB "
+                    "(%.2f GB estimate x %d workers x %.1f headroom)",
+                    scheduler_memory_gb,
+                    per_track_memory_gb,
+                    max_workers,
+                    SCHEDULER_HEADROOM_FACTOR,
+                )
+
+                worker_config = config.as_dict()
+                with ProcessPoolExecutor(
+                    max_workers=max_workers,
+                    initializer=_initialize_worker_config,
+                    initargs=(worker_config,),
+                ) as executor:
+                    pending_items = sorted(
+                        work_items,
+                        key=lambda item: item.estimated_gb,
+                        reverse=True,
+                    )
+                    active_futures = {}
+                    active_estimated_gb = 0.0
+
+                    def _submit_item(item: TrackWorkItem) -> None:
+                        nonlocal active_estimated_gb
+                        future = executor.submit(
                             analyze_single_track,
-                            track_path,
+                            item.path,
                             output_dir,
                             sample_rate,
                             chunk_duration,
@@ -1079,47 +1248,100 @@ def main(
                             batch_tracks_root=tracks_dir,
                             skip_octave_crest_factor_time=skip_octave_cf_time,
                             export_octave_crest_factor_time_data=export_octave_cf_time_data,
-                        ): (idx, track_path, total_tracks)
-                        for idx, track_path in enumerate(sorted_audio_files, 1)
-                    }
-                    active_worker_slots = min(int(max_workers), total_tracks)
-                    next_running_idx = active_worker_slots + 1
-                    for idx, track_path in enumerate(
-                        sorted_audio_files[:active_worker_slots], 1
-                    ):
+                        )
+                        active_futures[future] = item
+                        active_estimated_gb += item.estimated_gb
+                        logger.info(
+                            "Started %s (estimated %.2f GB; active %.2f/%.2f GB)",
+                            item.path.name,
+                            item.estimated_gb,
+                            active_estimated_gb,
+                            scheduler_memory_gb,
+                        )
                         _emit_progress(
                             progress_json,
                             "file_started",
-                            index=idx,
+                            index=item.index,
                             total=total_tracks,
-                            path=str(track_path),
-                            name=track_path.name,
+                            path=str(item.path),
+                            name=item.path.name,
                         )
 
-                    # Collect results as they complete
-                    for future in as_completed(future_to_track):
-                        idx, track_path, total_tracks = future_to_track[future]
-                        try:
-                            success, elapsed_s = future.result(
-                                timeout=600
-                            )  # 10 min timeout per track
-                            per_track_timings.append((track_path, elapsed_s, success))
-                            if success:
-                                successful_analyses += 1
-                                _emit_progress(
-                                    progress_json,
-                                    "file_finished",
-                                    index=idx,
-                                    total=total_tracks,
-                                    path=str(track_path),
-                                    name=track_path.name,
-                                    success=True,
-                                    elapsed_seconds=elapsed_s,
+                    def _fill_scheduler_slots() -> None:
+                        while pending_items and len(active_futures) < max_workers:
+                            selected_index = None
+                            for candidate_index, candidate in enumerate(pending_items):
+                                fits_memory = (
+                                    active_estimated_gb + candidate.estimated_gb
+                                    <= scheduler_memory_gb
                                 )
+                                if fits_memory or not active_futures:
+                                    selected_index = candidate_index
+                                    break
+                            if selected_index is None:
                                 logger.info(
-                                    f"[{idx}/{total_tracks}] ✓ {track_path.name}"
+                                    "Waiting for memory advisory: active %.2f/%.2f GB, "
+                                    "next track estimate %.2f GB",
+                                    active_estimated_gb,
+                                    scheduler_memory_gb,
+                                    pending_items[0].estimated_gb,
                                 )
-                            else:
+                                break
+                            item = pending_items.pop(selected_index)
+                            _submit_item(item)
+
+                    _fill_scheduler_slots()
+
+                    # Collect results as they complete
+                    while active_futures:
+                        done_futures, _ = wait(
+                            active_futures,
+                            return_when=FIRST_COMPLETED,
+                        )
+                        for future in done_futures:
+                            item = active_futures.pop(future)
+                            active_estimated_gb = max(
+                                0.0,
+                                active_estimated_gb - item.estimated_gb,
+                            )
+                            idx = item.index
+                            track_path = item.path
+                            try:
+                                success, elapsed_s = future.result()
+                                per_track_timings.append(
+                                    (track_path, elapsed_s, success)
+                                )
+                                if success:
+                                    successful_analyses += 1
+                                    _emit_progress(
+                                        progress_json,
+                                        "file_finished",
+                                        index=idx,
+                                        total=total_tracks,
+                                        path=str(track_path),
+                                        name=track_path.name,
+                                        success=True,
+                                        elapsed_seconds=elapsed_s,
+                                    )
+                                    logger.info(
+                                        f"[{idx}/{total_tracks}] ✓ {track_path.name}"
+                                    )
+                                else:
+                                    failed_analyses += 1
+                                    _emit_progress(
+                                        progress_json,
+                                        "file_finished",
+                                        index=idx,
+                                        total=total_tracks,
+                                        path=str(track_path),
+                                        name=track_path.name,
+                                        success=False,
+                                        elapsed_seconds=elapsed_s,
+                                    )
+                                    logger.error(
+                                        f"[{idx}/{total_tracks}] ✗ {track_path.name}"
+                                    )
+                            except Exception as e:
                                 failed_analyses += 1
                                 _emit_progress(
                                     progress_json,
@@ -1129,38 +1351,15 @@ def main(
                                     path=str(track_path),
                                     name=track_path.name,
                                     success=False,
-                                    elapsed_seconds=elapsed_s,
+                                    error=str(e),
                                 )
                                 logger.error(
-                                    f"[{idx}/{total_tracks}] ✗ {track_path.name}"
+                                    f"[{idx}/{total_tracks}] ✗ {track_path.name}: {e}"
                                 )
-                        except Exception as e:
-                            failed_analyses += 1
-                            _emit_progress(
-                                progress_json,
-                                "file_finished",
-                                index=idx,
-                                total=total_tracks,
-                                path=str(track_path),
-                                name=track_path.name,
-                                success=False,
-                                error=str(e),
-                            )
-                            logger.error(
-                                f"[{idx}/{total_tracks}] ✗ {track_path.name}: {e}"
-                            )
-                            per_track_timings.append((track_path, float("nan"), False))
-                        if next_running_idx <= total_tracks:
-                            next_track_path = sorted_audio_files[next_running_idx - 1]
-                            _emit_progress(
-                                progress_json,
-                                "file_started",
-                                index=next_running_idx,
-                                total=total_tracks,
-                                path=str(next_track_path),
-                                name=next_track_path.name,
-                            )
-                            next_running_idx += 1
+                                per_track_timings.append(
+                                    (track_path, float("nan"), False)
+                                )
+                        _fill_scheduler_slots()
             else:
                 # SEQUENTIAL PROCESSING: Process tracks one at a time
                 for idx, track_path in enumerate(sorted(audio_files), 1):

@@ -71,6 +71,9 @@ def build_analysis_command(
         module="src.main",
         frozen_arg=ANALYSIS_CLI_ARG,
     )
+    config_path = _frozen_config_path(executable)
+    if config_path is not None:
+        command.extend(["--config", str(config_path)])
     command.extend(
         [
             "--input",
@@ -107,6 +110,9 @@ def build_render_command(
         module="src.render",
         frozen_arg=RENDER_CLI_ARG,
     )
+    config_path = _frozen_config_path(executable)
+    if config_path is not None:
+        command.extend(["--config", str(config_path)])
     command.extend(
         [
             "--results",
@@ -129,6 +135,23 @@ def _module_command(executable: str, module: str, frozen_arg: str) -> List[str]:
             return [str(cli_executable), frozen_arg]
         return [executable, frozen_arg]
     return [executable, "-m", module]
+
+
+def _frozen_config_path(executable: str) -> Optional[Path]:
+    """Return the packaged config path when running as a frozen application."""
+    if not getattr(sys, "frozen", False):
+        return None
+
+    candidates = []
+    frozen_root = getattr(sys, "_MEIPASS", None)
+    if frozen_root:
+        candidates.append(Path(frozen_root) / "config.toml")
+    candidates.append(Path(executable).resolve().parent / "config.toml")
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
 
 
 def resolve_render_results_path(input_path: Path, analysis_output_dir: Path) -> Path:

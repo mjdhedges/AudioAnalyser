@@ -229,7 +229,7 @@ def _octave_processing_sentence(metadata: Dict[str, str]) -> str:
         if storage:
             sentence += f" and `{storage}` octave-bank storage"
         if max_memory:
-            sentence += f" under a configured {max_memory} GB RAM budget"
+            sentence += f" with a configured {max_memory} GB per-track memory estimate"
         sentence += "."
         return sentence
 
