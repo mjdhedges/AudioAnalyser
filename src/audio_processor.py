@@ -52,7 +52,7 @@ class AudioProcessor:
 
         Args:
             sample_rate: Target sample rate for audio processing
-            enable_mkv_support: Enable MKV container and TrueHD audio support
+            enable_mkv_support: Enable container (MKV/MTS/M2TS) audio support via ffmpeg
         """
         self.sample_rate = sample_rate
         self.enable_mkv_support = enable_mkv_support
@@ -148,78 +148,6 @@ class AudioProcessor:
         """Alias for probing MKV audio streams (compat)."""
         return self._probe_audio_streams(mkv_path)
 
-    def _extract_truehd_from_mkv(
-        self, mkv_path: Path, stream_index: int = 0, exclude_atmos: bool = True
-    ) -> Path:
-        """Extract and decode TrueHD audio from MKV container to temporary WAV file.
-
-        Uses ffmpeg to extract the audio stream, decode TrueHD to PCM, and exclude
-        Dolby Atmos metadata streams if present.
-
-        Args:
-            mkv_path: Path to the MKV file
-            stream_index: Audio stream index to extract (default: 0)
-            exclude_atmos: Exclude Dolby Atmos metadata streams (default: True)
-
-        Returns:
-            Path to temporary WAV file containing decoded PCM audio
-
-        Raises:
-            RuntimeError: If ffmpeg is not available or fails to extract audio
-        """
-        # Create temporary WAV file for decoded audio
-        temp_wav = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-        temp_wav_path = Path(temp_wav.name)
-        temp_wav.close()
-
-        try:
-            # Build ffmpeg command to extract and decode TrueHD
-            # -map 0:stream_index selects the stream by global index
-            # -c:a pcm_s24le decodes to 24-bit PCM (TrueHD is typically 24-bit)
-            # -ar sets sample rate (will be resampled later if needed)
-            # -ac preserves channel count
-            cmd = [
-                _ffmpeg_tool_command("ffmpeg"),
-                "-i",
-                str(mkv_path),
-                "-map",
-                f"0:{stream_index}",  # Select stream by global index
-                "-c:a",
-                "pcm_s24le",  # Decode to 24-bit PCM
-                "-ar",
-                str(self.sample_rate),  # Set target sample rate
-                "-y",  # Overwrite output file
-                str(temp_wav_path),
-            ]
-
-            # Exclude Atmos metadata if requested
-            if exclude_atmos:
-                # Filter out Atmos metadata streams (typically have 'atmos' in codec name)
-                # This is handled by selecting specific stream index
-                pass
-
-            logger.info(f"Extracting TrueHD audio from MKV (stream {stream_index})...")
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-
-            logger.info(f"Successfully extracted TrueHD audio to {temp_wav_path}")
-            return temp_wav_path
-
-        except FileNotFoundError:
-            if temp_wav_path.exists():
-                temp_wav_path.unlink()
-            raise RuntimeError(
-                "ffmpeg was not found. MKV/TrueHD support requires the ffmpeg "
-                "tools package, including both ffmpeg.exe and ffprobe.exe. "
-                "Install ffmpeg from https://ffmpeg.org/download.html, add its "
-                "bin folder to PATH, then restart Audio Analyser or your terminal."
-            )
-        except subprocess.CalledProcessError as e:
-            # Clean up temp file on error
-            if temp_wav_path.exists():
-                temp_wav_path.unlink()
-            logger.error(f"ffmpeg failed: {e.stderr}")
-            raise RuntimeError(f"Failed to extract TrueHD audio: {e.stderr}")
-
     def _decode_audio_to_wav(
         self,
         input_path: Path,
@@ -309,7 +237,7 @@ class AudioProcessor:
         """Load audio file and return audio data and sample rate.
 
         Preserves multi-channel audio. Returns shape (samples,) for mono or (samples, channels) for multi-channel.
-        Supports MKV containers with TrueHD audio (requires ffmpeg).
+        Uses ffmpeg decoding for broad format and container support.
 
         Args:
             file_path: Path to the audio file
@@ -324,7 +252,7 @@ class AudioProcessor:
         Raises:
             FileNotFoundError: If the audio file doesn't exist
             ValueError: If the audio file format is not supported
-            RuntimeError: If MKV/TrueHD extraction fails
+            RuntimeError: If ffmpeg decode fails
         """
         file_path = Path(file_path)
 

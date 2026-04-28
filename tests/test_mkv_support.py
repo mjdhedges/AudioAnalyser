@@ -94,64 +94,12 @@ class TestMKVSupport:
         assert "ffmpeg.exe and ffprobe.exe" in message
         assert "PATH" in message
 
-    @patch("subprocess.run")
-    @patch("tempfile.NamedTemporaryFile")
-    def test_extract_truehd_from_mkv(self, mock_tempfile, mock_subprocess):
-        """Test extracting TrueHD audio from MKV."""
-        # Mock temporary file
-        mock_temp = Mock()
-        mock_temp.name = "/tmp/test_extracted.wav"
-        mock_temp.close = Mock()
-        mock_tempfile.return_value = mock_temp
-
-        # Mock ffmpeg success
-        mock_result = Mock()
-        mock_result.returncode = 0
-        mock_subprocess.return_value = mock_result
-
-        mkv_path = Path("test.mkv")
-        temp_wav_path = self.processor._extract_truehd_from_mkv(
-            mkv_path, stream_index=1
-        )
-
-        # Should return path to temporary WAV file
-        assert isinstance(temp_wav_path, Path)
-
-        # Verify ffmpeg was called correctly
-        mock_subprocess.assert_called_once()
-        call_args = mock_subprocess.call_args[0][0]
-        assert Path(call_args[0]).name == "ffmpeg.exe"
-        assert "-map" in call_args
-        assert "0:1" in call_args  # Stream index 1
-        assert "-c:a" in call_args
-        assert "pcm_s24le" in call_args
-
-    @patch("subprocess.run")
-    @patch("tempfile.NamedTemporaryFile")
-    def test_extract_truehd_no_ffmpeg(self, mock_tempfile, mock_subprocess):
-        """Test extraction when ffmpeg is not available."""
-        mock_temp = Mock()
-        mock_temp.name = "/tmp/test_extracted.wav"
-        mock_temp.close = Mock()
-        mock_tempfile.return_value = mock_temp
-
-        mock_subprocess.side_effect = FileNotFoundError("ffmpeg not found")
-
-        mkv_path = Path("test.mkv")
-
-        with pytest.raises(RuntimeError) as exc_info:
-            self.processor._extract_truehd_from_mkv(mkv_path, stream_index=0)
-        message = str(exc_info.value)
-        assert "ffmpeg was not found" in message
-        assert "ffmpeg.exe and ffprobe.exe" in message
-        assert "PATH" in message
-
-    @patch("src.audio_processor.AudioProcessor._probe_mkv_audio_streams")
-    @patch("src.audio_processor.AudioProcessor._extract_truehd_from_mkv")
+    @patch("src.audio_processor.AudioProcessor._probe_audio_streams")
+    @patch("src.audio_processor.AudioProcessor._decode_audio_to_wav")
     @patch("soundfile.read")
     @patch("pathlib.Path.exists")
     def test_load_audio_mkv_with_truehd(
-        self, mock_exists, mock_sf_read, mock_extract, mock_probe
+        self, mock_exists, mock_sf_read, mock_decode, mock_probe
     ):
         """Test loading MKV file with TrueHD audio."""
         # Mock file exists
@@ -165,12 +113,13 @@ class TestMKVSupport:
                 "codec_long_name": "TrueHD",
                 "channels": 6,
                 "sample_rate": "48000",
+                "channel_layout": "5.1",
             }
         ]
 
-        # Mock extraction - return temporary WAV path
-        temp_wav_path = Path("/tmp/extracted.wav")
-        mock_extract.return_value = temp_wav_path
+        # Mock decoding - return temporary WAV path
+        temp_wav_path = Path("/tmp/decoded.wav")
+        mock_decode.return_value = temp_wav_path
 
         # Mock soundfile reading the extracted WAV
         import numpy as np
@@ -187,19 +136,22 @@ class TestMKVSupport:
         # Load audio
         audio_data, sr = self.processor.load_audio(mkv_path)
 
-        # Verify extraction was called
+        # Verify probing/decoding was called
         mock_probe.assert_called_once_with(mkv_path)
-        mock_extract.assert_called_once()
+        mock_decode.assert_called_once()
+        assert mock_decode.call_args.kwargs["stream_index"] == 1
 
-        # Verify soundfile was called with extracted WAV
+        # Verify soundfile was called with decoded WAV
         mock_sf_read.assert_called_once()
         assert mock_sf_read.call_args[0][0] == str(temp_wav_path)
+        assert sr == sample_rate
+        assert audio_data.shape == mock_audio.shape
 
-    @patch("src.audio_processor.AudioProcessor._probe_mkv_audio_streams")
-    @patch("src.audio_processor.AudioProcessor._extract_truehd_from_mkv")
+    @patch("src.audio_processor.AudioProcessor._probe_audio_streams")
+    @patch("src.audio_processor.AudioProcessor._decode_audio_to_wav")
     @patch("pathlib.Path.exists")
     def test_load_audio_mkv_no_truehd_stream(
-        self, mock_exists, mock_extract, mock_probe
+        self, mock_exists, mock_decode, mock_probe
     ):
         """Test loading MKV file without TrueHD stream."""
         # Mock file exists
@@ -213,23 +165,28 @@ class TestMKVSupport:
                 "codec_long_name": "AC-3",
                 "channels": 2,
                 "sample_rate": "48000",
+                "channel_layout": "stereo",
             }
         ]
 
-        # Mock extraction for fallback to first audio stream
-        temp_wav_path = Path("/tmp/extracted.wav")
-        mock_extract.return_value = temp_wav_path
+        # Mock decoding for fallback to first audio stream
+        temp_wav_path = Path("/tmp/decoded.wav")
+        mock_decode.return_value = temp_wav_path
 
         mkv_path = Path("test.mkv")
 
-        # Should attempt to extract first audio stream anyway
-        # (Actual behavior - tries to extract first stream if no TrueHD)
-        try:
-            self.processor.load_audio(mkv_path)
-        except (ValueError, RuntimeError, FileNotFoundError):
-            pass  # Expected if extraction fails or file doesn't exist
+        # Should attempt to decode first audio stream anyway
+        import numpy as np
+
+        with patch("soundfile.read", return_value=(np.zeros(10, dtype=np.float32), 44100)):
+            try:
+                self.processor.load_audio(mkv_path)
+            except Exception:
+                pass
 
         mock_probe.assert_called_once()
+        mock_decode.assert_called_once()
+        assert mock_decode.call_args.kwargs["stream_index"] == 1
 
     def test_mkv_support_disabled(self):
         """Test that MKV files are skipped when support is disabled."""
