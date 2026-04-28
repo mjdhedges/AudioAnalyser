@@ -14,7 +14,6 @@ import tempfile
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-import librosa
 import numpy as np
 import soundfile as sf
 
@@ -221,6 +220,86 @@ class AudioProcessor:
             logger.error(f"ffmpeg failed: {e.stderr}")
             raise RuntimeError(f"Failed to extract TrueHD audio: {e.stderr}")
 
+    def _decode_audio_to_wav(
+        self,
+        input_path: Path,
+        stream_index: Optional[int] = None,
+        start_time: Optional[float] = None,
+        duration: Optional[float] = None,
+    ) -> Path:
+        """Decode an audio file/container stream to a temporary float32 WAV.
+
+        This uses ffmpeg for decoding for maximum format support (mp3/aac/m4a/etc)
+        and for container audio (mkv/mts/m2ts). The resulting WAV is loaded via
+        soundfile to preserve multi-channel shapes.
+
+        Args:
+            input_path: Source audio path (file or container).
+            stream_index: Optional global stream index to decode (ffprobe "index").
+                If None, decodes the first audio stream (a:0).
+            start_time: Optional start time in seconds (best-effort trim).
+            duration: Optional duration in seconds (best-effort trim).
+
+        Returns:
+            Path to a temporary WAV file.
+
+        Raises:
+            RuntimeError: If ffmpeg is missing or decoding fails.
+        """
+        temp_wav = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        temp_wav_path = Path(temp_wav.name)
+        temp_wav.close()
+
+        try:
+            cmd: list[str] = [_ffmpeg_tool_command("ffmpeg")]
+
+            # Best-effort trimming for test mode. Using -ss/-t before -i is fast but
+            # not sample-accurate; that's fine for test sections and avoids decoding
+            # full files just to discard.
+            if start_time is not None and start_time > 0:
+                cmd += ["-ss", str(float(start_time))]
+            if duration is not None and duration > 0:
+                cmd += ["-t", str(float(duration))]
+
+            cmd += [
+                "-i",
+                str(input_path),
+                "-vn",
+            ]
+
+            if stream_index is not None:
+                cmd += ["-map", f"0:{int(stream_index)}"]
+            else:
+                cmd += ["-map", "0:a:0"]
+
+            # Decode to float32 PCM WAV at the target sample rate. This gives
+            # consistent dtype and avoids downstream resampling/fallback loaders.
+            cmd += [
+                "-c:a",
+                "pcm_f32le",
+                "-ar",
+                str(self.sample_rate),
+                "-y",
+                str(temp_wav_path),
+            ]
+
+            subprocess.run(cmd, capture_output=True, text=True, check=True)
+            return temp_wav_path
+
+        except FileNotFoundError:
+            if temp_wav_path.exists():
+                temp_wav_path.unlink()
+            raise RuntimeError(
+                "ffmpeg was not found. Audio decoding requires the ffmpeg tools "
+                "package (ffmpeg.exe and ffprobe.exe). Install ffmpeg and ensure it "
+                "is on PATH, then restart Audio Analyser or your terminal."
+            )
+        except subprocess.CalledProcessError as e:
+            if temp_wav_path.exists():
+                temp_wav_path.unlink()
+            logger.error("ffmpeg decode failed: %s", e.stderr)
+            raise RuntimeError(f"Failed to decode audio via ffmpeg: {e.stderr}")
+
     def load_audio(
         self,
         file_path: str | Path,
@@ -252,126 +331,43 @@ class AudioProcessor:
         if not file_path.exists():
             raise FileNotFoundError(f"Audio file not found: {file_path}")
 
-        # Handle MKV and MTS containers with TrueHD audio
         temp_wav_path: Optional[Path] = None
-        if self.enable_mkv_support and (
-            self._is_mkv_file(file_path) or self._is_mts_file(file_path)
-        ):
-            try:
-                # Probe file to find audio streams and get channel layout
-                if self._is_mkv_file(file_path):
-                    streams = self._probe_mkv_audio_streams(file_path)
-                else:
-                    streams = self._probe_audio_streams(file_path)
-
-                # For MTS files, just get channel layout (no extraction needed)
-                if self._is_mts_file(file_path):
-                    if streams:
-                        # Store channel layout from ffprobe for correct channel mapping
-                        self._last_channel_layout = streams[0].get(
-                            "channel_layout", None
-                        )
-                        if self._last_channel_layout:
-                            logger.info(
-                                f"Detected channel layout from MTS file: {self._last_channel_layout}"
-                            )
-                    # MTS files can be loaded directly, no extraction needed
-                elif self._is_mkv_file(file_path):
-                    # For MKV files, find TrueHD stream and extract
-                    truehd_stream = None
-                    for stream in streams:
-                        codec = stream.get("codec_name", "").lower()
-                        if codec == "truehd":
-                            # Check if it's not Atmos metadata
-                            codec_long = stream.get("codec_long_name", "").lower()
-                            if "atmos" not in codec_long:
-                                truehd_stream = stream
-                                break
-
-                    if truehd_stream:
-                        # Use global stream index for mapping
-                        global_stream_idx = int(truehd_stream.get("index", 0))
-                        logger.info(
-                            f"Found TrueHD audio stream at global index {global_stream_idx}"
-                        )
-                        # Store channel layout from ffprobe for correct channel mapping
-                        self._last_channel_layout = truehd_stream.get(
-                            "channel_layout", None
-                        )
-                        if self._last_channel_layout:
-                            logger.info(
-                                f"Detected channel layout: {self._last_channel_layout}"
-                            )
-                        # Extract and decode TrueHD to temporary WAV
-                        temp_wav_path = self._extract_truehd_from_mkv(
-                            file_path, stream_index=global_stream_idx
-                        )
-                        # Update file_path to point to extracted WAV
-                        file_path = temp_wav_path
-                    else:
-                        logger.warning(
-                            f"No TrueHD audio stream found in MKV file. "
-                            f"Found streams: {[s.get('codec_name') for s in streams]}"
-                        )
-                        # Try to extract first audio stream anyway
-                        if streams:
-                            global_stream_idx = int(streams[0].get("index", 0))
-                            # Store channel layout from ffprobe
-                            self._last_channel_layout = streams[0].get(
-                                "channel_layout", None
-                            )
-                            if self._last_channel_layout:
-                                logger.info(
-                                    f"Detected channel layout: {self._last_channel_layout}"
-                                )
-                            temp_wav_path = self._extract_truehd_from_mkv(
-                                file_path, stream_index=global_stream_idx
-                            )
-                            file_path = temp_wav_path
-                        else:
-                            raise ValueError("No audio streams found in MKV file")
-            except Exception as e:
-                logger.error(f"Failed to extract audio from MKV: {e}")
-                raise
-
         try:
-            # Load audio file preserving multi-channel audio
-            # librosa.load() returns mono by default, so we use soundfile directly for multi-channel
-            use_float32 = True  # Default to float32 for 50% memory reduction
-            dtype = np.float32 if use_float32 else None
+            stream_index: Optional[int] = None
+            if self.enable_mkv_support and (
+                self._is_mkv_file(file_path) or self._is_mts_file(file_path)
+            ):
+                streams = self._probe_audio_streams(file_path)
+                if not streams:
+                    raise ValueError("No audio streams found in container file")
 
-            # Try loading with soundfile first to preserve channels
-            try:
-                audio_data, sr = sf.read(str(file_path), dtype=dtype)
-                # Resample if needed
-                if sr != self.sample_rate:
-                    if audio_data.ndim == 1:
-                        # Mono: resample directly
-                        audio_data = librosa.resample(
-                            audio_data, orig_sr=sr, target_sr=self.sample_rate
-                        )
-                    else:
-                        # Multi-channel: OPTIMIZED - use librosa's built-in multi-channel support
-                        # librosa.resample expects (channels, samples) format for multi-channel
-                        # Transpose, resample all channels at once, then transpose back
-                        audio_data_transposed = audio_data.T  # (channels, samples)
-                        audio_data_resampled = librosa.resample(
-                            audio_data_transposed,
-                            orig_sr=sr,
-                            target_sr=self.sample_rate,
-                        )
-                        audio_data = (
-                            audio_data_resampled.T
-                        )  # Back to (samples, channels)
-                    sr = self.sample_rate
-            except Exception:
-                # Fallback to librosa for formats soundfile doesn't support
-                audio_data, sr = librosa.load(
-                    str(file_path), sr=self.sample_rate, mono=False, dtype=dtype
-                )
-                # librosa returns (channels, samples) when mono=False, transpose to (samples, channels)
-                if audio_data.ndim == 2:
-                    audio_data = audio_data.T
+                # Prefer TrueHD when present (and not Atmos metadata), else fall back
+                # to the first audio stream.
+                chosen = streams[0]
+                for stream in streams:
+                    codec = str(stream.get("codec_name", "")).lower()
+                    if codec == "truehd":
+                        codec_long = str(stream.get("codec_long_name", "")).lower()
+                        if "atmos" not in codec_long:
+                            chosen = stream
+                            break
+
+                stream_index = int(chosen.get("index", 0))
+                self._last_channel_layout = chosen.get("channel_layout", None)
+                if self._last_channel_layout:
+                    logger.info("Detected channel layout: %s", self._last_channel_layout)
+
+            # Decode everything through ffmpeg for consistent format support.
+            temp_wav_path = self._decode_audio_to_wav(
+                file_path,
+                stream_index=stream_index,
+                start_time=start_time,
+                duration=duration,
+            )
+
+            # Load audio file preserving multi-channel audio
+            # The decoded WAV is float32 at the configured sample rate.
+            audio_data, sr = sf.read(str(temp_wav_path), dtype=np.float32, always_2d=False)
 
             # Ensure consistent shape: (samples,) for mono, (samples, channels) for multi-channel
             if audio_data.ndim == 1:
@@ -421,7 +417,7 @@ class AudioProcessor:
             logger.error(f"Error loading audio file {file_path}: {e}")
             raise ValueError(f"Failed to load audio file: {e}")
         finally:
-            # Clean up temporary WAV file if it was created from MKV extraction
+            # Clean up temporary WAV file created for ffmpeg decoding
             if temp_wav_path and temp_wav_path.exists():
                 try:
                     temp_wav_path.unlink()
