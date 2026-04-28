@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Optional
+from urllib.parse import unquote
 
 import markdown
 from PySide6.QtCore import QUrl
@@ -44,7 +46,12 @@ def markdown_report_to_pdf(
     writer.setTitle(markdown_path.stem)
 
     document = QTextDocument()
-    document.setBaseUrl(QUrl.fromLocalFile(str(markdown_path.parent.resolve()) + "/"))
+    base_dir = markdown_path.parent.resolve()
+    document.setBaseUrl(QUrl.fromLocalFile(str(base_dir) + "/"))
+    # QTextDocument is picky about resolving percent-encoded + relative image URLs.
+    # Rewrite any local relative <img src="..."> to absolute file:// URLs so the
+    # PDF renderer reliably embeds them.
+    html = _rewrite_local_img_srcs_to_file_urls(html, base_dir)
     document.setHtml(html)
     document.print_(writer)
 
@@ -118,3 +125,30 @@ def _report_html_document(body_html: str) -> str:
 </body>
 </html>
 """
+
+
+def _rewrite_local_img_srcs_to_file_urls(html: str, base_dir: Path) -> str:
+    """Rewrite HTML img src attributes to absolute file URLs when possible."""
+
+    def _replace(match: re.Match[str]) -> str:
+        prefix = match.group(1)
+        src = match.group(2)
+        suffix = match.group(3)
+        if not src:
+            return match.group(0)
+        lowered = src.lower()
+        if lowered.startswith(("http://", "https://", "file://", "qrc:/", "data:")):
+            return match.group(0)
+
+        # Strip fragments/query and decode percent escapes to find a real path.
+        raw = src.split("#", 1)[0].split("?", 1)[0]
+        candidate = (base_dir / unquote(raw)).resolve()
+        if not candidate.exists():
+            return match.group(0)
+
+        file_url = QUrl.fromLocalFile(str(candidate)).toString()
+        return f'{prefix}{file_url}{suffix}'
+
+    # Match src='...' or src="..." in <img ...>.
+    pattern = re.compile(r'(<img\b[^>]*\bsrc\s*=\s*["\'])([^"\']+)(["\'][^>]*>)')
+    return pattern.sub(_replace, html)
