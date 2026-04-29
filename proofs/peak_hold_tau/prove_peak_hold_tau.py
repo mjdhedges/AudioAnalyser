@@ -19,9 +19,11 @@ import soundfile as sf
 PROOF_DIR = Path(__file__).resolve().parent
 SAMPLE_RATE = 48_000
 RMS_TAU_SECONDS = 1.0
-WINDOW_SECONDS = 1.0
+WINDOW_SECONDS = 2.0
 STEP_SECONDS = 1.0
 WARMUP_SECONDS = 3.0
+PROGRAM_NOISE_FLOOR_DBFS = -80.0
+FINAL_TRUE_SILENCE_SECONDS = 10.0
 BLOCK_WINDOWS_SECONDS = [
     0.005,
     0.010,
@@ -118,7 +120,7 @@ class TauWindowSummary:
 
 
 def generate_test_signal(sample_rate: int) -> np.ndarray:
-    """Create deterministic material that stresses peak and RMS tracking."""
+    """Create deterministic programme material that stresses peak/RMS tracking."""
     rng = np.random.default_rng(20260425)
 
     sections: list[np.ndarray] = []
@@ -200,7 +202,14 @@ def generate_test_signal(sample_rate: int) -> np.ndarray:
         sections.append(pink_burst(max(2.0, burst_duration + 1.0), amp, burst_duration))
         sections.append(silence(0.5))
 
-    signal = np.concatenate(sections)
+    programme = np.concatenate(sections)
+    # Real programme material rarely sits at exact digital zero between events.
+    # Add a very low pink-noise bed to the programme region so gap behaviour is
+    # exercised with a realistic floor, then append true silence as a distinct
+    # edge case for invalid/absent signal handling.
+    noise_floor_amp = 10.0 ** (PROGRAM_NOISE_FLOOR_DBFS / 20.0)
+    programme = programme + pink_noise(programme.size / sample_rate, noise_floor_amp)
+    signal = np.concatenate([programme, silence(FINAL_TRUE_SILENCE_SECONDS)])
     peak = np.max(np.abs(signal))
     if peak > 0:
         signal = 0.98 * signal / peak
@@ -512,7 +521,7 @@ def plot_results(
     ax.semilogx(tau, p95, "^-", label="P95 absolute error")
     ax.axvline(best_tau, color="black", linestyle="--", label=f"Best tau = {best_tau:g}s")
     ax.set_xlabel("Peak-hold tau (seconds)")
-    ax.set_ylabel("Error vs 1-second block reference (dB)")
+    ax.set_ylabel(f"Error vs {_format_window_label(WINDOW_SECONDS)} block reference (dB)")
     ax.set_title("Peak-hold tau sweep")
     ax.grid(True, which="both", alpha=0.3)
     ax.legend()
@@ -522,7 +531,12 @@ def plot_results(
 
     fig, ax = plt.subplots(figsize=(12, 6))
     count = min(times.size, reference_db.size, best_candidate_db.size)
-    ax.plot(times[:count], reference_db[:count], label="1-second block reference", linewidth=2)
+    ax.plot(
+        times[:count],
+        reference_db[:count],
+        label=f"{_format_window_label(WINDOW_SECONDS)} block reference",
+        linewidth=2,
+    )
     ax.plot(
         times[:count],
         best_candidate_db[:count],
@@ -688,22 +702,26 @@ This study explores two linked crest-factor questions:
 - Source material: `source_material/peak_hold_tau_test.wav`
 - Sample rate: {SAMPLE_RATE} Hz
 - Slow RMS tau: {RMS_TAU_SECONDS:.1f} second
-- Primary tau reference: non-overlapping 1-second block peak / RMS crest factor
+- Primary tau reference: non-overlapping {_format_window_label(WINDOW_SECONDS)} block peak / RMS crest factor
 - Candidate peak-hold tau values: {", ".join(str(x) for x in PEAK_TAU_CANDIDATES_SECONDS)}
 - Fixed block windows studied: {", ".join(_format_window_label(x.window_seconds) for x in block_summaries)}
 - Warm-up excluded from scoring: {WARMUP_SECONDS:.1f} seconds
+- Programme noise bed: {PROGRAM_NOISE_FLOOR_DBFS:.0f} dBFS pink noise
+- Final true-silence edge case: {FINAL_TRUE_SILENCE_SECONDS:.0f} seconds
 
 The generated signal contains level-stepped click trains, steady-state sine
 waves at multiple levels, low-frequency sine waves, and pink-noise bursts of
-different durations and levels. This stresses fast attack behaviour, missed peak
-response, stable crest factor, and RMS settling without relying on copyrighted
-programme material.
+different durations and levels. A low-level pink-noise bed keeps programme gaps
+from becoming exact digital zero, while the final true-silence section remains
+as a separate edge case. This stresses fast attack behaviour, missed peak
+response, stable crest factor, RMS settling, and invalid/absent signal handling
+without relying on copyrighted programme material.
 
 ## Result
 
-### 1-second reference tau sweep
+### {_format_window_label(WINDOW_SECONDS)} reference tau sweep
 
-Best peak-hold tau by mean absolute error against the 1-second fixed-block
+Best peak-hold tau by mean absolute error against the {_format_window_label(WINDOW_SECONDS)} fixed-block
 reference:
 
 - Peak-hold tau: **{best.peak_tau_seconds:g} seconds**
@@ -782,11 +800,11 @@ stable but smear the result over more programme time. The useful engineering
 choice is therefore a block/window length long enough to avoid collapse, but not
 so long that it hides dynamic changes.
 
-The 1-second reference remains useful for judging the peak-hold algorithm because
-it sits on the IEC Slow RMS time scale. Against that reference, the best
-peak-hold tau is 0.8 seconds, with 1.0 second close behind. That supports using a
-peak-hold tau around the IEC Slow scale, while recognizing that changing the
-reference block length changes the best-matching peak tau.
+The primary reference is now the {_format_window_label(WINDOW_SECONDS)} block
+because the 1-second reference was too vulnerable to exact-zero gaps and local
+collapse. The result should be read as a stability check for the slow metering
+trace, not as a replacement for fixed-window crest factor when reporting
+programme dynamics.
 
 ## Outputs
 
@@ -801,13 +819,12 @@ reference block length changes the best-matching peak tau.
 
 ## Interpretation
 
-The fixed-block method is treated as the reference for 1-second window crest
-factor because it directly computes maximum absolute sample divided by RMS inside
-each window. Slow-mode crest factor is a metering-style method: RMS follows the
-IEC Slow 1-second exponential behaviour, while peak hold has instantaneous attack
-and configurable exponential decay. The best tau is therefore the tau that makes
-that metering-style trace closest to the fixed-window reference for this proof
-material.
+The fixed-block method is treated as the reference because it directly computes
+maximum absolute sample divided by RMS inside each window. Slow-mode crest factor
+is a metering-style method: RMS follows the IEC Slow 1-second exponential
+behaviour, while peak hold has instantaneous attack and configurable exponential
+decay. The best tau is therefore the tau that makes that metering-style trace
+closest to the fixed-window reference for this proof material.
 
 This result should not be treated as a universal standard. It is evidence for
 this stress-test material and scoring method. Clicks, steady tones, and short
