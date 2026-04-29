@@ -103,7 +103,11 @@ chunk_duration_seconds = 2.0        # Time-domain analysis chunk size
 sample_rate = 44100                 # Audio processing sample rate
 tracks_dir = "Tracks"               # Default tracks directory
 output_dir = "analysis"             # Default output directory
-peak_hold_tau_seconds = 0.8         # Crest-factor peak-hold release time
+time_domain_crest_factor_mode = "fixed_window"  # Primary time-series crest method
+crest_factor_window_seconds = 2.0   # Fixed-window crest factor window
+crest_factor_step_seconds = 1.0     # Fixed-window crest factor hop
+crest_factor_rms_floor_dbfs = -80.0 # Below this, crest factor is stored/plotted as missing
+peak_hold_tau_seconds = 1.4         # Slow diagnostic peak-hold release time
 time_domain_slow_rms_tau_seconds = 1.0  # IEC Slow RMS time constant
 octave_max_memory_gb = 8.0          # Per-track octave memory estimate, not a hard cap
 octave_center_frequencies = [8.0, 16.0, 31.25, 62.5, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0]
@@ -129,6 +133,15 @@ clip_events_threshold_db = -0.1     # Actual clipping threshold
 peak_saturation_threshold_db = -3.0  # Heavily compressed threshold
 transient_threshold_db = 3.0        # Significant level change threshold
 ```
+
+### Crest Factor Direction
+
+Crest factor now follows two explicit processing paths:
+
+- **No time axis**: full-track, full-channel, and octave-band spectrum summaries use whole-interval crest factor: `max(abs(signal)) / rms(signal)` over the same complete interval.
+- **Time axis**: crest-factor time graphs and tables use the configured mode: `fixed_window`, `slow`, or `fixed_chunk`. The default report method is `fixed_window` with a 2-second window, 1-second hop, and `NaN` gaps for below-floor/silent windows.
+
+The old hybrid summary method (whole-band RMS with a separate 1-second sliding peak) is intentionally not used for band/spectrum crest factor.
 
 ### Command Line Overrides
 

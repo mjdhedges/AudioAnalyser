@@ -13,7 +13,11 @@ from src.audio_processor import AudioProcessor
 from src.config import config
 from src.octave_filter import OctaveBandFilter
 from src.plotting_utils import add_calibrated_spl_axis
-from src.signal_metrics import compute_peak_hold_envelope, compute_slow_rms_envelope
+from src.time_domain_metrics import (
+    FixedChunkTimeDomainCalculator,
+    FixedWindowTimeDomainCalculator,
+    SlowTimeDomainCalculator,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -208,9 +212,40 @@ def generate_channel_deep_dive_plot(
     # Use all octave bands (Full Spectrum is handled separately in the octave bank at column 0)
     octave_bands = center_frequencies
 
-    # Calculate time-domain analysis for 1-second blocks
-    chunk_duration = 1.0  # seconds
-    chunk_samples = int(chunk_duration * sample_rate)
+    time_domain_mode = config.get(
+        "analysis.time_domain_crest_factor_mode", "fixed_window"
+    )
+    analysis_config = {
+        "crest_factor_window_seconds": config.get(
+            "analysis.crest_factor_window_seconds", 2.0
+        ),
+        "crest_factor_step_seconds": config.get(
+            "analysis.crest_factor_step_seconds", 1.0
+        ),
+        "crest_factor_rms_floor_dbfs": config.get(
+            "analysis.crest_factor_rms_floor_dbfs", -80.0
+        ),
+        "time_domain_slow_window_seconds": config.get(
+            "analysis.time_domain_slow_window_seconds", 1.0
+        ),
+        "time_domain_slow_step_seconds": config.get(
+            "analysis.time_domain_slow_step_seconds", 1.0
+        ),
+        "time_domain_slow_rms_tau_seconds": config.get(
+            "analysis.time_domain_slow_rms_tau_seconds", 1.0
+        ),
+    }
+    if time_domain_mode == "slow":
+        chunk_duration = float(analysis_config["time_domain_slow_window_seconds"])
+        step_seconds = float(analysis_config["time_domain_slow_step_seconds"])
+    elif time_domain_mode == "fixed_chunk":
+        chunk_duration = float(config.get("analysis.chunk_duration_seconds", 2.0))
+        step_seconds = chunk_duration
+    else:
+        chunk_duration = float(analysis_config["crest_factor_window_seconds"])
+        step_seconds = float(analysis_config["crest_factor_step_seconds"])
+    chunk_samples = max(int(chunk_duration * sample_rate), 1)
+    step_samples = max(int(step_seconds * sample_rate), 1)
 
     # Color palette for channels (distinct colors for up to 8 channels)
     channel_colors = [
@@ -259,19 +294,18 @@ def generate_channel_deep_dive_plot(
             logger.error(f"Failed to create octave bank for {channel_folder}: {e}")
             continue
 
-        # Calculate number of complete chunks
         num_samples = len(channel_data)
-        num_complete_chunks = (num_samples - chunk_samples) // chunk_samples + 1
+        num_complete_chunks = (num_samples - chunk_samples) // step_samples + 1
 
         if num_complete_chunks <= 0:
             logger.warning(
-                f"Audio too short for 1-second block analysis: {num_samples} samples"
+                f"Audio too short for {chunk_duration:.1f}-second block analysis: {num_samples} samples"
             )
             continue
 
-        time_points = np.arange(num_complete_chunks) * chunk_duration + (
-            chunk_duration / 2.0
-        )
+        time_points = (
+            np.arange(num_complete_chunks) * step_samples + chunk_samples
+        ) / float(sample_rate)
 
         # Process each octave band and store data
         channel_label = channel_folder.replace("Channel ", "").strip()
@@ -306,66 +340,52 @@ def generate_channel_deep_dive_plot(
         channel_peak_data = {}
         channel_rms_data = {}
 
-        peak_hold_tau = config.get("analysis.peak_hold_tau_seconds", 1.0)
-
         for channel_label, channel_info in channel_data_dict.items():
             octave_bank = channel_info["octave_bank"]
             channel_data = channel_info["channel_data"]
-            num_complete_chunks = channel_info["num_complete_chunks"]
 
             band_data = octave_bank[:, band_idx + 1]  # +1 to skip Full Spectrum
-            slow_rms_env = compute_slow_rms_envelope(band_data, sample_rate)
 
-            peak_env = compute_peak_hold_envelope(
-                band_data, sample_rate, tau=peak_hold_tau
-            )
-            end_indices = np.arange(num_complete_chunks) * chunk_samples + (
-                chunk_samples - 1
-            )
-            if peak_env.size > 0:
-                peak_indices = np.clip(end_indices, 0, peak_env.size - 1)
-                peaks = peak_env[peak_indices]
+            if time_domain_mode == "slow":
+                result = SlowTimeDomainCalculator(
+                    peak_hold_tau_seconds=config.get(
+                        "analysis.peak_hold_tau_seconds", 1.4
+                    )
+                ).compute(
+                    band_data,
+                    sample_rate=sample_rate,
+                    original_peak=1.0,
+                    config=analysis_config,
+                )
+            elif time_domain_mode == "fixed_chunk":
+                result = FixedChunkTimeDomainCalculator(
+                    window_seconds=chunk_duration
+                ).compute(
+                    band_data,
+                    sample_rate=sample_rate,
+                    original_peak=1.0,
+                    config=analysis_config,
+                )
             else:
-                peaks = np.zeros(num_complete_chunks, dtype=np.float64)
-            if slow_rms_env.size > 0:
-                rms_indices = np.clip(end_indices, 0, slow_rms_env.size - 1)
-                rms_vals = slow_rms_env[rms_indices]
-            else:
-                rms_vals = np.zeros(num_complete_chunks, dtype=np.float64)
+                result = FixedWindowTimeDomainCalculator().compute(
+                    band_data,
+                    sample_rate=sample_rate,
+                    original_peak=1.0,
+                    config=analysis_config,
+                )
 
-            original_peak = np.max(np.abs(channel_data))
-            if original_peak > 0:
-                peak_levels_dbfs = 20 * np.log10(peaks / original_peak)
-                rms_levels_dbfs = 20 * np.log10(rms_vals / original_peak)
-            else:
-                peak_levels_dbfs = np.full(num_complete_chunks, -120.0)
-                rms_levels_dbfs = np.full(num_complete_chunks, -120.0)
+            crest_factor_db_plot = np.array(result.crest_factors_db)
+            crest_factor_db_plot[~np.isfinite(crest_factor_db_plot)] = np.nan
 
-            crest_factors = np.divide(
-                peaks,
-                rms_vals,
-                out=np.ones_like(peaks),
-                where=rms_vals > 0,
-            )
-            crest_factors = np.maximum(crest_factors, 1.0)
-            crest_factors_db = 20 * np.log10(crest_factors)
-
-            crest_factor_db_plot = np.array(crest_factors_db)
-            crest_factor_db_plot[~np.isfinite(crest_factor_db_plot)] = 0.0
-            crest_factor_db_plot = np.maximum(crest_factor_db_plot, 0.0)
-
-            peak_level_dbfs_plot = np.array(peak_levels_dbfs)
+            peak_level_dbfs_plot = np.array(result.peak_levels_dbfs)
             peak_level_dbfs_plot[peak_level_dbfs_plot == -np.inf] = -120
             peak_level_dbfs_plot[~np.isfinite(peak_level_dbfs_plot)] = -120
 
-            rms_level_dbfs_plot = np.array(rms_levels_dbfs)
+            rms_level_dbfs_plot = np.array(result.rms_levels_dbfs)
             rms_level_dbfs_plot[rms_level_dbfs_plot == -np.inf] = -120
             rms_level_dbfs_plot[~np.isfinite(rms_level_dbfs_plot)] = -120
 
-            # Store data for this channel
-            channel_time_points = (
-                np.arange(len(crest_factor_db_plot)) + 1
-            ) * chunk_duration
+            channel_time_points = result.time_points
             channel_crest_data[channel_label] = (
                 channel_time_points,
                 crest_factor_db_plot,

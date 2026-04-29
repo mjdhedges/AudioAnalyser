@@ -15,7 +15,11 @@ from src.audio_processor import AudioProcessor
 from src.config import config
 from src.octave_filter import OctaveBandFilter
 from src.plotting_utils import add_calibrated_spl_axis
-from src.signal_metrics import compute_peak_hold_envelope, compute_slow_rms_envelope
+from src.time_domain_metrics import (
+    FixedChunkTimeDomainCalculator,
+    FixedWindowTimeDomainCalculator,
+    SlowTimeDomainCalculator,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -156,10 +160,8 @@ def generate_lfe_full_channel_plot(
     peak_level_dbfs = time_data["peak_level_dbfs"]
     rms_level_dbfs = time_data["rms_level_dbfs"]
 
-    # Replace -inf with very low value for plotting
     crest_factor_db_plot = np.copy(crest_factor_db)
-    crest_factor_db_plot[crest_factor_db_plot == -np.inf] = -60
-    crest_factor_db_plot[~np.isfinite(crest_factor_db_plot)] = 0.0
+    crest_factor_db_plot[~np.isfinite(crest_factor_db_plot)] = np.nan
 
     peak_level_dbfs_plot = np.copy(peak_level_dbfs)
     peak_level_dbfs_plot[peak_level_dbfs_plot == -np.inf] = -120
@@ -376,68 +378,94 @@ def generate_lfe_octave_time_plot(
         return None
 
     # Calculate time-domain analysis for 1-second blocks
-    chunk_duration = 1.0  # seconds
-    chunk_samples = int(chunk_duration * sample_rate)
+    time_domain_mode = config.get(
+        "analysis.time_domain_crest_factor_mode", "fixed_window"
+    )
+    analysis_config = {
+        "crest_factor_window_seconds": config.get(
+            "analysis.crest_factor_window_seconds", 2.0
+        ),
+        "crest_factor_step_seconds": config.get(
+            "analysis.crest_factor_step_seconds", 1.0
+        ),
+        "crest_factor_rms_floor_dbfs": config.get(
+            "analysis.crest_factor_rms_floor_dbfs", -80.0
+        ),
+        "time_domain_slow_window_seconds": config.get(
+            "analysis.time_domain_slow_window_seconds", 1.0
+        ),
+        "time_domain_slow_step_seconds": config.get(
+            "analysis.time_domain_slow_step_seconds", 1.0
+        ),
+        "time_domain_slow_rms_tau_seconds": config.get(
+            "analysis.time_domain_slow_rms_tau_seconds", 1.0
+        ),
+    }
+    if time_domain_mode == "slow":
+        chunk_duration = float(analysis_config["time_domain_slow_window_seconds"])
+        step_seconds = float(analysis_config["time_domain_slow_step_seconds"])
+    elif time_domain_mode == "fixed_chunk":
+        chunk_duration = float(config.get("analysis.chunk_duration_seconds", 2.0))
+        step_seconds = chunk_duration
+    else:
+        chunk_duration = float(analysis_config["crest_factor_window_seconds"])
+        step_seconds = float(analysis_config["crest_factor_step_seconds"])
+    chunk_samples = max(int(chunk_duration * sample_rate), 1)
+    step_samples = max(int(step_seconds * sample_rate), 1)
     num_samples = len(lfe_channel_data)
-    num_complete_chunks = (num_samples - chunk_samples) // chunk_samples + 1
+    num_complete_chunks = (num_samples - chunk_samples) // step_samples + 1
 
     if num_complete_chunks <= 0:
         logger.warning(
-            f"Audio too short for 1-second block analysis: {num_samples} samples"
+            f"Audio too short for {chunk_duration:.1f}-second block analysis: {num_samples} samples"
         )
         return None
 
-    time_points = (np.arange(num_complete_chunks) + 1) * chunk_duration
+    time_points = (
+        np.arange(num_complete_chunks) * step_samples + chunk_samples
+    ) / float(sample_rate)
 
     # Calculate crest factor, peak, and RMS for each target frequency
     freq_data: Dict[float, Dict[str, np.ndarray]] = {}
 
-    window_samples = max(int(sample_rate * 1.0), 1)
-
-    peak_hold_tau = config.get("analysis.peak_hold_tau_seconds", 1.0)
-
     for target_freq, freq_idx in freq_indices.items():
         # Get octave band data (skip full spectrum at index 0)
         band_data = octave_bank[:, freq_idx + 1]
-        slow_rms_env = compute_slow_rms_envelope(band_data, sample_rate)
 
-        # Calculate RMS and peak for each chunk using SLOW weighting
-        peak_env = compute_peak_hold_envelope(band_data, sample_rate, tau=peak_hold_tau)
-        start_indices = np.arange(num_complete_chunks) * chunk_samples
-        end_indices = start_indices + chunk_samples - 1
-        if peak_env.size > 0:
-            peak_indices = np.clip(end_indices, 0, peak_env.size - 1)
-            peaks = peak_env[peak_indices]
+        if time_domain_mode == "slow":
+            result = SlowTimeDomainCalculator(
+                peak_hold_tau_seconds=config.get("analysis.peak_hold_tau_seconds", 1.4)
+            ).compute(
+                band_data,
+                sample_rate=sample_rate,
+                original_peak=1.0,
+                config=analysis_config,
+            )
+        elif time_domain_mode == "fixed_chunk":
+            result = FixedChunkTimeDomainCalculator(
+                window_seconds=chunk_duration
+            ).compute(
+                band_data,
+                sample_rate=sample_rate,
+                original_peak=1.0,
+                config=analysis_config,
+            )
         else:
-            peaks = np.zeros(num_complete_chunks, dtype=np.float64)
-
-        if slow_rms_env.size > 0:
-            rms_indices = np.clip(end_indices, 0, slow_rms_env.size - 1)
-            rms_vals = slow_rms_env[rms_indices]
-        else:
-            rms_vals = np.zeros(num_complete_chunks, dtype=np.float64)
-
-        # Calculate crest factor
-        crest_factors = np.divide(
-            peaks, rms_vals, out=np.ones_like(peaks), where=(rms_vals > 0)
-        )
-        crest_factors = np.maximum(crest_factors, 1.0)
-        crest_factor_db = 20 * np.log10(crest_factors)
-        crest_factor_db = np.where(np.isfinite(crest_factor_db), crest_factor_db, 0.0)
-
-        # Convert to dBFS (use actual peak from audio data)
-        audio_peak = np.max(np.abs(lfe_channel_data))
-        peak_dbfs = 20 * np.log10(peaks * audio_peak + 1e-10)
-        rms_dbfs = 20 * np.log10(rms_vals * audio_peak + 1e-10)
-
-        # Handle invalid values
-        peak_dbfs = np.where(np.isfinite(peak_dbfs), peak_dbfs, -120.0)
-        rms_dbfs = np.where(np.isfinite(rms_dbfs), rms_dbfs, -120.0)
+            result = FixedWindowTimeDomainCalculator().compute(
+                band_data,
+                sample_rate=sample_rate,
+                original_peak=1.0,
+                config=analysis_config,
+            )
 
         freq_data[target_freq] = {
-            "crest_factor_db": crest_factor_db,
-            "peak_dbfs": peak_dbfs,
-            "rms_dbfs": rms_dbfs,
+            "crest_factor_db": result.crest_factors_db,
+            "peak_dbfs": np.where(
+                np.isfinite(result.peak_levels_dbfs), result.peak_levels_dbfs, -120.0
+            ),
+            "rms_dbfs": np.where(
+                np.isfinite(result.rms_levels_dbfs), result.rms_levels_dbfs, -120.0
+            ),
         }
 
     # Generate separate plot for each frequency

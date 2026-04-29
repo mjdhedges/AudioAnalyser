@@ -235,6 +235,23 @@ anchor.
 
 ## Required Main Programme Updates
 
+### Processing Model
+
+Keep crest-factor processing to two explicit paths:
+
+- **Whole-interval crest factor** for any summary value without a time axis:
+  full-track, full-channel, octave-band spectrum, and report table summary rows.
+  Peak and RMS must be measured over the same complete interval:
+  `max(abs(signal)) / rms(signal)`.
+- **Configured time-series crest factor** for any graph/table with time on the
+  x-axis. This path must use `time_domain_crest_factor_mode`, selecting
+  `fixed_window`, `slow`, or `fixed_chunk`.
+
+Do not use hybrid definitions such as whole-band RMS combined with a separate
+1-second sliding peak for spectrum rows. That produces a third interpretation
+that is hard to explain and does not match either the whole-interval summary or
+the configured time-series behaviour.
+
 ### Configuration
 
 Add explicit fixed-window crest-factor settings:

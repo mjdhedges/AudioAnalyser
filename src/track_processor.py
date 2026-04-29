@@ -94,7 +94,7 @@ class TrackProcessor:
 
             peak_hold_tau = config.get("analysis.peak_hold_tau_seconds", 1.0)
             time_domain_mode = config.get(
-                "analysis.time_domain_crest_factor_mode", "slow"
+                "analysis.time_domain_crest_factor_mode", "fixed_window"
             )
             analyzer = MusicAnalyzer(
                 sample_rate=self.sample_rate,

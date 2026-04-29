@@ -16,7 +16,7 @@ from typing import Any, Dict, Iterable, Optional
 import numpy as np
 import pandas as pd
 
-from src.signal_metrics import compute_peak_hold_envelope, compute_slow_rms_envelope
+from src.signal_metrics import sampled_max_abs
 
 logger = logging.getLogger(__name__)
 
@@ -87,11 +87,11 @@ def write_channel_result_bundle(
     )
     processing_warnings.extend(
         _write_histogram_tables(
-        channel_dir=channel_dir,
-        analysis_results=analysis_results,
-        plotting_config=plotting_config,
-        original_peak=float(track_metadata.get("original_peak", 1.0) or 1.0),
-    )
+            channel_dir=channel_dir,
+            analysis_results=analysis_results,
+            plotting_config=plotting_config,
+            original_peak=float(track_metadata.get("original_peak", 1.0) or 1.0),
+        )
     )
     _write_octave_time_metrics(
         channel_dir / "octave_time_metrics.csv",
@@ -99,7 +99,7 @@ def write_channel_result_bundle(
         center_frequencies=list(center_frequencies),
         channel_data=channel_data,
         sample_rate=int(track_metadata.get("sample_rate", 44100)),
-        peak_hold_tau=float(analysis_config.get("peak_hold_tau_seconds", 1.0)),
+        analysis_config=analysis_config,
     )
     _write_envelope_summary_tables(channel_dir, envelope_statistics or {})
     if envelope_statistics is not None:
@@ -223,6 +223,10 @@ def _write_octave_band_table(path: Path, analysis_results: Dict[str, Any]) -> No
             "dynamic_range_db": stats.get("dynamic_range_db"),
             "crest_factor": stats.get("crest_factor"),
             "crest_factor_db": stats.get("crest_factor_db"),
+            "is_valid_crest_factor": stats.get("is_valid_crest_factor"),
+            "crest_factor_method": stats.get(
+                "crest_factor_method", "whole_interval_peak_rms"
+            ),
             "mean": stats.get("mean"),
             "std": stats.get("std"),
         }
@@ -255,6 +259,27 @@ def _write_time_domain_table(path: Path, time_analysis: Dict[str, Any]) -> None:
         name: np.asarray(time_analysis.get(key, []), dtype=float)
         for key, name in zip(keys, names)
     }
+    n = len(rows["time_seconds"])
+    rows["is_valid_crest_factor"] = np.asarray(
+        time_analysis.get(
+            "is_valid_crest_factor",
+            np.isfinite(rows["crest_factor_db"]),
+        ),
+        dtype=bool,
+    )
+    rows["crest_factor_window_seconds"] = np.full(
+        n,
+        float(time_analysis.get("chunk_duration", np.nan)),
+    )
+    rows["crest_factor_step_seconds"] = np.full(
+        n,
+        float(time_analysis.get("time_step_seconds", np.nan)),
+    )
+    rows["crest_factor_method"] = np.full(
+        n,
+        str(time_analysis.get("crest_factor_method", "unknown")),
+        dtype=object,
+    )
     _write_dataframe(path, pd.DataFrame(rows))
 
 
@@ -276,6 +301,11 @@ def _write_time_domain_summary(path: Path, time_analysis: Dict[str, Any]) -> Non
         ),
         "time_domain_peak_method": time_analysis.get(
             "time_domain_peak_method", "unknown"
+        ),
+        "valid_crest_factor_windows": int(valid_crest_db.size),
+        "invalid_crest_factor_windows": int(
+            len(np.asarray(time_analysis.get("crest_factors_db", []), dtype=float))
+            - valid_crest_db.size
         ),
         "crest_factor_mean_db": _array_stat(valid_crest_db, np.mean),
         "crest_factor_std_db": _array_stat(valid_crest_db, np.std),
@@ -465,7 +495,9 @@ def _write_histogram_tables(
                 chunk_size = int(plotting_config.get("histogram_chunk_size", 2_000_000))
                 floor_linear = 10 ** (noise_floor_db / 20)
                 for start in range(0, clean_signal.size, chunk_size):
-                    chunk = np.asarray(clean_signal[start : start + chunk_size], dtype=np.float32)
+                    chunk = np.asarray(
+                        clean_signal[start : start + chunk_size], dtype=np.float32
+                    )
                     if chunk.size == 0:
                         continue
                     chunk = np.abs(chunk) * float(original_peak)
@@ -533,55 +565,57 @@ def _write_octave_time_metrics(
     center_frequencies: list[float],
     channel_data: np.ndarray,
     sample_rate: int,
-    peak_hold_tau: float,
+    analysis_config: Dict[str, Any],
 ) -> None:
     rows = []
-    chunk_duration = 1.0
-    chunk_samples = max(int(sample_rate * chunk_duration), 1)
+    window_seconds = float(
+        analysis_config.get("crest_factor_window_seconds", 2.0) or 2.0
+    )
+    step_seconds = float(analysis_config.get("crest_factor_step_seconds", 1.0) or 1.0)
+    rms_floor_dbfs = float(
+        analysis_config.get("crest_factor_rms_floor_dbfs", -80.0) or -80.0
+    )
+    window_samples = max(int(sample_rate * window_seconds), 1)
+    step_samples = max(int(sample_rate * step_seconds), 1)
     num_samples = len(channel_data)
-    num_complete_chunks = (num_samples - chunk_samples) // chunk_samples + 1
-    if num_complete_chunks <= 0:
+    num_windows = (num_samples - window_samples) // step_samples + 1
+    if num_windows <= 0:
         _write_dataframe(path, pd.DataFrame(rows))
         return
 
-    end_indices = np.arange(num_complete_chunks) * chunk_samples + (chunk_samples - 1)
-    time_points = (np.arange(num_complete_chunks) + 1) * chunk_duration
+    starts = np.arange(num_windows, dtype=np.int64) * step_samples
+    ends = starts + window_samples
+    time_points = ends / float(sample_rate)
     channel_peak = float(np.max(np.abs(channel_data))) if channel_data.size else 0.0
 
     for band_index, center_frequency in enumerate(center_frequencies):
         band_data = np.asarray(octave_bank[:, band_index + 1], dtype=float)
-        peak_env = compute_peak_hold_envelope(
-            band_data,
-            sample_rate,
-            tau=peak_hold_tau,
-        )
-        rms_env = compute_slow_rms_envelope(band_data, sample_rate)
-
-        peak_indices = np.clip(end_indices, 0, max(peak_env.size - 1, 0))
-        rms_indices = np.clip(end_indices, 0, max(rms_env.size - 1, 0))
-        peaks = (
-            peak_env[peak_indices] if peak_env.size else np.zeros(num_complete_chunks)
-        )
-        rms_values = (
-            rms_env[rms_indices] if rms_env.size else np.zeros(num_complete_chunks)
-        )
-
-        crest_factors = np.divide(
-            peaks,
-            rms_values,
-            out=np.ones_like(peaks),
-            where=rms_values > 0,
-        )
-        crest_factors = np.maximum(crest_factors, 1.0)
-        crest_db = 20 * np.log10(crest_factors)
+        peaks = sampled_max_abs(band_data, window_samples, step_samples)[:num_windows]
+        band_squared = np.square(band_data.astype(np.float64, copy=False))
+        csum = np.concatenate(([0.0], np.cumsum(band_squared)))
+        sum_sq = csum[ends] - csum[starts]
+        rms_values = np.sqrt(np.clip(sum_sq / float(window_samples), 0.0, None))
         peak_dbfs = 20 * np.log10(peaks * channel_peak + 1e-10)
         rms_dbfs = 20 * np.log10(rms_values * channel_peak + 1e-10)
+        valid = (rms_values > 0) & (rms_dbfs >= rms_floor_dbfs)
 
-        for time_value, crest, peak, rms in zip(
+        crest_factors = np.full_like(peaks, np.nan, dtype=np.float64)
+        crest_factors[valid] = np.divide(
+            peaks[valid],
+            rms_values[valid],
+            out=np.ones_like(peaks[valid]),
+            where=rms_values[valid] > 0,
+        )
+        crest_factors[valid] = np.maximum(crest_factors[valid], 1.0)
+        crest_db = np.full_like(peaks, np.nan, dtype=np.float64)
+        crest_db[valid] = 20 * np.log10(crest_factors[valid])
+
+        for time_value, crest, peak, rms, is_valid in zip(
             time_points,
-            np.where(np.isfinite(crest_db), crest_db, 0.0),
+            crest_db,
             np.where(np.isfinite(peak_dbfs), peak_dbfs, -120.0),
             np.where(np.isfinite(rms_dbfs), rms_dbfs, -120.0),
+            valid,
         ):
             rows.append(
                 {
@@ -590,6 +624,10 @@ def _write_octave_time_metrics(
                     "crest_factor_db": crest,
                     "peak_dbfs": peak,
                     "rms_dbfs": rms,
+                    "is_valid_crest_factor": bool(is_valid),
+                    "crest_factor_window_seconds": window_seconds,
+                    "crest_factor_step_seconds": step_seconds,
+                    "crest_factor_method": "fixed_window_peak_rms",
                 }
             )
 

@@ -174,10 +174,7 @@ def render_channel_crest_factor_spectrum(
         raise ValueError(f"No octave band data available for {channel.channel_id}")
 
     plot_freqs = octave_data["frequency_numeric"].to_numpy(dtype=float)
-    crest_db = _finite_series(
-        octave_data["crest_factor_db"].to_numpy(dtype=float),
-        0.0,
-    )
+    crest_db = _crest_plot_series(octave_data["crest_factor_db"].to_numpy(dtype=float))
 
     fig, ax = plt.subplots(figsize=(12, 8))
     ax.semilogx(
@@ -202,7 +199,7 @@ def render_channel_crest_factor_spectrum(
                 chunk_rows["frequency_hz"],
                 _finite_series(
                     chunk_rows["chunk_crest_factor_db"].to_numpy(dtype=float),
-                    0.0,
+                    np.nan,
                 ),
                 color=color,
                 linestyle="--",
@@ -548,9 +545,8 @@ def render_channel_crest_factor_time(
         raise ValueError(f"No time-domain data available for {channel.channel_id}")
 
     time_points = time_data["time_seconds"].to_numpy(dtype=float)
-    crest_factors_db = _finite_series(
-        time_data["crest_factor_db"].to_numpy(dtype=float),
-        fallback=-60.0,
+    crest_factors_db = _crest_plot_series(
+        time_data["crest_factor_db"].to_numpy(dtype=float)
     )
     peak_levels_dbfs = _finite_series(
         time_data["peak_level_dbfs"].to_numpy(dtype=float),
@@ -618,7 +614,7 @@ def render_channel_crest_factor_time(
     )
 
     finite_cf = crest_factors_db[np.isfinite(crest_factors_db)]
-    avg_crest_db = _average_crest_db(peak_levels, rms_levels)
+    avg_crest_db = float(np.mean(finite_cf)) if finite_cf.size else 0.0
     max_crest_db = float(np.max(finite_cf)) if finite_cf.size else 0.0
     min_crest_db = float(np.min(finite_cf)) if finite_cf.size else 0.0
     ax1.text(
@@ -661,7 +657,7 @@ def render_channel_octave_crest_factor_time(
     ):
         ax.plot(
             rows["time_seconds"],
-            _finite_series(rows["crest_factor_db"].to_numpy(dtype=float), 0.0),
+            _crest_plot_series(rows["crest_factor_db"].to_numpy(dtype=float)),
             color=_OCTAVE_TIME_COLORS[idx % len(_OCTAVE_TIME_COLORS)],
             linewidth=1.5,
             label=_format_frequency_label(float(frequency_hz)),
@@ -845,7 +841,7 @@ def _render_group_crest_factor_time(
         color = colors[idx % len(colors)]
         label = _channel_label(channel.channel_name)
         time_seconds = data["time_seconds"].to_numpy(dtype=float)
-        crest_db = _finite_series(data["crest_factor_db"].to_numpy(dtype=float), 0.0)
+        crest_db = _crest_plot_series(data["crest_factor_db"].to_numpy(dtype=float))
         peak_dbfs = _finite_series(
             data["peak_level_dbfs"].to_numpy(dtype=float), -120.0
         )
@@ -924,8 +920,8 @@ def _render_group_octave_spectrum(
         color = colors[idx % len(colors)]
         label = _channel_label(channel.channel_name)
         freqs = octave_data["frequency_numeric"].to_numpy(dtype=float)
-        crest_db = _finite_series(
-            octave_data["crest_factor_db"].to_numpy(dtype=float), 0.0
+        crest_db = _crest_plot_series(
+            octave_data["crest_factor_db"].to_numpy(dtype=float)
         )
         peak_db = _finite_series(
             octave_data["max_amplitude_db"].to_numpy(dtype=float), -60.0
@@ -935,7 +931,7 @@ def _render_group_octave_spectrum(
 
         ax1.semilogx(
             freqs,
-            np.maximum(crest_db, 0.0),
+            crest_db,
             color=color,
             marker="o",
             linewidth=2,
@@ -1059,7 +1055,7 @@ def _render_group_octave_time_frequency(
         color = colors[idx % len(colors)]
         label = _channel_label(channel.channel_name)
         time_seconds = rows["time_seconds"].to_numpy(dtype=float)
-        crest_db = _finite_series(rows["crest_factor_db"].to_numpy(dtype=float), 0.0)
+        crest_db = _crest_plot_series(rows["crest_factor_db"].to_numpy(dtype=float))
         peak_dbfs = _finite_series(rows["peak_dbfs"].to_numpy(dtype=float), -120.0)
         rms_dbfs = _finite_series(rows["rms_dbfs"].to_numpy(dtype=float), -120.0)
         if time_seconds.size:
@@ -1368,7 +1364,10 @@ def _classify_channel_name(channel_name: str) -> Optional[str]:
     }
     if tokens & {"FL", "FR", "FC", "FLC", "FRC"}:
         return "screen"
-    if any(token.startswith("LFE") for token in tokens) or "LOW FREQUENCY" in normalized:
+    if (
+        any(token.startswith("LFE") for token in tokens)
+        or "LOW FREQUENCY" in normalized
+    ):
         return "lfe"
     if tokens & {
         "SL",
@@ -1588,6 +1587,12 @@ def _channel_label(channel_name: str) -> str:
 def _finite_series(values: np.ndarray, fallback: float) -> np.ndarray:
     values = np.asarray(values, dtype=float)
     return np.where(np.isfinite(values), values, fallback)
+
+
+def _crest_plot_series(values: np.ndarray) -> np.ndarray:
+    """Return crest-factor values preserving NaN gaps for invalid windows."""
+    values = np.asarray(values, dtype=float)
+    return np.where(np.isfinite(values), values, np.nan)
 
 
 def _safe_float(value, fallback: float) -> float:

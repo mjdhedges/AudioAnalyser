@@ -28,13 +28,22 @@ chunk_duration_seconds = 2.0
 # Time constant (seconds) for the crest-factor peak-hold envelope.
 # The peak-hold proof found 0.8s best matched a 1s fixed-block reference while
 # keeping the RMS detector anchored to the IEC Slow 1.0s time constant below.
-peak_hold_tau_seconds = 0.8
+peak_hold_tau_seconds = 1.4
 
 # Time-domain crest factor mode
 # Options:
-#   "slow"        - IEC-style: peak-hold + slow RMS envelope, sampled at 1s (or configured window)
-#   "fixed_chunk" - Fixed-window peak/RMS per analysis.chunk_duration_seconds
-time_domain_crest_factor_mode = "slow"
+#   "fixed_window" - Fixed-window peak/RMS with configurable overlap (primary report metric)
+#   "slow"         - IEC-style diagnostic: peak-hold + slow RMS envelope
+#   "fixed_chunk"  - Legacy non-overlapping fixed-window peak/RMS per analysis.chunk_duration_seconds
+time_domain_crest_factor_mode = "fixed_window"
+
+# Primary crest-factor-over-time settings. This is the report metric selected by
+# proofs/peak_hold_tau: 2s fixed peak/RMS window with 1s hop, and invalid
+# below-floor windows represented as gaps rather than false 0 dB values.
+crest_factor_window_seconds = 2.0
+crest_factor_step_seconds = 1.0
+crest_factor_rms_floor_dbfs = -80.0
+crest_factor_primary_mode = "fixed_window"
 
 # SLOW-mode configuration (only used when time_domain_crest_factor_mode = "slow")
 # Window size and step (seconds). Default 1.0s / 1.0s.

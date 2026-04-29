@@ -26,6 +26,7 @@ from src.plotting_utils import add_calibrated_spl_axis
 from src.signal_metrics import (
     compute_peak_hold_envelope,
     compute_slow_rms_envelope,
+    sampled_max_abs,
 )
 
 logger = logging.getLogger(__name__)
@@ -779,44 +780,42 @@ class PlotGenerator:
         """
         logger.info("Creating octave band crest factor vs time plot...")
 
-        # Extract data from time analysis
         time_points = time_analysis["time_points"]
-        window_duration = 1.0  # seconds
-        window_samples = int(window_duration * self.sample_rate)
-
-        # Use provided center frequencies (no need to create filter instance)
         center_freqs = center_frequencies
-
-        # Initialize storage for octave band crest factors over time
         octave_crest_factors = {}
-
-        # VECTORIZATION OPTIMIZATION: Process all chunks for each frequency at once
-        # This replaces nested loops with vectorized operations (10-20x faster)
-        window_samples = max(int(self.sample_rate * 1.0), 1)
+        mode = str(time_analysis.get("time_domain_mode", "fixed_window"))
+        window_seconds = float(time_analysis.get("chunk_duration", 2.0) or 2.0)
+        step_seconds = float(time_analysis.get("time_step_seconds", window_seconds))
+        rms_floor_dbfs = float(time_analysis.get("crest_factor_rms_floor_dbfs", -80.0))
+        window_samples = max(int(window_seconds * self.sample_rate), 1)
+        step_samples = max(int(step_seconds * self.sample_rate), 1)
 
         for freq_idx, freq in enumerate(center_freqs):
-            # Get all samples for this frequency band (skip full spectrum at index 0)
             band_all = octave_bank[:, freq_idx + 1]
-            slow_rms_env = compute_slow_rms_envelope(band_all, self.sample_rate)
-            num_windows = (len(band_all) - window_samples) // window_samples + 1
+            num_windows = (len(band_all) - window_samples) // step_samples + 1
 
-            if num_windows > 0:
+            if num_windows <= 0:
+                octave_crest_factors[freq] = [np.nan] * len(time_points)
+                continue
+
+            if mode == "slow":
                 peak_env = compute_peak_hold_envelope(
                     band_all,
                     self.sample_rate,
                     tau=self.peak_hold_tau,
                 )
-                indices = window_samples - 1 + np.arange(num_windows) * window_samples
-                if peak_env.size > 0:
-                    indices = np.clip(indices, 0, peak_env.size - 1)
-                    peaks = peak_env[indices]
-                else:
-                    peaks = np.zeros(num_windows, dtype=np.float64)
-                if slow_rms_env.size > 0:
-                    indices = np.clip(indices, 0, slow_rms_env.size - 1)
-                    rms_vals = slow_rms_env[indices]
-                else:
-                    rms_vals = np.zeros(num_windows, dtype=np.float64)
+                slow_rms_env = compute_slow_rms_envelope(band_all, self.sample_rate)
+                indices = window_samples - 1 + np.arange(num_windows) * step_samples
+                peaks = (
+                    peak_env[np.clip(indices, 0, peak_env.size - 1)]
+                    if peak_env.size
+                    else np.zeros(num_windows, dtype=np.float64)
+                )
+                rms_vals = (
+                    slow_rms_env[np.clip(indices, 0, slow_rms_env.size - 1)]
+                    if slow_rms_env.size
+                    else np.zeros(num_windows, dtype=np.float64)
+                )
                 crest_values = np.divide(
                     peaks,
                     rms_vals,
@@ -826,14 +825,44 @@ class PlotGenerator:
                 crest_values = np.maximum(crest_values, 1.0)
                 crest_db = 20 * np.log10(crest_values)
                 crest_db = np.where(np.isfinite(crest_db), crest_db, 0.0)
-                if len(crest_db) < len(time_points):
-                    padding = np.zeros(len(time_points) - len(crest_db))
-                    crest_db = np.concatenate([crest_db, padding])
-                elif len(crest_db) > len(time_points):
-                    crest_db = crest_db[: len(time_points)]
-                octave_crest_factors[freq] = crest_db.tolist()
             else:
-                octave_crest_factors[freq] = [0.0] * len(time_points)
+                peaks = sampled_max_abs(band_all, window_samples, step_samples)[
+                    :num_windows
+                ]
+                squared = np.square(band_all.astype(np.float64, copy=False))
+                csum = np.concatenate(([0.0], np.cumsum(squared)))
+                starts = np.arange(num_windows, dtype=np.int64) * step_samples
+                ends = starts + window_samples
+                rms_vals = np.sqrt(
+                    np.clip(
+                        (csum[ends] - csum[starts]) / float(window_samples), 0.0, None
+                    )
+                )
+                crest_values = np.full_like(peaks, np.nan, dtype=np.float64)
+                rms_dbfs = np.full_like(rms_vals, -np.inf, dtype=np.float64)
+                rms_mask = rms_vals > 0
+                rms_dbfs[rms_mask] = 20 * np.log10(
+                    rms_vals[rms_mask] * self.original_peak
+                )
+                valid = (rms_vals > 0) & (
+                    (mode != "fixed_window") | (rms_dbfs >= rms_floor_dbfs)
+                )
+                crest_values[valid] = np.divide(
+                    peaks[valid],
+                    rms_vals[valid],
+                    out=np.ones_like(peaks[valid]),
+                    where=rms_vals[valid] > 0,
+                )
+                crest_values[valid] = np.maximum(crest_values[valid], 1.0)
+                crest_db = np.full_like(peaks, np.nan, dtype=np.float64)
+                crest_db[valid] = 20 * np.log10(crest_values[valid])
+
+            if len(crest_db) < len(time_points):
+                padding = np.full(len(time_points) - len(crest_db), np.nan)
+                crest_db = np.concatenate([crest_db, padding])
+            elif len(crest_db) > len(time_points):
+                crest_db = crest_db[: len(time_points)]
+            octave_crest_factors[freq] = crest_db.tolist()
 
         # Optional: export the underlying time-series to CSV (fast; compute dominates).
         if output_path:

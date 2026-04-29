@@ -375,6 +375,14 @@ def _plot_block_html(title: str, rel_path: str) -> str:
     )
 
 
+def _crest_factor_gaps_note() -> str:
+    return (
+        "*Note: gaps in crest-factor-over-time plots indicate windows below the configured "
+        "RMS floor (or silence). Crest factor is undefined for those windows and is "
+        "intentionally omitted rather than clamped to `0 dB`.*"
+    )
+
+
 def _safe_image_filename(filename: str) -> str:
     """Return a filesystem-safe image filename for report-local assets."""
     stem = Path(filename).stem
@@ -581,6 +589,7 @@ def _bundle_group_plot_section(
     groups: Dict[str, List[ChannelResult]],
 ) -> List[str]:
     lines = ["## Group Plots", ""]
+    gap_note_added = False
     for group_name in groups.keys():
         crest_plot = rendered_output_dir / group_name / "crest_factor_time.png"
         octave_plot = rendered_output_dir / group_name / "octave_spectrum.png"
@@ -593,6 +602,9 @@ def _bundle_group_plot_section(
                     f"{group_name}_crest_factor_time.png",
                 )
             )
+            if not gap_note_added:
+                lines.append(_crest_factor_gaps_note())
+                gap_note_added = True
         else:
             lines.append("*Crest factor time plot not available*")
         lines.append("")
@@ -891,6 +903,7 @@ def _write_bundle_lfe_deep_dive(
         "",
     ]
     found_plot = False
+    gap_note_added = False
     full_channel_path = lfe_dir / "lfe_full_channel.png"
     if full_channel_path.exists():
         lines.append(
@@ -902,6 +915,10 @@ def _write_bundle_lfe_deep_dive(
             )
         )
         lines.append("")
+        if not gap_note_added:
+            lines.append(_crest_factor_gaps_note())
+            lines.append("")
+            gap_note_added = True
         lines.append(
             "*Note: Low crest factors are only important if the peak level is high. "
             "A low crest factor with a high peak level indicates both peak and RMS "
@@ -948,6 +965,7 @@ def _write_bundle_frequency_deep_dive(
     group_dir = rendered_output_dir / group_name
     lines: List[str] = [f"# {track_name} - {title}", "", description, ""]
     found_plot = False
+    gap_note_added = False
     for frequency in [
         8.0,
         16.0,
@@ -976,6 +994,10 @@ def _write_bundle_frequency_deep_dive(
             )
         )
         lines.append("")
+        if not gap_note_added:
+            lines.append(_crest_factor_gaps_note())
+            lines.append("")
+            gap_note_added = True
         found_plot = True
 
     if not found_plot:
@@ -1107,7 +1129,10 @@ def _classify_bundle_channel_name(channel_name: str) -> Optional[str]:
     }
     if tokens & {"FL", "FR", "FC", "FLC", "FRC"}:
         return "screen"
-    if any(token.startswith("LFE") for token in tokens) or "LOW FREQUENCY" in normalized:
+    if (
+        any(token.startswith("LFE") for token in tokens)
+        or "LOW FREQUENCY" in normalized
+    ):
         return "lfe"
     if tokens & {
         "SL",

@@ -119,15 +119,25 @@ def test_write_channel_result_bundle_contains_plot_replay_data(tmp_path):
     assert (channel_dir / "sustained_peaks_events.csv").exists()
     assert (channel_dir / "envelope_plot_data.json").exists()
 
+    octave_band = pd.read_csv(channel_dir / "octave_band_analysis.csv")
+    assert "is_valid_crest_factor" in octave_band.columns
+    assert "crest_factor_method" in octave_band.columns
+    assert set(octave_band["crest_factor_method"]) == {"whole_interval_peak_rms"}
+
     octave_time = pd.read_csv(channel_dir / "octave_time_metrics.csv")
-    assert set(octave_time.columns) == {
+    assert {
         "frequency_hz",
         "time_seconds",
         "crest_factor_db",
         "peak_dbfs",
         "rms_dbfs",
-    }
+        "is_valid_crest_factor",
+        "crest_factor_window_seconds",
+        "crest_factor_step_seconds",
+        "crest_factor_method",
+    }.issubset(octave_time.columns)
     assert set(octave_time["frequency_hz"]) == {10.0, 20.0}
+    assert set(octave_time["crest_factor_method"]) == {"fixed_window_peak_rms"}
 
     advanced_statistics = pd.read_csv(channel_dir / "advanced_statistics.csv")
     assert "true_peak_to_rms_ratio_db" in set(advanced_statistics["parameter"])

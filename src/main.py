@@ -36,7 +36,14 @@ from src.post.lfe_octave_time import (
     generate_lfe_full_channel_plot,
 )
 from src.post.channel_deep_dive import generate_channel_deep_dive_plot
-from src.results import find_result_bundles
+from src.results import find_result_bundles, generate_bundle_report, load_result_bundle
+from src.results.render import (
+    render_bundle_envelope_plots,
+    render_bundle_group_outputs,
+    render_bundle_histograms,
+    render_bundle_spectrum_plots,
+    render_bundle_time_plots,
+)
 
 
 def determine_content_type(track_path: Path) -> str:
@@ -105,6 +112,168 @@ def _log_parallel_resource_budget(max_workers: int) -> None:
         per_track_memory_gb * max_workers,
         max_workers,
     )
+
+
+def _resolve_render_dpi() -> int:
+    """Resolve render DPI from configuration."""
+    for key_path in (
+        "plotting.render_dpi",
+        "plotting.batch_dpi",
+        "plotting.dpi",
+    ):
+        value = config.get(key_path)
+        if value is not None:
+            return int(value)
+    return 150
+
+
+def _render_bundle_outputs(
+    *,
+    bundle_path: Path,
+    output_dir: Path,
+    reports: bool,
+) -> int:
+    """Render plots/reports for one .aaresults bundle and return output count."""
+    render_dpi = _resolve_render_dpi()
+    bundle = load_result_bundle(bundle_path)
+    bundle_output_dir = output_dir / bundle_path.stem
+    generated = []
+    generated.extend(
+        render_bundle_spectrum_plots(
+            bundle=bundle,
+            output_dir=bundle_output_dir,
+            dpi=render_dpi,
+        )
+    )
+    generated.extend(
+        render_bundle_histograms(
+            bundle=bundle,
+            output_dir=bundle_output_dir,
+            dpi=render_dpi,
+        )
+    )
+    generated.extend(
+        render_bundle_time_plots(
+            bundle=bundle,
+            output_dir=bundle_output_dir,
+            dpi=render_dpi,
+        )
+    )
+    generated.extend(
+        render_bundle_envelope_plots(
+            bundle=bundle,
+            output_dir=bundle_output_dir,
+            dpi=render_dpi,
+        )
+    )
+    generated.extend(
+        render_bundle_group_outputs(
+            bundle=bundle,
+            output_dir=bundle_output_dir,
+            dpi=render_dpi,
+        )
+    )
+    if reports:
+        generated.append(
+            generate_bundle_report(
+                bundle=bundle,
+                rendered_output_dir=bundle_output_dir,
+            )
+        )
+    return len(generated)
+
+
+def analyze_and_optionally_render_track(
+    track_path: Path,
+    output_dir: Path,
+    sample_rate: int,
+    chunk_duration: float,
+    *,
+    index: int,
+    total: int,
+    progress_json: bool,
+    render_output_dir: Optional[Path],
+    render_reports: bool,
+    channel_filters: Optional[tuple[str, ...]] = None,
+    batch_tracks_root: Optional[Path] = None,
+    skip_octave_crest_factor_time: bool = False,
+    export_octave_crest_factor_time_data: bool = False,
+) -> tuple[bool, float, bool]:
+    """Analyze one track and optionally render its bundle before returning."""
+    success, analysis_elapsed_s = analyze_single_track(
+        track_path,
+        output_dir,
+        sample_rate,
+        chunk_duration,
+        channel_filters=channel_filters,
+        batch_tracks_root=batch_tracks_root,
+        skip_octave_crest_factor_time=skip_octave_crest_factor_time,
+        export_octave_crest_factor_time_data=export_octave_crest_factor_time_data,
+    )
+    _emit_progress(
+        progress_json,
+        "file_finished",
+        index=index,
+        total=total,
+        path=str(track_path),
+        name=track_path.name,
+        success=success,
+        elapsed_seconds=analysis_elapsed_s,
+    )
+    if not success or render_output_dir is None:
+        return success, analysis_elapsed_s, False
+
+    render_started = time.perf_counter()
+    _emit_progress(
+        progress_json,
+        "render_started",
+        index=index,
+        total=total,
+        path=str(track_path),
+        name=track_path.name,
+    )
+    try:
+        legacy_csv_enabled = bool(config.get("export.generate_legacy_csv", False))
+        track_output_dir = resolve_track_output_dir(
+            output_dir,
+            track_path,
+            batch_tracks_root,
+            include_track_name=legacy_csv_enabled,
+        )
+        bundle_path = _result_bundle_dir(track_output_dir, track_path)
+        generated_count = _render_bundle_outputs(
+            bundle_path=bundle_path,
+            output_dir=render_output_dir,
+            reports=render_reports,
+        )
+        render_elapsed_s = time.perf_counter() - render_started
+        _emit_progress(
+            progress_json,
+            "render_finished",
+            index=index,
+            total=total,
+            path=str(track_path),
+            name=track_path.name,
+            success=True,
+            elapsed_seconds=render_elapsed_s,
+            outputs=generated_count,
+        )
+        return True, analysis_elapsed_s + render_elapsed_s, True
+    except Exception as exc:
+        render_elapsed_s = time.perf_counter() - render_started
+        _emit_progress(
+            progress_json,
+            "render_finished",
+            index=index,
+            total=total,
+            path=str(track_path),
+            name=track_path.name,
+            success=False,
+            elapsed_seconds=render_elapsed_s,
+            error=str(exc),
+        )
+        logger.error("Render failed for %s: %s", track_path.name, exc)
+        return False, analysis_elapsed_s + render_elapsed_s, True
 
 
 def _estimate_track_work_item(
@@ -865,6 +1034,17 @@ def analyze_single_track(
     default=False,
     help="Emit machine-readable progress events for GUI consumers.",
 )
+@click.option(
+    "--render-output-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Render each completed .aaresults bundle to this folder during analysis.",
+)
+@click.option(
+    "--render-reports/--no-render-reports",
+    default=True,
+    help="Generate Markdown/PDF reports when --render-output-dir is used.",
+)
 def main(
     input: Optional[Path],
     tracks_dir: Optional[Path],
@@ -893,6 +1073,8 @@ def main(
     max_memory_gb: Optional[float],
     batch_workers: Optional[int],
     progress_json: bool,
+    render_output_dir: Optional[Path],
+    render_reports: bool,
 ) -> None:
     """Audio Analyser - Analyze audio files using octave band filtering.
 
@@ -1206,6 +1388,9 @@ def main(
                 input=str(tracks_dir),
                 output_dir=str(output_dir),
                 total_tracks=len(audio_files),
+                render_enabled=render_output_dir is not None,
+                total_steps=len(audio_files)
+                * (2 if render_output_dir is not None else 1),
             )
             for idx, track_path in enumerate(sorted(audio_files), 1):
                 _emit_progress(
@@ -1229,7 +1414,11 @@ def main(
 
             if enable_parallel_batch:
                 # PARALLEL PROCESSING: Process multiple tracks simultaneously
-                from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
+                from concurrent.futures import (
+                    FIRST_COMPLETED,
+                    ProcessPoolExecutor,
+                    wait,
+                )
                 import multiprocessing
 
                 max_workers = config.get("performance.max_batch_workers", None)
@@ -1281,11 +1470,16 @@ def main(
                     def _submit_item(item: TrackWorkItem) -> None:
                         nonlocal active_estimated_gb
                         future = executor.submit(
-                            analyze_single_track,
+                            analyze_and_optionally_render_track,
                             item.path,
                             output_dir,
                             sample_rate,
                             chunk_duration,
+                            index=item.index,
+                            total=total_tracks,
+                            progress_json=progress_json,
+                            render_output_dir=render_output_dir,
+                            render_reports=render_reports,
                             channel_filters=channel_filters,
                             batch_tracks_root=tracks_dir,
                             skip_octave_crest_factor_time=skip_octave_cf_time,
@@ -1349,22 +1543,12 @@ def main(
                             idx = item.index
                             track_path = item.path
                             try:
-                                success, elapsed_s = future.result()
+                                success, elapsed_s, _render_attempted = future.result()
                                 per_track_timings.append(
                                     (track_path, elapsed_s, success)
                                 )
                                 if success:
                                     successful_analyses += 1
-                                    _emit_progress(
-                                        progress_json,
-                                        "file_finished",
-                                        index=idx,
-                                        total=total_tracks,
-                                        path=str(track_path),
-                                        name=track_path.name,
-                                        success=True,
-                                        elapsed_seconds=elapsed_s,
-                                    )
                                     logger.info(
                                         f"[{idx}/{total_tracks}] ✓ {track_path.name}"
                                     )
@@ -1373,7 +1557,9 @@ def main(
                                     details = None
                                     try:
                                         legacy_csv_enabled = bool(
-                                            config.get("export.generate_legacy_csv", False)
+                                            config.get(
+                                                "export.generate_legacy_csv", False
+                                            )
                                         )
                                         track_output_dir = resolve_track_output_dir(
                                             output_dir,
@@ -1382,21 +1568,12 @@ def main(
                                             include_track_name=legacy_csv_enabled,
                                         )
                                         details = _summarize_bundle_processing(
-                                            _result_bundle_dir(track_output_dir, track_path)
+                                            _result_bundle_dir(
+                                                track_output_dir, track_path
+                                            )
                                         )
                                     except Exception:
                                         details = None
-                                    _emit_progress(
-                                        progress_json,
-                                        "file_finished",
-                                        index=idx,
-                                        total=total_tracks,
-                                        path=str(track_path),
-                                        name=track_path.name,
-                                        success=False,
-                                        elapsed_seconds=elapsed_s,
-                                        error=details,
-                                    )
                                     logger.error(
                                         f"[{idx}/{total_tracks}] ✗ {track_path.name}"
                                     )
@@ -1435,31 +1612,30 @@ def main(
                         name=track_path.name,
                     )
 
-                    success, elapsed_s = analyze_single_track(
-                        track_path,
-                        output_dir,
-                        sample_rate,
-                        chunk_duration,
-                        channel_filters=channel_filters,
-                        batch_tracks_root=tracks_dir,
-                        skip_octave_crest_factor_time=skip_octave_cf_time,
-                        export_octave_crest_factor_time_data=export_octave_cf_time_data,
+                    success, elapsed_s, _render_attempted = (
+                        analyze_and_optionally_render_track(
+                            track_path,
+                            output_dir,
+                            sample_rate,
+                            chunk_duration,
+                            index=idx,
+                            total=total_tracks,
+                            progress_json=progress_json,
+                            render_output_dir=render_output_dir,
+                            render_reports=render_reports,
+                            channel_filters=channel_filters,
+                            batch_tracks_root=tracks_dir,
+                            skip_octave_crest_factor_time=skip_octave_cf_time,
+                            export_octave_crest_factor_time_data=(
+                                export_octave_cf_time_data
+                            ),
+                        )
                     )
                     per_track_timings.append((track_path, elapsed_s, success))
                     if success:
                         successful_analyses += 1
                     else:
                         failed_analyses += 1
-                    _emit_progress(
-                        progress_json,
-                        "file_finished",
-                        index=idx,
-                        total=total_tracks,
-                        path=str(track_path),
-                        name=track_path.name,
-                        success=success,
-                        elapsed_seconds=elapsed_s,
-                    )
 
             # Summary
             logger.info(f"\n{'='*60}")
@@ -1476,6 +1652,9 @@ def main(
                 successful=successful_analyses,
                 failed=failed_analyses,
                 elapsed_seconds=batch_elapsed_s,
+                completed_steps=(
+                    total_tracks * (2 if render_output_dir is not None else 1)
+                ),
             )
             if per_track_timings:
                 # Slowest-first; NaNs go last.
@@ -1492,7 +1671,12 @@ def main(
                     else:
                         logger.info(f"       n/a  [{status}]  {p.name}")
             # Post-process generated track folders (if enabled)
-            if not skip_post:
+            if render_output_dir is not None:
+                logger.info(
+                    "Skipping legacy post-processing because bundle rendering was "
+                    "performed per track during analysis."
+                )
+            elif not skip_post:
                 if not config.get("export.generate_legacy_csv", False):
                     logger.warning(
                         "Skipping legacy post-processing because "
@@ -1536,6 +1720,8 @@ def main(
                 input=str(input),
                 output_dir=str(output_dir),
                 total_tracks=1,
+                render_enabled=render_output_dir is not None,
+                total_steps=2 if render_output_dir is not None else 1,
             )
             _emit_progress(
                 progress_json,
@@ -1546,27 +1732,22 @@ def main(
                 name=input.name,
             )
 
-            success, elapsed_s = analyze_single_track(
+            success, elapsed_s, _render_attempted = analyze_and_optionally_render_track(
                 input,
                 output_dir,
                 sample_rate,
                 chunk_duration,
+                index=1,
+                total=1,
+                progress_json=progress_json,
+                render_output_dir=render_output_dir,
+                render_reports=render_reports,
                 channel_filters=channel_filters,
                 batch_tracks_root=None,
                 skip_octave_crest_factor_time=skip_octave_cf_time,
                 export_octave_crest_factor_time_data=export_octave_cf_time_data,
             )
             if success:
-                _emit_progress(
-                    progress_json,
-                    "file_finished",
-                    index=1,
-                    total=1,
-                    path=str(input),
-                    name=input.name,
-                    success=True,
-                    elapsed_seconds=elapsed_s,
-                )
                 logger.info("Analysis complete!")
                 logger.info(f"Track wall time: {elapsed_s:.2f}s")
                 logger.info(f"Results saved to: {output_dir}")
@@ -1577,9 +1758,15 @@ def main(
                     successful=1,
                     failed=0,
                     elapsed_seconds=elapsed_s,
+                    completed_steps=2 if render_output_dir is not None else 1,
                 )
                 # Post-process this track folder (if enabled)
-                if not skip_post:
+                if render_output_dir is not None:
+                    logger.info(
+                        "Skipping legacy post-processing because bundle rendering was "
+                        "performed during analysis."
+                    )
+                elif not skip_post:
                     if not config.get("export.generate_legacy_csv", False):
                         logger.warning(
                             "Skipping legacy post-processing because "
@@ -1620,21 +1807,12 @@ def main(
             else:
                 _emit_progress(
                     progress_json,
-                    "file_finished",
-                    index=1,
-                    total=1,
-                    path=str(input),
-                    name=input.name,
-                    success=False,
-                    elapsed_seconds=elapsed_s,
-                )
-                _emit_progress(
-                    progress_json,
                     "analysis_finished",
                     mode="single",
                     successful=0,
                     failed=1,
                     elapsed_seconds=elapsed_s,
+                    completed_steps=1,
                 )
                 logger.error("Analysis failed!")
                 logger.info(f"Track wall time: {elapsed_s:.2f}s")

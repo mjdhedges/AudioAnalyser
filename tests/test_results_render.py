@@ -217,8 +217,8 @@ def test_render_bundle_group_outputs_writes_plots_and_manifest(tmp_path):
     )
 
     assert len(output_paths) == 3
-    assert (output_dir / "All Channels" / "crest_factor_time.png").exists()
-    assert (output_dir / "All Channels" / "octave_spectrum.png").exists()
+    assert (output_dir / "Screen" / "crest_factor_time.png").exists()
+    assert (output_dir / "Screen" / "octave_spectrum.png").exists()
     assert (output_dir / "worst_channels_manifest.csv").exists()
 
 

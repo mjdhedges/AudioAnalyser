@@ -21,6 +21,9 @@ class AnalysisCommandOptions:
     batch_workers: int
     max_memory_gb: float
     progress_json: bool = True
+    render_after_analysis: bool = False
+    render_output_dir: Optional[Path] = None
+    render_reports: bool = True
 
 
 @dataclass(frozen=True)
@@ -88,6 +91,14 @@ def build_analysis_command(
     )
     if options.progress_json:
         command.append("--progress-json")
+    if options.render_after_analysis:
+        if options.render_output_dir is None:
+            raise ValueError("render_output_dir is required when rendering is enabled")
+        command.extend(["--render-output-dir", str(options.render_output_dir)])
+        if options.render_reports:
+            command.append("--render-reports")
+        else:
+            command.append("--no-render-reports")
     return command
 
 

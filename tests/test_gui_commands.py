@@ -45,6 +45,26 @@ def test_build_analysis_command_includes_gui_options() -> None:
     ]
 
 
+def test_build_analysis_command_can_render_each_completed_bundle() -> None:
+    """GUI analysis can request in-process rendering for total progress tracking."""
+    command = build_analysis_command(
+        AnalysisCommandOptions(
+            input_path=Path("tracks/Music"),
+            project_dir=Path("Project"),
+            batch_workers=2,
+            max_memory_gb=4.0,
+            render_after_analysis=True,
+            render_output_dir=Path("Project") / "rendered",
+            render_reports=False,
+        ),
+        python_executable="python",
+    )
+
+    assert "--render-output-dir" in command
+    assert str(Path("Project") / "rendered") in command
+    assert "--no-render-reports" in command
+
+
 def test_build_analysis_command_rejects_invalid_options() -> None:
     """Invalid GUI values should fail before a subprocess is launched."""
     with pytest.raises(ValueError, match="batch_workers"):

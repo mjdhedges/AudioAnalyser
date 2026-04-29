@@ -41,7 +41,6 @@ from src.gui.commands import (
     build_analysis_command,
     build_render_command,
     render_output_dir,
-    resolve_render_results_path,
 )
 from src.gui.progress import FileProgress, ProgressTracker
 
@@ -113,9 +112,9 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(0)
         self.progress_bar.setFormat("0/0 files")
 
-        self.files_table = QTableWidget(0, 5)
+        self.files_table = QTableWidget(0, 6)
         self.files_table.setHorizontalHeaderLabels(
-            ["#", "File", "Status", "Time", "Details"]
+            ["#", "File", "Stage", "Status", "Time", "Details"]
         )
         self.files_table.verticalHeader().setVisible(False)
         self.files_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -257,6 +256,9 @@ class MainWindow(QMainWindow):
             batch_workers=int(self.batch_workers.value()),
             max_memory_gb=float(self.max_memory_gb.value()),
             progress_json=True,
+            render_after_analysis=self.render_after_analysis.isChecked(),
+            render_output_dir=render_output_dir(Path(self.project_dir.text())),
+            render_reports=self.generate_report.isChecked(),
         )
         self._start_command(build_analysis_command(options), "analysis")
 
@@ -352,7 +354,9 @@ class MainWindow(QMainWindow):
                 self._append_log(f"Render output: {render_output_dir(project_dir)}")
                 self._append_log(f"Markdown report: {self.generate_report.isChecked()}")
         elif stage == "render":
-            self._append_log(f"Render results: {command[command.index('--results') + 1]}")
+            self._append_log(
+                f"Render results: {command[command.index('--results') + 1]}"
+            )
             self._append_log(
                 f"Render output: {command[command.index('--output-dir') + 1]}"
             )
@@ -416,7 +420,18 @@ class MainWindow(QMainWindow):
                 f"{self.progress_tracker.total_files} {status}: {event.get('name')}"
             )
             if event.get("error"):
-                self._append_log(f"Details for {event.get('name')}: {event.get('error')}")
+                self._append_log(
+                    f"Details for {event.get('name')}: {event.get('error')}"
+                )
+        elif event_name == "render_started":
+            self.status_label.setText(f"Rendering: {event.get('name')}")
+        elif event_name == "render_finished":
+            status = "finished" if event.get("success") else "failed"
+            self.status_label.setText(f"Render {status}: {event.get('name')}")
+            if event.get("error"):
+                self._append_log(
+                    f"Render details for {event.get('name')}: {event.get('error')}"
+                )
         elif event_name == "analysis_finished":
             self.status_label.setText(
                 "Analysis complete: "
@@ -439,6 +454,7 @@ class MainWindow(QMainWindow):
         values = [
             str(file_progress.index),
             file_progress.name,
+            file_progress.stage,
             file_progress.status,
             elapsed,
             details,
@@ -447,11 +463,23 @@ class MainWindow(QMainWindow):
             self.files_table.setItem(row, column, QTableWidgetItem(value))
 
     def _update_progress_bar(self) -> None:
-        total = max(self.progress_tracker.total_files, 0)
-        completed = max(self.progress_tracker.completed_files, 0)
+        total = max(
+            self.progress_tracker.total_steps, self.progress_tracker.total_files, 0
+        )
+        completed = max(self.progress_tracker.completed_steps, 0)
         self.progress_bar.setRange(0, max(total, 1))
         self.progress_bar.setValue(min(completed, total))
-        self.progress_bar.setFormat(f"{completed}/{total} files")
+        if self.progress_tracker.render_enabled:
+            self.progress_bar.setFormat(
+                f"{completed}/{total} steps "
+                f"({self.progress_tracker.completed_files}/"
+                f"{self.progress_tracker.total_files} files)"
+            )
+        else:
+            self.progress_bar.setFormat(
+                f"{self.progress_tracker.completed_files}/"
+                f"{self.progress_tracker.total_files} files"
+            )
 
     def _process_finished(
         self,
@@ -463,20 +491,6 @@ class MainWindow(QMainWindow):
         if self.process_text_buffer:
             self._handle_process_text("\n")
         self._append_log(f"{stage.capitalize()} finished with exit code {exit_code}.")
-
-        if success and stage == "analysis" and self.render_after_analysis.isChecked():
-            project_dir = Path(self.project_dir.text())
-            analysis_dir = analysis_output_dir(project_dir)
-            render_options = RenderCommandOptions(
-                results_dir=resolve_render_results_path(
-                    input_path=Path(self.input_path.text()),
-                    analysis_output_dir=analysis_dir,
-                ),
-                output_dir=render_output_dir(project_dir),
-                reports=self.generate_report.isChecked(),
-            )
-            self._start_command(build_render_command(render_options), "render")
-            return
 
         self.process = None
         self.current_stage = ""
@@ -497,7 +511,10 @@ class MainWindow(QMainWindow):
             return selected
         # If the selected folder contains any bundles, render the folder.
         try:
-            if any(p.is_dir() and p.name.lower().endswith(".aaresults") for p in selected.iterdir()):
+            if any(
+                p.is_dir() and p.name.lower().endswith(".aaresults")
+                for p in selected.iterdir()
+            ):
                 return selected
         except OSError:
             return None
