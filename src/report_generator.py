@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import html
 import logging
 import os
 import re
@@ -362,9 +363,16 @@ def _format_number(value: float, decimals: int = 1) -> str:
     return f"{value:.{decimals}f}"
 
 
-def _markdown_image(alt_text: str, rel_path: str) -> str:
-    """Return a Markdown image link with a URI-safe relative path."""
-    return f"![{alt_text}]({quote(rel_path, safe='/.')})"
+def _plot_block_html(title: str, rel_path: str) -> str:
+    """Return a page-aware HTML plot block for Markdown/PDF reports."""
+    escaped_title = html.escape(title)
+    escaped_src = html.escape(quote(rel_path, safe="/."), quote=True)
+    return (
+        '<div class="plot-block">\n'
+        f'  <div class="plot-title">{escaped_title}</div>\n'
+        f'  <img src="{escaped_src}" alt="{escaped_title}">\n'
+        "</div>"
+    )
 
 
 def _safe_image_filename(filename: str) -> str:
@@ -387,9 +395,9 @@ def _copy_report_image(source_path: Path, report_folder: Path, filename: str) ->
 def _markdown_report_image(
     alt_text: str, source_path: Path, report_folder: Path, filename: str
 ) -> str:
-    """Return a Markdown image link to a report-local copied image."""
+    """Return a report-local copied image as a titled plot block."""
     rel_path = _copy_report_image(source_path, report_folder, filename)
-    return _markdown_image(alt_text, rel_path)
+    return _plot_block_html(alt_text, rel_path)
 
 
 def _group_plot_reference(
@@ -497,6 +505,14 @@ def generate_bundle_report(
     lines.extend(_bundle_peak_decay_section(rendered_output_dir, report_folder))
     lines.extend(_bundle_peak_occurrence_section(group_data))
     lines.extend(_bundle_envelope_section(bundle, rendered_output_dir, report_folder))
+    lines.extend(
+        _bundle_deep_dive_section(
+            track_name=track_name,
+            rendered_output_dir=rendered_output_dir,
+            report_folder=report_folder,
+            groups=groups,
+        )
+    )
     lines.extend(_bundle_appendix(bundle, group_data))
 
     report_path.write_text("\n".join(lines), encoding="utf-8")
@@ -566,8 +582,6 @@ def _bundle_group_plot_section(
 ) -> List[str]:
     lines = ["## Group Plots", ""]
     for group_name in groups.keys():
-        lines.append(f"### {group_name}")
-        lines.append("")
         crest_plot = rendered_output_dir / group_name / "crest_factor_time.png"
         octave_plot = rendered_output_dir / group_name / "octave_spectrum.png"
         if crest_plot.exists():
@@ -638,8 +652,6 @@ def _bundle_frequency_section(
     for group in group_data.values():
         for channel in group.get("channels", []):
             channel_dir = rendered_output_dir / channel.channel_id
-            lines.append(f"#### {channel.channel_name}")
-            lines.append("")
             for filename, title in (
                 ("octave_spectrum.png", "Octave Spectrum"),
                 ("crest_factor.png", "Crest Factor Spectrum"),
@@ -790,6 +802,206 @@ def _bundle_peak_occurrence_section(group_data: Dict[str, Dict]) -> List[str]:
     return lines
 
 
+def _bundle_deep_dive_section(
+    *,
+    track_name: str,
+    rendered_output_dir: Path,
+    report_folder: Path,
+    groups: Dict[str, List[ChannelResult]],
+) -> List[str]:
+    """Write bundle deep-dive reports and return links for the main report."""
+    lines = [
+        "## Deep Dive Sections",
+        "",
+        "Detailed frequency-domain analysis for each channel group is available "
+        "in separate reports:",
+        "",
+    ]
+    deep_dive_links: List[str] = []
+    if "LFE" in groups and _write_bundle_lfe_deep_dive(
+        track_name, rendered_output_dir, report_folder
+    ):
+        deep_dive_links.append(
+            "- [LFE Deep Dive](lfe_deep_dive.md) - Detailed analysis of the LFE channel"
+        )
+    if "Screen" in groups and _write_bundle_frequency_deep_dive(
+        track_name=track_name,
+        rendered_output_dir=rendered_output_dir,
+        report_folder=report_folder,
+        group_name="Screen",
+        report_filename="screen_deep_dive.md",
+        title="Screen Channel Deep Dive",
+        description=(
+            "This section provides a detailed analysis of the Screen channels "
+            "(FL, FR, FC), focusing on octave bands across the full spectrum "
+            "(8 Hz to 16 kHz). The plots show crest factor and level behavior "
+            "over time for each octave band, revealing how frequency content "
+            "varies throughout the track for the main screen channels."
+        ),
+        filename_prefix="screen",
+    ):
+        deep_dive_links.append(
+            "- [Screen Channel Deep Dive](screen_deep_dive.md) - Detailed analysis of Screen channels"
+        )
+    if "Surround+Height" in groups and _write_bundle_frequency_deep_dive(
+        track_name=track_name,
+        rendered_output_dir=rendered_output_dir,
+        report_folder=report_folder,
+        group_name="Surround+Height",
+        report_filename="surround_height_deep_dive.md",
+        title="Surround+Height Channel Deep Dive",
+        description=(
+            "This section provides a detailed analysis of the Surround and "
+            "Height channels, focusing on octave bands across the full spectrum "
+            "(8 Hz to 16 kHz). The plots show crest factor and level behavior "
+            "over time for each octave band, revealing how frequency content "
+            "varies throughout the track for the surround and height channels."
+        ),
+        filename_prefix="surround_height",
+    ):
+        deep_dive_links.append(
+            "- [Surround+Height Channel Deep Dive](surround_height_deep_dive.md) - "
+            "Detailed analysis of Surround and Height channels"
+        )
+
+    if deep_dive_links:
+        lines.extend(deep_dive_links)
+    else:
+        lines.append("*No deep dive sections available for this track.*")
+    lines.append("")
+    return lines
+
+
+def _write_bundle_lfe_deep_dive(
+    track_name: str,
+    rendered_output_dir: Path,
+    report_folder: Path,
+) -> bool:
+    """Write the bundle LFE deep-dive report if rendered plots exist."""
+    lfe_dir = rendered_output_dir / "LFE"
+    lines: List[str] = [
+        f"# {track_name} - LFE Deep Dive",
+        "",
+        "This section provides a detailed analysis of the LFE (Low Frequency Effects) "
+        "channel, focusing on octave bands at 8 Hz, 16 Hz, 31.25 Hz, 62.5 Hz, "
+        "125 Hz, and 250 Hz. These frequencies represent the core LFE range plus "
+        "the upper transition into the Screen band. The plots show crest factor "
+        "and level behavior over time for each octave band, revealing how "
+        "low-frequency content varies throughout the track.",
+        "",
+    ]
+    found_plot = False
+    full_channel_path = lfe_dir / "lfe_full_channel.png"
+    if full_channel_path.exists():
+        lines.append(
+            _markdown_report_image(
+                "LFE Full Channel Crest Factor Over Time",
+                full_channel_path,
+                report_folder,
+                "lfe_full_channel.png",
+            )
+        )
+        lines.append("")
+        lines.append(
+            "*Note: Low crest factors are only important if the peak level is high. "
+            "A low crest factor with a high peak level indicates both peak and RMS "
+            "levels are high, which places greater demands on the system.*"
+        )
+        lines.append("")
+        found_plot = True
+
+    for frequency in [8.0, 16.0, 31.25, 62.5, 125.0, 250.0]:
+        filename = f"lfe_octave_time_{_frequency_filename_value(frequency)}Hz.png"
+        plot_path = lfe_dir / filename
+        if not plot_path.exists():
+            continue
+        frequency_label = _frequency_report_label(frequency)
+        lines.append(
+            _markdown_report_image(
+                f"LFE {frequency_label} Octave Band Time Analysis",
+                plot_path,
+                report_folder,
+                filename,
+            )
+        )
+        lines.append("")
+        found_plot = True
+
+    if not found_plot:
+        return False
+    _write_markdown_and_pdf(report_folder / "lfe_deep_dive.md", lines)
+    return True
+
+
+def _write_bundle_frequency_deep_dive(
+    *,
+    track_name: str,
+    rendered_output_dir: Path,
+    report_folder: Path,
+    group_name: str,
+    report_filename: str,
+    title: str,
+    description: str,
+    filename_prefix: str,
+) -> bool:
+    """Write a Screen or Surround+Height bundle deep-dive report."""
+    group_dir = rendered_output_dir / group_name
+    lines: List[str] = [f"# {track_name} - {title}", "", description, ""]
+    found_plot = False
+    for frequency in [
+        8.0,
+        16.0,
+        31.25,
+        62.5,
+        125.0,
+        250.0,
+        500.0,
+        1000.0,
+        2000.0,
+        4000.0,
+        8000.0,
+        16000.0,
+    ]:
+        filename = f"{filename_prefix}_{_frequency_filename_value(frequency)}Hz.png"
+        plot_path = group_dir / filename
+        if not plot_path.exists():
+            continue
+        frequency_label = _frequency_report_label(frequency)
+        lines.append(
+            _markdown_report_image(
+                f"{group_name} {frequency_label} Octave Band Time Analysis (All Channels)",
+                plot_path,
+                report_folder,
+                filename,
+            )
+        )
+        lines.append("")
+        found_plot = True
+
+    if not found_plot:
+        return False
+    _write_markdown_and_pdf(report_folder / report_filename, lines)
+    return True
+
+
+def _write_markdown_and_pdf(path: Path, lines: List[str]) -> None:
+    """Write a Markdown report and matching PDF."""
+    path.write_text("\n".join(lines), encoding="utf-8")
+    markdown_report_to_pdf(path)
+
+
+def _frequency_report_label(frequency_hz: float) -> str:
+    if frequency_hz >= 1000:
+        return f"{frequency_hz:.0f} Hz"
+    if frequency_hz == int(frequency_hz):
+        return f"{frequency_hz:.0f} Hz"
+    return f"{frequency_hz:.1f} Hz"
+
+
+def _frequency_filename_value(frequency_hz: float) -> str:
+    return f"{frequency_hz:.1f}".replace(".", "_")
+
+
 def _bundle_envelope_section(
     bundle: ResultBundle,
     rendered_output_dir: Path,
@@ -853,35 +1065,73 @@ def _bundle_channel_groups(bundle: ResultBundle) -> Dict[str, List[ChannelResult
         "All Channels": [],
     }
     for channel in bundle.channels():
-        name = channel.channel_name
-        if name in {
-            "Channel 1 FL",
-            "Channel 2 FR",
-            "Channel 3 FC",
-            "Channel 1 Front Left",
-            "Channel 2 Front Right",
-            "Channel 3 Front Center",
-        }:
+        group = _bundle_channel_group(channel)
+        if group == "screen":
             grouped["Screen"].append(channel)
-        elif "LFE" in name:
+        elif group == "lfe":
             grouped["LFE"].append(channel)
-        elif any(
-            name.startswith(prefix)
-            for prefix in (
-                "Channel 5",
-                "Channel 6",
-                "Channel 7",
-                "Channel 8",
-                "Channel 9",
-                "Channel 10",
-                "Channel 11",
-                "Channel 12",
-            )
-        ):
+        elif group == "surround":
             grouped["Surround+Height"].append(channel)
         else:
             grouped["All Channels"].append(channel)
     return {key: value for key, value in grouped.items() if value}
+
+
+def _bundle_channel_group(channel: ChannelResult) -> Optional[str]:
+    """Return the cinema group for a bundle channel."""
+    metadata = channel.read_json("metadata")
+    group = _classify_bundle_channel_name(
+        str(metadata.get("channel_name") or channel.channel_name)
+    )
+    if group is not None:
+        return group
+    try:
+        channel_index = int(metadata.get("channel_index"))
+    except (TypeError, ValueError):
+        return None
+    if channel_index in {0, 1, 2}:
+        return "screen"
+    if channel_index == 3:
+        return "lfe"
+    if channel_index >= 4:
+        return "surround"
+    return None
+
+
+def _classify_bundle_channel_name(channel_name: str) -> Optional[str]:
+    """Classify both legacy folder names and short FFmpeg channel labels."""
+    normalized = channel_name.upper().replace("CHANNEL", " ").strip()
+    tokens = {
+        token.strip("()[],:;-")
+        for token in normalized.replace("_", " ").replace("/", " ").split()
+    }
+    if tokens & {"FL", "FR", "FC", "FLC", "FRC"}:
+        return "screen"
+    if any(token.startswith("LFE") for token in tokens) or "LOW FREQUENCY" in normalized:
+        return "lfe"
+    if tokens & {
+        "SL",
+        "SR",
+        "SBL",
+        "SBR",
+        "BL",
+        "BR",
+        "BC",
+        "TFL",
+        "TFR",
+        "TBL",
+        "TBR",
+        "TFC",
+        "TBC",
+        "TSL",
+        "TSR",
+        "WL",
+        "WR",
+    }:
+        return "surround"
+    if channel_name.startswith(("Channel 5", "Channel 6", "Channel 7", "Channel 8")):
+        return "surround"
+    return None
 
 
 def _bundle_group_summary(channels: List[ChannelResult]) -> Dict:

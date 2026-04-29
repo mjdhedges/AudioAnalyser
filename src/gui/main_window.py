@@ -134,6 +134,15 @@ class MainWindow(QMainWindow):
         self._connect_signals()
 
     def _build_menu(self) -> None:
+        file_menu = self.menuBar().addMenu("&File")
+        render_action = QAction("Render existing results…", self)
+        render_action.triggered.connect(self.start_render_existing)
+        file_menu.addAction(render_action)
+        file_menu.addSeparator()
+        exit_action = QAction("E&xit", self)
+        exit_action.triggered.connect(self.close)
+        file_menu.addAction(exit_action)
+
         help_menu = self.menuBar().addMenu("&Help")
         about_action = QAction("&About Audio Analyser", self)
         about_action.triggered.connect(self._show_about)
@@ -251,6 +260,51 @@ class MainWindow(QMainWindow):
         )
         self._start_command(build_analysis_command(options), "analysis")
 
+    def start_render_existing(self) -> None:
+        """Render graphs/reports from an existing ``.aaresults`` bundle folder."""
+        if self.process is not None:
+            QMessageBox.information(
+                self,
+                "Busy",
+                "A process is already running. Wait for it to finish or cancel it first.",
+            )
+            return
+
+        results_path_str = QFileDialog.getExistingDirectory(
+            self,
+            "Select results folder (.aaresults bundle or parent folder)",
+        )
+        if not results_path_str:
+            return
+        results_path = Path(results_path_str)
+        resolved_results_path = self._normalize_results_selection(results_path)
+        if resolved_results_path is None:
+            QMessageBox.warning(
+                self,
+                "Invalid results folder",
+                "Select a folder that is a `.aaresults` bundle or contains `.aaresults` "
+                "bundles underneath.",
+            )
+            return
+
+        project_dir = Path(self.project_dir.text().strip() or "AudioAnalyserProject")
+        default_output = render_output_dir(project_dir)
+        output_path_str = QFileDialog.getExistingDirectory(
+            self,
+            "Select render output folder",
+            str(default_output),
+        )
+        if not output_path_str:
+            return
+        output_dir = Path(output_path_str)
+
+        render_options = RenderCommandOptions(
+            results_dir=resolved_results_path,
+            output_dir=output_dir,
+            reports=self.generate_report.isChecked(),
+        )
+        self._start_command(build_render_command(render_options), "render")
+
     def cancel_process(self) -> None:
         """Cancel the currently running subprocess."""
         if self.process is None:
@@ -297,6 +351,12 @@ class MainWindow(QMainWindow):
             if self.render_after_analysis.isChecked():
                 self._append_log(f"Render output: {render_output_dir(project_dir)}")
                 self._append_log(f"Markdown report: {self.generate_report.isChecked()}")
+        elif stage == "render":
+            self._append_log(f"Render results: {command[command.index('--results') + 1]}")
+            self._append_log(
+                f"Render output: {command[command.index('--output-dir') + 1]}"
+            )
+            self._append_log(f"Reports: {'--reports' in command}")
         self._append_log(f"$ {' '.join(command)}")
 
         self.process = QProcess(self)
@@ -428,3 +488,25 @@ class MainWindow(QMainWindow):
         if text:
             self.log_output.append(text)
         self.log_output.moveCursor(QTextCursor.End)
+
+    def _normalize_results_selection(self, selected: Path) -> Optional[Path]:
+        """Return a renderable results path (bundle dir or parent of bundles)."""
+        if not selected.exists():
+            return None
+        if selected.is_dir() and selected.name.lower().endswith(".aaresults"):
+            return selected
+        # If the selected folder contains any bundles, render the folder.
+        try:
+            if any(p.is_dir() and p.name.lower().endswith(".aaresults") for p in selected.iterdir()):
+                return selected
+        except OSError:
+            return None
+        # If bundles exist deeper, still allow rendering the top folder (renderer
+        # recursively discovers bundles).
+        try:
+            for p in selected.rglob("*.aaresults"):
+                if p.is_dir():
+                    return selected
+        except OSError:
+            return None
+        return None

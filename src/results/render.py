@@ -47,6 +47,22 @@ _DEFAULT_OCTAVE_TICKS_HZ: list[tuple[float, str]] = [
     (16000.0, "16k"),
 ]
 
+_LFE_DEEP_DIVE_FREQUENCIES_HZ = [8.0, 16.0, 31.25, 62.5, 125.0, 250.0]
+_GROUP_DEEP_DIVE_FREQUENCIES_HZ = [
+    8.0,
+    16.0,
+    31.25,
+    62.5,
+    125.0,
+    250.0,
+    500.0,
+    1000.0,
+    2000.0,
+    4000.0,
+    8000.0,
+    16000.0,
+]
+
 
 def render_bundle_spectrum_plots(
     bundle: ResultBundle,
@@ -363,6 +379,15 @@ def render_bundle_group_outputs(
                 group_name=group_name,
                 channels=channels,
                 output_path=group_dir / "octave_spectrum.png",
+                dpi=dpi,
+            )
+        )
+        output_paths.extend(
+            _render_group_deep_dive_outputs(
+                bundle=bundle,
+                group_name=group_name,
+                channels=channels,
+                output_dir=group_dir,
                 dpi=dpi,
             )
         )
@@ -961,6 +986,153 @@ def _render_group_octave_spectrum(
     return output_path
 
 
+def _render_group_deep_dive_outputs(
+    *,
+    bundle: ResultBundle,
+    group_name: str,
+    channels: list[ChannelResult],
+    output_dir: Path,
+    dpi: int,
+) -> list[Path]:
+    """Render legacy-equivalent group deep-dive plots from bundle time metrics."""
+    output_paths: list[Path] = []
+    if group_name not in {"LFE", "Screen", "Surround+Height"}:
+        return output_paths
+
+    if group_name == "LFE":
+        output_paths.append(
+            _render_group_crest_factor_time(
+                bundle=bundle,
+                group_name=group_name,
+                channels=channels,
+                output_path=output_dir / "lfe_full_channel.png",
+                dpi=dpi,
+            )
+        )
+        frequencies = _LFE_DEEP_DIVE_FREQUENCIES_HZ
+        filename_prefix = "lfe_octave_time"
+    elif group_name == "Screen":
+        frequencies = _GROUP_DEEP_DIVE_FREQUENCIES_HZ
+        filename_prefix = "screen"
+    else:
+        frequencies = _GROUP_DEEP_DIVE_FREQUENCIES_HZ
+        filename_prefix = "surround_height"
+
+    for frequency_hz in frequencies:
+        output_path = _render_group_octave_time_frequency(
+            bundle=bundle,
+            group_name=group_name,
+            channels=channels,
+            frequency_hz=frequency_hz,
+            output_path=output_dir
+            / f"{filename_prefix}_{_frequency_filename_value(frequency_hz)}Hz.png",
+            dpi=dpi,
+        )
+        if output_path is not None:
+            output_paths.append(output_path)
+    return output_paths
+
+
+def _render_group_octave_time_frequency(
+    *,
+    bundle: ResultBundle,
+    group_name: str,
+    channels: list[ChannelResult],
+    frequency_hz: float,
+    output_path: Path,
+    dpi: int,
+) -> Optional[Path]:
+    """Render one frequency/time deep-dive plot for a channel group."""
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
+    colors = _channel_colors()
+    plotted = False
+    max_time = 0.0
+
+    for idx, channel in enumerate(channels):
+        octave_time = channel.read_table("octave_time_metrics")
+        if octave_time.empty:
+            continue
+        rows = _octave_time_frequency_rows(octave_time, frequency_hz)
+        if rows.empty:
+            continue
+
+        color = colors[idx % len(colors)]
+        label = _channel_label(channel.channel_name)
+        time_seconds = rows["time_seconds"].to_numpy(dtype=float)
+        crest_db = _finite_series(rows["crest_factor_db"].to_numpy(dtype=float), 0.0)
+        peak_dbfs = _finite_series(rows["peak_dbfs"].to_numpy(dtype=float), -120.0)
+        rms_dbfs = _finite_series(rows["rms_dbfs"].to_numpy(dtype=float), -120.0)
+        if time_seconds.size:
+            max_time = max(max_time, float(np.nanmax(time_seconds)))
+
+        ax1.plot(
+            time_seconds,
+            np.maximum(crest_db, 0.0),
+            color=color,
+            linewidth=2,
+            alpha=0.8,
+            label=f"{label} Crest Factor",
+        )
+        ax2.plot(
+            time_seconds,
+            peak_dbfs,
+            color=color,
+            marker="o",
+            linewidth=2,
+            alpha=0.8,
+            markersize=3,
+            label=f"{label} Peak",
+        )
+        ax2.plot(
+            time_seconds,
+            rms_dbfs,
+            color=color,
+            marker="s",
+            linestyle="--",
+            linewidth=2,
+            alpha=0.8,
+            markersize=3,
+            label=f"{label} RMS",
+        )
+        plotted = True
+
+    if not plotted:
+        plt.close(fig)
+        return None
+
+    frequency_label = _format_frequency_label(frequency_hz)
+    track_title = _track_title(bundle)
+    ax1.set_ylabel("Crest Factor (dB)")
+    ax1.set_title(
+        f"{group_name} {frequency_label} Octave Band Crest Factor Over Time - {track_title}"
+    )
+    ax1.grid(True, alpha=0.3, which="major")
+    ax1.grid(True, alpha=0.15, which="minor")
+    ax1.yaxis.set_minor_locator(plt.MultipleLocator(1))
+    ax1.legend(loc="best", fontsize=9, ncol=2)
+    ax1.set_ylim([0, 30])
+
+    ax2.set_xlabel("Time (seconds)")
+    ax2.set_ylabel("Level (dBFS)")
+    ax2.set_title(
+        f"{group_name} {frequency_label} Octave Band Peak and RMS Levels Over Time - {track_title}"
+    )
+    ax2.grid(True, alpha=0.3)
+    ax2.legend(loc="best", fontsize=9, ncol=2)
+    level_ylim = (-40, 3)
+    ax2.set_ylim(level_ylim)
+    add_calibrated_spl_axis(ax2, level_ylim, is_lfe=(group_name == "LFE"))
+    if max_time > 0:
+        ax2.set_xlim([0, max_time])
+
+    plt.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(output_path, dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+    logger.info("Rendered group deep-dive plot: %s", output_path)
+    return output_path
+
+
 def _write_worst_channels_manifest(bundle: ResultBundle, output_dir: Path) -> Path:
     rows = []
     candidates: dict[str, tuple[ChannelResult, float, str]] = {}
@@ -1119,24 +1291,12 @@ def _fit_decay_curve(
 def _group_bundle_channels(bundle: ResultBundle) -> dict[str, list[ChannelResult]]:
     grouped = {"Screen": [], "Surround+Height": [], "LFE": [], "All Channels": []}
     for channel in bundle.channels():
-        name = channel.channel_name
-        if name in {"Channel 1 FL", "Channel 2 FR", "Channel 3 FC"}:
+        group = _channel_group(channel)
+        if group == "screen":
             grouped["Screen"].append(channel)
-        elif "LFE" in name:
+        elif group == "lfe":
             grouped["LFE"].append(channel)
-        elif any(
-            name.startswith(prefix)
-            for prefix in (
-                "Channel 5",
-                "Channel 6",
-                "Channel 7",
-                "Channel 8",
-                "Channel 9",
-                "Channel 10",
-                "Channel 11",
-                "Channel 12",
-            )
-        ):
+        elif group == "surround":
             grouped["Surround+Height"].append(channel)
         else:
             grouped["All Channels"].append(channel)
@@ -1168,10 +1328,68 @@ def _channel_worst_score(channel: ChannelResult) -> tuple[float, str]:
 
 
 def _worst_channel_group(channel_name: str) -> Optional[str]:
-    if channel_name in {"Channel 1 FL", "Channel 2 FR", "Channel 3 FC"}:
+    group = _classify_channel_name(channel_name)
+    if group == "screen":
         return "screen"
-    if "LFE" in channel_name:
+    if group == "lfe":
         return "lfe"
+    if group == "surround":
+        return "surround"
+    return None
+
+
+def _channel_group(channel: ChannelResult) -> Optional[str]:
+    """Return the cinema channel group for a bundle channel."""
+    metadata = channel.read_json("metadata")
+    group = _classify_channel_name(
+        str(metadata.get("channel_name") or channel.channel_name)
+    )
+    if group is not None:
+        return group
+    try:
+        channel_index = int(metadata.get("channel_index"))
+    except (TypeError, ValueError):
+        return None
+    if channel_index in {0, 1, 2}:
+        return "screen"
+    if channel_index == 3:
+        return "lfe"
+    if channel_index >= 4:
+        return "surround"
+    return None
+
+
+def _classify_channel_name(channel_name: str) -> Optional[str]:
+    """Classify both legacy folder names and short FFmpeg channel labels."""
+    normalized = channel_name.upper().replace("CHANNEL", " ").strip()
+    tokens = {
+        token.strip("()[],:;-")
+        for token in normalized.replace("_", " ").replace("/", " ").split()
+    }
+    if tokens & {"FL", "FR", "FC", "FLC", "FRC"}:
+        return "screen"
+    if any(token.startswith("LFE") for token in tokens) or "LOW FREQUENCY" in normalized:
+        return "lfe"
+    if tokens & {
+        "SL",
+        "SR",
+        "SBL",
+        "SBR",
+        "BL",
+        "BR",
+        "BC",
+        "TFL",
+        "TFR",
+        "TBL",
+        "TBR",
+        "TFC",
+        "TBC",
+        "TSL",
+        "TSR",
+        "WL",
+        "WR",
+    }:
+        return "surround"
     if channel_name.startswith(("Channel 5", "Channel 6", "Channel 7", "Channel 8")):
         return "surround"
     return None
@@ -1209,6 +1427,26 @@ def _octave_band_rows(channel: ChannelResult) -> pd.DataFrame:
     rows["frequency_numeric"] = pd.to_numeric(rows["frequency_hz"], errors="coerce")
     rows = rows[np.isfinite(rows["frequency_numeric"])]
     return rows.sort_values("frequency_numeric", kind="stable")
+
+
+def _octave_time_frequency_rows(
+    octave_time: pd.DataFrame,
+    frequency_hz: float,
+) -> pd.DataFrame:
+    """Return time rows for the stored octave frequency closest to target."""
+    if "frequency_hz" not in octave_time:
+        return pd.DataFrame()
+    rows = octave_time.copy()
+    rows["frequency_numeric"] = pd.to_numeric(rows["frequency_hz"], errors="coerce")
+    rows = rows[np.isfinite(rows["frequency_numeric"])]
+    if rows.empty:
+        return rows
+    available = rows["frequency_numeric"].to_numpy(dtype=float)
+    closest = float(available[np.argmin(np.abs(available - frequency_hz))])
+    if not np.isclose(closest, frequency_hz, rtol=0.0, atol=0.2):
+        return pd.DataFrame()
+    selected = rows[np.isclose(rows["frequency_numeric"], closest, rtol=0.0, atol=1e-6)]
+    return selected.sort_values("time_seconds", kind="stable")
 
 
 def _full_spectrum_row(channel: ChannelResult) -> Optional[pd.Series]:
@@ -1336,6 +1574,10 @@ def _format_frequency_label(frequency_hz: float) -> str:
         if frequency_hz == int(frequency_hz)
         else f"{frequency_hz:.1f} Hz"
     )
+
+
+def _frequency_filename_value(frequency_hz: float) -> str:
+    return f"{frequency_hz:.1f}".replace(".", "_")
 
 
 def _channel_label(channel_name: str) -> str:

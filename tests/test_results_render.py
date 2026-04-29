@@ -28,18 +28,24 @@ class _DummyConfig:
         return self.values.get(key_path, default)
 
 
-def _write_test_bundle(tmp_path, include_envelopes=False):
+def _write_test_bundle(
+    tmp_path,
+    include_envelopes=False,
+    channel_index=0,
+    channel_name="FL",
+    center_frequency=10.0,
+):
     sample_rate = 1000
     time = np.arange(sample_rate * 2) / sample_rate
     channel_data = 0.5 * np.sin(2 * np.pi * 10 * time)
     octave_bank = np.column_stack([channel_data, channel_data * 0.8])
-    center_frequencies = [10.0]
+    center_frequencies = [center_frequency]
 
     analyzer = MusicAnalyzer(sample_rate=sample_rate, original_peak=1.0)
     analysis_results = analyzer.analyze_octave_bands(octave_bank, center_frequencies)
     analysis_results["band_data"] = {
         "Full Spectrum": octave_bank[:, 0],
-        "10.000": octave_bank[:, 1],
+        f"{center_frequency:.3f}": octave_bank[:, 1],
     }
     time_analysis = {
         "time_points": np.array([1.0, 2.0]),
@@ -80,8 +86,8 @@ def _write_test_bundle(tmp_path, include_envelopes=False):
             "track_name": "render_test.wav",
             "track_path": "Tracks/render_test.wav",
             "content_type": "Test Signal",
-            "channel_index": 0,
-            "channel_name": "FL",
+            "channel_index": channel_index,
+            "channel_name": channel_name,
             "total_channels": 1,
             "duration_seconds": 2.0,
             "sample_rate": sample_rate,
@@ -214,6 +220,48 @@ def test_render_bundle_group_outputs_writes_plots_and_manifest(tmp_path):
     assert (output_dir / "All Channels" / "crest_factor_time.png").exists()
     assert (output_dir / "All Channels" / "octave_spectrum.png").exists()
     assert (output_dir / "worst_channels_manifest.csv").exists()
+
+
+def test_bundle_render_and_report_write_cinema_deep_dives(tmp_path):
+    """Cinema bundles get legacy-equivalent group deep-dive outputs."""
+    _write_test_bundle(
+        tmp_path,
+        channel_index=0,
+        channel_name="FL",
+        center_frequency=8.0,
+    )
+    _write_test_bundle(
+        tmp_path,
+        channel_index=3,
+        channel_name="LFE",
+        center_frequency=8.0,
+    )
+    bundle_dir = _write_test_bundle(
+        tmp_path,
+        channel_index=6,
+        channel_name="SL",
+        center_frequency=8.0,
+    )
+    bundle = load_result_bundle(bundle_dir)
+    output_dir = tmp_path / "rendered_cinema"
+
+    render_bundle_group_outputs(bundle=bundle, output_dir=output_dir, dpi=80)
+    report_path = generate_bundle_report(bundle=bundle, rendered_output_dir=output_dir)
+
+    assert (output_dir / "Screen" / "screen_8_0Hz.png").exists()
+    assert (output_dir / "LFE" / "lfe_full_channel.png").exists()
+    assert (output_dir / "LFE" / "lfe_octave_time_8_0Hz.png").exists()
+    assert (output_dir / "Surround+Height" / "surround_height_8_0Hz.png").exists()
+    assert (output_dir / "lfe_deep_dive.md").exists()
+    assert (output_dir / "screen_deep_dive.md").exists()
+    assert (output_dir / "surround_height_deep_dive.md").exists()
+    assert (output_dir / "lfe_deep_dive.pdf").exists()
+    assert (output_dir / "screen_deep_dive.pdf").exists()
+    assert (output_dir / "surround_height_deep_dive.pdf").exists()
+    report_text = report_path.read_text(encoding="utf-8")
+    assert "LFE Deep Dive" in report_text
+    assert "Screen Channel Deep Dive" in report_text
+    assert "Surround+Height Channel Deep Dive" in report_text
 
 
 def test_generate_bundle_report_writes_markdown(tmp_path):

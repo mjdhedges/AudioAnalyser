@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from typing import Optional
@@ -48,6 +49,11 @@ def markdown_report_to_pdf(
     document = QTextDocument()
     base_dir = markdown_path.parent.resolve()
     document.setBaseUrl(QUrl.fromLocalFile(str(base_dir) + "/"))
+    # Ensure the document's layout width matches the PDF paint area. Without this,
+    # Qt can lay out content at a wider default text width, causing images to
+    # overflow the printable area even when CSS uses percentage widths.
+    page_size = writer.pageLayout().paintRectPixels(writer.resolution()).size()
+    document.setPageSize(page_size)
     # QTextDocument is picky about resolving percent-encoded + relative image URLs.
     # Rewrite any local relative <img src="..."> to absolute file:// URLs so the
     # PDF renderer reliably embeds them.
@@ -61,6 +67,10 @@ def markdown_report_to_pdf(
 def _ensure_qgui_application() -> QGuiApplication:
     """Return an existing Qt app or create one for headless PDF rendering."""
     global _PDF_QT_APP
+    # Qt can emit noisy screen/monitor warnings on some Windows setups (e.g. stale
+    # virtual displays). This is harmless for PDF rendering; suppress it to keep
+    # logs clean.
+    os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.screen=false")
     app = QGuiApplication.instance()
     if app is None:
         _PDF_QT_APP = QGuiApplication(["audio-analyser-pdf"])
@@ -80,6 +90,9 @@ def _report_html_document(body_html: str) -> str:
       font-size: 10pt;
       line-height: 1.35;
       color: #202124;
+      margin: 0;
+      /* Provide typical print-like margins within the PDF paint area. */
+      padding: 24pt 28pt;
     }}
     h1, h2, h3 {{
       page-break-after: avoid;
@@ -99,6 +112,7 @@ def _report_html_document(body_html: str) -> str:
       border-collapse: collapse;
       width: 100%;
       margin: 8pt 0;
+      page-break-inside: avoid;
     }}
     th, td {{
       border: 1px solid #d0d7de;
@@ -114,9 +128,30 @@ def _report_html_document(body_html: str) -> str:
       font-size: 9pt;
     }}
     img {{
+      display: block;
+      width: 100%;
       max-width: 100%;
       height: auto;
-      margin: 6pt 0 12pt 0;
+      margin: 6pt auto 12pt auto;
+      page-break-inside: avoid;
+    }}
+    .plot-block {{
+      page-break-before: always;
+      page-break-inside: avoid;
+      margin: 0 0 18pt 0;
+    }}
+    .plot-title {{
+      font-weight: bold;
+      font-size: 12pt;
+      margin: 0 0 8pt 0;
+    }}
+    .plot-block img {{
+      width: 92%;
+      max-width: 92%;
+      margin: 0 auto;
+    }}
+    p {{
+      page-break-inside: avoid;
     }}
   </style>
 </head>
