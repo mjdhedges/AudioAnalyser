@@ -11,6 +11,19 @@ Analyser. The packaged build is self-contained: it includes the Python runtime
 and Python dependencies, so normal use does not require installing Python,
 creating a virtual environment, or running command-line tools.
 
+### Download (Windows GUI)
+
+1. Open this repository on GitHub and go to **Releases**.
+2. Download the latest Windows package (the `.zip` attached to the release).
+3. Extract the zip somewhere writable (for example `Documents\AudioAnalyser\`).
+4. Run `AudioAnalyser\AudioAnalyser.exe`.
+
+Notes:
+
+- Keep the whole extracted `AudioAnalyser\` folder together (do not copy just the
+  `.exe` elsewhere) because the app needs the bundled runtime files next to it.
+- If Windows SmartScreen blocks the first run: **More info** → **Run anyway**.
+
 The packaged Windows build includes `ffmpeg.exe` and `ffprobe.exe` for
 MKV/TrueHD workflows. Source/development runs can also use a system FFmpeg
 installation on `PATH`; if FFmpeg is missing, analysis fails with a clear log

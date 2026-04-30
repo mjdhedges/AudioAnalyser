@@ -316,36 +316,37 @@ def _estimate_track_work_item(
 
 def _probe_track_shape(track_path: Path) -> tuple[float, int, int]:
     """Return approximate duration, sample rate, and channel count for scheduling."""
-    if track_path.suffix.lower() in {".mkv", ".mts", ".m2ts"}:
-        try:
-            cmd = [
-                _ffmpeg_tool_command("ffprobe"),
-                "-v",
-                "error",
-                "-select_streams",
-                "a:0",
-                "-show_entries",
-                "stream=channels,sample_rate:format=duration",
-                "-of",
-                "json",
-                str(track_path),
-            ]
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            data = json.loads(result.stdout)
-            streams = data.get("streams") or []
-            stream = streams[0] if streams else {}
-            duration_seconds = float(data.get("format", {}).get("duration") or 0.0)
-            sample_rate = int(stream.get("sample_rate") or 44100)
-            channels = int(stream.get("channels") or 2)
-            if duration_seconds > 0:
-                return duration_seconds, sample_rate, channels
-        except Exception as exc:
-            logger.warning(
-                "Could not preflight %s with ffprobe; using conservative estimate: %s",
-                track_path.name,
-                exc,
-            )
-            return 600.0, 48000, 8
+    try:
+        cmd = [
+            _ffmpeg_tool_command("ffprobe"),
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "stream=channels,sample_rate:format=duration",
+            "-of",
+            "json",
+            str(track_path),
+        ]
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=15,
+        )
+        data = json.loads(result.stdout)
+        streams = data.get("streams") or []
+        stream = streams[0] if streams else {}
+        duration_seconds = float(data.get("format", {}).get("duration") or 0.0)
+        sample_rate = int(stream.get("sample_rate") or 44100)
+        channels = int(stream.get("channels") or 2)
+        if duration_seconds > 0:
+            return duration_seconds, sample_rate, channels
+    except Exception:
+        # Fall back to soundfile for formats ffprobe can't parse (or if ffprobe is missing).
+        pass
 
     try:
         info = sf.info(str(track_path))
@@ -357,6 +358,35 @@ def _probe_track_shape(track_path: Path) -> tuple[float, int, int]:
             exc,
         )
         return 300.0, 44100, 2
+
+
+def _ffprobe_has_audio_stream(track_path: Path) -> bool:
+    """Return True when ffprobe reports at least one audio stream."""
+    try:
+        cmd = [
+            _ffmpeg_tool_command("ffprobe"),
+            "-v",
+            "error",
+            "-select_streams",
+            "a",
+            "-show_entries",
+            "stream=index",
+            "-of",
+            "json",
+            str(track_path),
+        ]
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=15,
+        )
+        data = json.loads(result.stdout)
+        streams = data.get("streams") or []
+        return bool(streams)
+    except Exception:
+        return False
 
 
 def _estimate_batch_work(
@@ -1337,23 +1367,16 @@ def main(
             logger.info(f"Batch processing tracks from: {tracks_dir}")
             batch_started = time.perf_counter()
 
-            # Find all audio files
-            audio_extensions = {
-                ".wav",
-                ".flac",
-                ".mp3",
-                ".m4a",
-                ".aac",
-                ".ogg",
-                ".mkv",
-                ".mts",
-                ".m2ts",
-            }
-            audio_files = []
-
-            for ext in audio_extensions:
-                audio_files.extend(tracks_dir.glob(f"**/*{ext}"))
-                audio_files.extend(tracks_dir.glob(f"**/*{ext.upper()}"))
+            # Find all ingestable files (ffmpeg/ffprobe-backed, not extension-gated).
+            audio_files: list[Path] = []
+            for candidate in tracks_dir.rglob("*"):
+                if not candidate.is_file():
+                    continue
+                # Avoid accidentally treating output bundles as inputs.
+                if candidate.name.lower().endswith(".aaresults"):
+                    continue
+                if _ffprobe_has_audio_stream(candidate):
+                    audio_files.append(candidate)
 
             # On Windows, paths are case-insensitive: *.flac and *.FLAC globs both match the same
             # files, doubling the list and scheduling duplicate ProcessPool jobs for one track.
@@ -1377,7 +1400,10 @@ def main(
 
             if not audio_files:
                 logger.error(f"No audio files found in {tracks_dir}")
-                logger.info(f"Supported formats: {', '.join(audio_extensions)}")
+                logger.info(
+                    "No ingestable media found. Ensure ffmpeg/ffprobe are available "
+                    "and the folder contains files with at least one audio stream."
+                )
                 sys.exit(1)
 
             logger.info(f"Found {len(audio_files)} audio files to analyze")
