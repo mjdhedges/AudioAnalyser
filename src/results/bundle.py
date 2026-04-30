@@ -99,6 +99,7 @@ def write_channel_result_bundle(
         center_frequencies=list(center_frequencies),
         channel_data=channel_data,
         sample_rate=int(track_metadata.get("sample_rate", 44100)),
+        original_peak=float(track_metadata.get("original_peak", 1.0)),
         analysis_config=analysis_config,
     )
     _write_envelope_summary_tables(channel_dir, envelope_statistics or {})
@@ -565,6 +566,7 @@ def _write_octave_time_metrics(
     center_frequencies: list[float],
     channel_data: np.ndarray,
     sample_rate: int,
+    original_peak: float,
     analysis_config: Dict[str, Any],
 ) -> None:
     rows = []
@@ -586,7 +588,7 @@ def _write_octave_time_metrics(
     starts = np.arange(num_windows, dtype=np.int64) * step_samples
     ends = starts + window_samples
     time_points = ends / float(sample_rate)
-    channel_peak = float(np.max(np.abs(channel_data))) if channel_data.size else 0.0
+    channel_peak = float(original_peak)
 
     for band_index, center_frequency in enumerate(center_frequencies):
         band_data = np.asarray(octave_bank[:, band_index + 1], dtype=float)

@@ -96,19 +96,22 @@ class TrackProcessor:
             time_domain_mode = config.get(
                 "analysis.time_domain_crest_factor_mode", "fixed_window"
             )
+            channel_original_peak = (
+                float(np.max(np.abs(channel_data))) if channel_data.size else 0.0
+            )
             analyzer = MusicAnalyzer(
                 sample_rate=self.sample_rate,
-                original_peak=original_peak,
+                original_peak=channel_original_peak,
                 dpi=plot_dpi,
                 peak_hold_tau=peak_hold_tau,
                 time_domain_crest_factor_mode=time_domain_mode,
                 analysis_config=config.get("analysis", {}),
             )
             envelope_analyzer = EnvelopeAnalyzer(
-                sample_rate=self.sample_rate, original_peak=original_peak
+                sample_rate=self.sample_rate, original_peak=channel_original_peak
             )
             data_exporter = DataExporter(
-                sample_rate=self.sample_rate, original_peak=original_peak
+                sample_rate=self.sample_rate, original_peak=channel_original_peak
             )
 
             # Normalize channel audio
@@ -188,8 +191,16 @@ class TrackProcessor:
                 "sample_rate": self.sample_rate,
                 "samples": len(channel_data),
                 "channels": 1,  # Single channel being processed
-                "original_peak": original_peak,
-                "original_peak_dbfs": 20 * np.log10(original_peak),
+                "original_peak": channel_original_peak,
+                "original_peak_dbfs": (
+                    20 * np.log10(channel_original_peak)
+                    if channel_original_peak > 0
+                    else -np.inf
+                ),
+                "track_original_peak": original_peak,
+                "track_original_peak_dbfs": (
+                    20 * np.log10(original_peak) if original_peak > 0 else -np.inf
+                ),
                 "analysis_date": pd.Timestamp.now().isoformat(),
                 **octave_processing_metadata,
             }

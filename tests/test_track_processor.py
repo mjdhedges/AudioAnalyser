@@ -2,6 +2,7 @@
 Tests for the track processor module.
 """
 
+import json
 import pytest
 import numpy as np
 import tempfile
@@ -32,7 +33,8 @@ class TestTrackProcessor:
         # Create test audio data
         sample_rate = 44100
         duration = 2.0
-        channel_data = np.random.randn(int(sample_rate * duration))
+        time = np.arange(int(sample_rate * duration)) / sample_rate
+        channel_data = 0.25 * np.sin(2 * np.pi * 1000 * time)
 
         # Create temporary output directory
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -85,6 +87,16 @@ class TestTrackProcessor:
                 / "channel_01"
                 / "advanced_statistics.csv"
             ).exists()
+            metadata_path = (
+                track_output_dir
+                / "test_track.aaresults"
+                / "channels"
+                / "channel_01"
+                / "metadata.json"
+            )
+            metadata = json.loads(metadata_path.read_text())
+            assert metadata["original_peak"] == pytest.approx(0.25, rel=1e-4)
+            assert metadata["track_original_peak"] == pytest.approx(1.0)
 
     def test_process_channel_with_short_audio(self):
         """Test processing channel with very short audio."""
