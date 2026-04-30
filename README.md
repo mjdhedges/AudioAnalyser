@@ -1,4 +1,4 @@
-![Audio Analyser banner](audioanalyser_banner.png)
+![Audio Analyser banner](audioanalyser_banner.jpeg)
 
 # Audio Analyser
 
@@ -532,8 +532,8 @@ The tool analyzes audio using 1/1-octave band centers (IEC 16 Hz-16 kHz) plus **
 
 ```
 audio-analyser/
-├── audioanalyser_banner.png  # README banner image
-├── audioanalyser_icon.jpeg   # GUI/window icon
+├── audioanalyser_banner.jpeg # README banner image
+├── audioanalyser_icon.png    # GUI/window icon
 ├── src/                    # Source code
 │   ├── __init__.py
 │   ├── main.py             # Analysis CLI entry point

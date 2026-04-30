@@ -29,7 +29,7 @@ output.
 
 The PyInstaller spec includes:
 
-- `audioanalyser_icon.jpeg`
+- `audioanalyser_icon.png`
 - `config.toml`
 - `vendor/ffmpeg/bin/ffmpeg.exe`
 - `vendor/ffmpeg/bin/ffprobe.exe`

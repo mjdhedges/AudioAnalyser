@@ -7,7 +7,7 @@ from pathlib import Path
 
 from PySide6.QtGui import QIcon
 
-ICON_FILENAME = "audioanalyser_icon.jpeg"
+ICON_FILENAME = "audioanalyser_icon.png"
 
 
 def app_icon_path() -> Path:

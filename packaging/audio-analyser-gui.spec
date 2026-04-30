@@ -10,10 +10,10 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 # SPECPATH is the directory containing this spec file (``packaging/``).
 # We want the repository root (parent of ``packaging/``).
 ROOT = Path(SPECPATH).parent
-ICON = ROOT / "audioanalyser_icon.jpeg"
+ICON = ROOT / "audioanalyser_icon.png"
 
 datas = [
-    (str(ROOT / "audioanalyser_icon.jpeg"), "."),
+    (str(ROOT / "audioanalyser_icon.png"), "."),
     (str(ROOT / "config.toml"), "."),
     (str(ROOT / "vendor" / "ffmpeg"), "vendor/ffmpeg"),
 ]
