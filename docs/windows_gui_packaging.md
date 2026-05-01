@@ -53,3 +53,8 @@ log message explaining that FFmpeg must be installed and added to `PATH`.
 
 The FFmpeg binaries are distributed with their upstream license/readme files.
 
+Project-level third-party attribution and “Corresponding Source” instructions:
+
+- `THIRD_PARTY_NOTICES.md`
+- `vendor/ffmpeg/CORRESPONDING_SOURCE.md`
+

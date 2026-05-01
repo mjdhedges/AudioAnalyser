@@ -15,7 +15,16 @@ ICON = ROOT / "audioanalyser_icon.png"
 datas = [
     (str(ROOT / "audioanalyser_icon.png"), "."),
     (str(ROOT / "config.toml"), "."),
-    (str(ROOT / "vendor" / "ffmpeg"), "vendor/ffmpeg"),
+    (str(ROOT / "THIRD_PARTY_NOTICES.md"), "."),
+    # Bundle FFmpeg runtime binaries and minimal license/source-info files.
+    # Do not bundle full corresponding-source archives inside the app payload.
+    (str(ROOT / "vendor" / "ffmpeg" / "bin"), "vendor/ffmpeg/bin"),
+    (str(ROOT / "vendor" / "ffmpeg" / "LICENSE"), "vendor/ffmpeg"),
+    (str(ROOT / "vendor" / "ffmpeg" / "README.txt"), "vendor/ffmpeg"),
+    (
+        str(ROOT / "vendor" / "ffmpeg" / "CORRESPONDING_SOURCE.md"),
+        "vendor/ffmpeg",
+    ),
 ]
 datas += collect_data_files("librosa")
 datas += collect_data_files("matplotlib")

@@ -31,6 +31,9 @@ MKV/TrueHD workflows. Source/development runs can also use a system FFmpeg
 installation on `PATH`; if FFmpeg is missing, analysis fails with a clear log
 message explaining what needs to be installed.
 
+Third-party license notices for bundled components are listed in
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+
 Basic workflow:
 
 1. Download or build the Windows GUI package.
