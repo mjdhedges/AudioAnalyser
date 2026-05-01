@@ -190,3 +190,6 @@ rendered/
 
 # Cache directory
 cache/
+
+# Bundled vendor source archives (ship as release assets, not in git)
+vendor/ffmpeg/*.zip

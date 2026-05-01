@@ -228,9 +228,13 @@ class MainWindow(QMainWindow):
     def _choose_input_file(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self,
-            "Select audio file",
+            "Select media file",
             "",
-            "Audio/Video Files (*.wav *.flac *.mp3 *.m4a *.aiff *.mkv);;All Files (*)",
+            "Common Media Files (*.wav *.flac *.mp3 *.m4a *.aac *.aiff *.alac *.ogg "
+            "*.wma *.ac3 *.eac3 *.dts *.dtshd *.truehd "
+            "*.mkv *.mp4 *.m4v *.mov *.avi *.wmv *.webm "
+            "*.mts *.m2ts *.ts *.mxf *.mpg *.mpeg *.vob);;"
+            "All Files (*)",
         )
         if path:
             self.input_path.setText(path)
