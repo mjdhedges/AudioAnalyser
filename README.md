@@ -104,7 +104,11 @@ pip install -e ".[dev]"
 
 ## Configuration
 
-The Audio Analyser uses a TOML-based configuration system (`config.toml`) that allows you to customize all analysis parameters. You can override any setting via command-line arguments.
+The Audio Analyser uses a TOML-based configuration system (`config.toml`) for
+analysis, plotting, export, and performance parameters. Audio is decoded and
+analysed at each source stream's native sample rate; there is intentionally no
+sample-rate override because resampling can create intersample peaks that are not
+source sample peaks.
 
 ### Configuration File (`config.toml`)
 
@@ -113,7 +117,6 @@ The configuration file is organized into sections:
 ```toml
 [analysis]
 chunk_duration_seconds = 2.0        # Time-domain analysis chunk size
-sample_rate = 44100                 # Audio processing sample rate
 tracks_dir = "Tracks"               # Default tracks directory
 output_dir = "analysis"             # Default output directory
 time_domain_crest_factor_mode = "fixed_window"  # Primary time-series crest method
@@ -158,7 +161,7 @@ The old hybrid summary method (whole-band RMS with a separate 1-second sliding p
 
 ### Command Line Overrides
 
-You can override any configuration parameter via command-line arguments:
+You can override common runtime controls via command-line arguments:
 
 ```bash
 # Override chunk duration for finer time resolution
@@ -229,9 +232,6 @@ python -m src.render --results "analysis_output/Music/song.aaresults" --output-d
 # Render graphs and reports from all bundles under a directory
 python -m src.render --results "analysis_output" --output-dir "rendered" --reports
 
-# Custom sample rate for batch processing
-python -m src.main --sample-rate 48000
-
 # Get help
 python -m src.main --help
 ```
@@ -251,7 +251,6 @@ python -m src.main --help
 - `--post-only`, `--run-post`: Legacy post-processing paths for old CSV output. Bundle-only workflows should use `python -m src.render`.
 
 #### Configuration Overrides
-- `--sample-rate, -sr`: Sample rate for processing (overrides config)
 - `--chunk-duration, -cd`: Duration of analysis chunks in seconds (overrides config)
 - `--dpi, -d`: Legacy analysis-plot DPI override. Rendered graph DPI is controlled by `plotting.render_dpi` or `python -m src.render --dpi`.
 - `--log-level, -l`: Logging level: DEBUG, INFO, WARNING, ERROR (overrides config)
@@ -358,13 +357,13 @@ from src.audio_processor import AudioProcessor
 from src.octave_filter import OctaveBandFilter
 from src.music_analyzer import MusicAnalyzer
 
-# Initialize components
-audio_processor = AudioProcessor(sample_rate=44100)
-octave_filter = OctaveBandFilter(sample_rate=44100)
-analyzer = MusicAnalyzer(sample_rate=44100)
-
 # Load and process audio (preserves multi-channel)
+audio_processor = AudioProcessor()
 audio_data, sr = audio_processor.load_audio("song.flac")
+
+# Initialize analysis components at the decoded source sample rate
+octave_filter = OctaveBandFilter(sample_rate=sr)
+analyzer = MusicAnalyzer(sample_rate=sr)
 
 # For multi-channel audio, extract individual channels
 channels = audio_processor.extract_channels(audio_data)

@@ -60,8 +60,8 @@ class TestMainExtended:
 
         try:
             main_module.config.set("analysis.octave_max_memory_gb", 0.001)
-            stereo_item = _estimate_track_work_item(stereo_path, 1, sample_rate)
-            surround_item = _estimate_track_work_item(surround_path, 2, sample_rate)
+            stereo_item = _estimate_track_work_item(stereo_path, 1)
+            surround_item = _estimate_track_work_item(surround_path, 2)
         finally:
             main_module.config.set("analysis.octave_max_memory_gb", original_memory)
 
@@ -82,9 +82,7 @@ class TestMainExtended:
 
             with tempfile.TemporaryDirectory() as tmp_output:
                 output_dir = Path(tmp_output)
-                result = analyze_single_track(
-                    Path(tmp_path), output_dir, sample_rate=44100, chunk_duration=2.0
-                )
+                result = analyze_single_track(Path(tmp_path), output_dir, 2.0)
 
                 # Should handle gracefully.
                 success, elapsed_seconds = result
@@ -112,7 +110,6 @@ class TestMainExtended:
                 result = analyze_single_track(
                     Path(tmp_path),
                     output_dir,
-                    sample_rate=sample_rate,
                     chunk_duration=2.0,
                 )
 
@@ -142,7 +139,6 @@ class TestMainExtended:
                 result = analyze_single_track(
                     Path(tmp_path),
                     output_dir,
-                    sample_rate=sample_rate,
                     chunk_duration=2.0,
                 )
 
@@ -180,7 +176,6 @@ class TestMainExtended:
                 result = analyze_single_track(
                     Path(tmp_path),
                     output_dir,
-                    sample_rate=sample_rate,
                     chunk_duration=2.0,
                 )
 
@@ -210,7 +205,6 @@ class TestMainExtended:
         ) as tmp_config:
             tmp_config.write("""
 [analysis]
-sample_rate = 48000
 chunk_duration_seconds = 1.0
 """)
             config_path = Path(tmp_config.name)
@@ -268,7 +262,6 @@ chunk_duration_seconds = 1.0
                 result1 = analyze_single_track(
                     Path(tmp_path),
                     output_dir,
-                    sample_rate=sample_rate,
                     chunk_duration=2.0,
                     use_cache=True,
                 )
@@ -280,7 +273,6 @@ chunk_duration_seconds = 1.0
                 result2 = analyze_single_track(
                     Path(tmp_path),
                     output_dir,
-                    sample_rate=sample_rate,
                     chunk_duration=2.0,
                     use_cache=True,
                 )
@@ -311,7 +303,6 @@ chunk_duration_seconds = 1.0
                 result = analyze_single_track(
                     Path(tmp_path),
                     output_dir,
-                    sample_rate=sample_rate,
                     chunk_duration=2.0,
                     use_cache=False,
                 )

@@ -281,7 +281,7 @@ def test_generate_bundle_report_writes_markdown(tmp_path):
     assert "# render_test - Audio Signal Analysis" in report_text
     assert "Source bundle: `render_test.aaresults`" in report_text
     assert "Crest Factor Analysis" in report_text
-    assert "Group Plots" in report_text
+    assert 'alt="Crest Factor Over Time - Screen"' in report_text
     assert "T3, T6, T9, and T12 are recovery-time measurements" in report_text
     pdf_path = output_dir / "analysis.pdf"
     assert pdf_path.exists()

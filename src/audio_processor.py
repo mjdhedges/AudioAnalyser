@@ -51,7 +51,8 @@ class AudioProcessor:
         """Initialize the audio processor.
 
         Args:
-            sample_rate: Target sample rate for audio processing
+            sample_rate: Legacy default retained for compatibility. Decoding
+                preserves the source stream's native sample rate.
             enable_mkv_support: Enable container (MKV/MTS/M2TS) audio support via ffmpeg
         """
         self.sample_rate = sample_rate
@@ -158,8 +159,9 @@ class AudioProcessor:
         """Decode an audio file/container stream to a temporary float32 WAV.
 
         This uses ffmpeg for decoding for maximum format support (mp3/aac/m4a/etc)
-        and for container audio (mkv/mts/m2ts). The resulting WAV is loaded via
-        soundfile to preserve multi-channel shapes.
+        and for container audio (mkv/mts/m2ts). The resulting WAV preserves the
+        decoded stream's native sample rate and is loaded via soundfile to
+        preserve multi-channel shapes.
 
         Args:
             input_path: Source audio path (file or container).
@@ -200,13 +202,12 @@ class AudioProcessor:
             else:
                 cmd += ["-map", "0:a:0"]
 
-            # Decode to float32 PCM WAV at the target sample rate. This gives
-            # consistent dtype and avoids downstream resampling/fallback loaders.
+            # Decode to float32 PCM WAV while preserving the source sample rate.
+            # Forcing resampling here can create intersample overs above 0 dBFS,
+            # which is not appropriate for source sample-peak time traces.
             cmd += [
                 "-c:a",
                 "pcm_f32le",
-                "-ar",
-                str(self.sample_rate),
                 "-y",
                 str(temp_wav_path),
             ]
@@ -294,7 +295,7 @@ class AudioProcessor:
             )
 
             # Load audio file preserving multi-channel audio
-            # The decoded WAV is float32 at the configured sample rate.
+            # The decoded WAV is float32 at the source stream sample rate.
             audio_data, sr = sf.read(str(temp_wav_path), dtype=np.float32, always_2d=False)
 
             # Ensure consistent shape: (samples,) for mono, (samples, channels) for multi-channel

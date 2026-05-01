@@ -60,6 +60,29 @@ class TestAudioProcessor:
         finally:
             Path(tmp_path).unlink(missing_ok=True)
 
+    def test_load_audio_preserves_source_sample_rate(self):
+        """Test ffmpeg decode does not resample source audio by default."""
+        tmp_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        tmp_path = tmp_file.name
+        tmp_file.close()
+
+        try:
+            source_sample_rate = 44100
+            duration = 0.1
+            frequency = 440
+            t = np.linspace(0, duration, int(source_sample_rate * duration), False)
+            audio_data = 0.5 * np.sin(2 * np.pi * frequency * t)
+            sf.write(tmp_path, audio_data, source_sample_rate)
+
+            processor = AudioProcessor(sample_rate=48000)
+            loaded_audio, sr = processor.load_audio(tmp_path)
+
+            assert sr == source_sample_rate
+            assert len(loaded_audio) == len(audio_data)
+
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
     def test_stereo_to_mono_already_mono(self):
         """Test stereo_to_mono with already mono audio."""
         mono_audio = np.array([0.1, 0.2, 0.3, 0.4])
@@ -141,7 +164,7 @@ class TestAudioProcessor:
             assert loaded_audio.shape[0] == len(ch1)  # samples
             assert loaded_audio.shape[1] == 6  # channels
             
-            # Check channel data is preserved (allow for resampling/precision differences)
+            # Check channel data is preserved (allow for decode precision differences)
             assert np.allclose(loaded_audio[:, 0], ch1, atol=1e-4)
             assert np.allclose(loaded_audio[:, 1], ch2, atol=1e-4)
             

@@ -9,8 +9,8 @@ from typing import Optional
 from urllib.parse import unquote
 
 import markdown
-from PySide6.QtCore import QUrl
-from PySide6.QtGui import QGuiApplication, QPageSize, QPdfWriter, QTextDocument
+from PySide6.QtCore import QMarginsF, QUrl
+from PySide6.QtGui import QGuiApplication, QPageLayout, QPageSize, QPdfWriter, QTextDocument
 
 _PDF_QT_APP: Optional[QGuiApplication] = None
 
@@ -43,10 +43,12 @@ def markdown_report_to_pdf(
 
     writer = QPdfWriter(str(pdf_path))
     writer.setPageSize(QPageSize(QPageSize.A4))
+    writer.setPageMargins(QMarginsF(36, 36, 36, 42), QPageLayout.Unit.Point)
     writer.setResolution(96)
     writer.setTitle(markdown_path.stem)
 
     document = QTextDocument()
+    document.setDocumentMargin(0)
     base_dir = markdown_path.parent.resolve()
     document.setBaseUrl(QUrl.fromLocalFile(str(base_dir) + "/"))
     # Ensure the document's layout width matches the PDF paint area. Without this,
@@ -85,14 +87,17 @@ def _report_html_document(body_html: str) -> str:
 <head>
   <meta charset="utf-8">
   <style>
+    html {{
+      background: #ffffff;
+    }}
     body {{
       font-family: Arial, Helvetica, sans-serif;
       font-size: 10pt;
       line-height: 1.35;
       color: #202124;
+      background: #ffffff;
       margin: 0;
-      /* Provide typical print-like margins within the PDF paint area. */
-      padding: 24pt 28pt;
+      padding: 0;
     }}
     h1, h2, h3 {{
       page-break-after: avoid;
@@ -129,25 +134,19 @@ def _report_html_document(body_html: str) -> str:
     }}
     img {{
       display: block;
-      width: 100%;
-      max-width: 100%;
+      width: 96%;
+      max-width: 96%;
       height: auto;
       margin: 6pt auto 12pt auto;
       page-break-inside: avoid;
     }}
     .plot-block {{
-      page-break-before: always;
       page-break-inside: avoid;
-      margin: 0 0 18pt 0;
-    }}
-    .plot-title {{
-      font-weight: bold;
-      font-size: 12pt;
-      margin: 0 0 8pt 0;
+      margin: 10pt 0 18pt 0;
     }}
     .plot-block img {{
-      width: 92%;
-      max-width: 92%;
+      width: 96%;
+      max-width: 96%;
       margin: 0 auto;
     }}
     p {{

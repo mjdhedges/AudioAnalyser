@@ -155,9 +155,8 @@ def generate_channel_deep_dive_plot(
         logger.warning(f"Could not find original track file for {track_name}")
         return None
 
-    # Load audio
-    sample_rate = config.get("analysis.sample_rate", 44100)
-    audio_processor = AudioProcessor(sample_rate=sample_rate, enable_mkv_support=True)
+    # Load audio at its native source sample rate.
+    audio_processor = AudioProcessor(enable_mkv_support=True)
     test_start = config.get("analysis.test_start_time", None)
     test_duration = config.get("analysis.test_duration", None)
     if test_start is not None or test_duration is not None:
@@ -185,7 +184,7 @@ def generate_channel_deep_dive_plot(
 
     # Create octave bank
     octave_filter = OctaveBandFilter(
-        sample_rate=sample_rate,
+        sample_rate=sr,
         processing_mode=config.get("analysis.octave_filter_mode", "auto"),
         block_duration_seconds=config.get(
             "analysis.octave_fft_block_duration_seconds", 30.0
@@ -244,8 +243,8 @@ def generate_channel_deep_dive_plot(
     else:
         chunk_duration = float(analysis_config["crest_factor_window_seconds"])
         step_seconds = float(analysis_config["crest_factor_step_seconds"])
-    chunk_samples = max(int(chunk_duration * sample_rate), 1)
-    step_samples = max(int(step_seconds * sample_rate), 1)
+    chunk_samples = max(int(chunk_duration * sr), 1)
+    step_samples = max(int(step_seconds * sr), 1)
 
     # Color palette for channels (distinct colors for up to 8 channels)
     channel_colors = [
@@ -305,7 +304,7 @@ def generate_channel_deep_dive_plot(
 
         time_points = (
             np.arange(num_complete_chunks) * step_samples + chunk_samples
-        ) / float(sample_rate)
+        ) / float(sr)
 
         # Process each octave band and store data
         channel_label = channel_folder.replace("Channel ", "").strip()
@@ -353,7 +352,7 @@ def generate_channel_deep_dive_plot(
                     )
                 ).compute(
                     band_data,
-                    sample_rate=sample_rate,
+                    sample_rate=sr,
                     original_peak=1.0,
                     config=analysis_config,
                 )
@@ -362,14 +361,14 @@ def generate_channel_deep_dive_plot(
                     window_seconds=chunk_duration
                 ).compute(
                     band_data,
-                    sample_rate=sample_rate,
+                    sample_rate=sr,
                     original_peak=1.0,
                     config=analysis_config,
                 )
             else:
                 result = FixedWindowTimeDomainCalculator().compute(
                     band_data,
-                    sample_rate=sample_rate,
+                    sample_rate=sr,
                     original_peak=1.0,
                     config=analysis_config,
                 )

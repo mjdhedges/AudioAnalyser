@@ -186,7 +186,6 @@ def _render_bundle_outputs(
 def analyze_and_optionally_render_track(
     track_path: Path,
     output_dir: Path,
-    sample_rate: int,
     chunk_duration: float,
     *,
     index: int,
@@ -203,7 +202,6 @@ def analyze_and_optionally_render_track(
     success, analysis_elapsed_s = analyze_single_track(
         track_path,
         output_dir,
-        sample_rate,
         chunk_duration,
         channel_filters=channel_filters,
         batch_tracks_root=batch_tracks_root,
@@ -279,12 +277,10 @@ def analyze_and_optionally_render_track(
 def _estimate_track_work_item(
     track_path: Path,
     index: int,
-    target_sample_rate: int,
 ) -> TrackWorkItem:
     """Estimate track memory cost for advisory batch scheduling."""
     duration_seconds, source_sample_rate, channels = _probe_track_shape(track_path)
-    effective_sample_rate = target_sample_rate or source_sample_rate
-    sample_count = max(1, int(duration_seconds * effective_sample_rate))
+    sample_count = max(1, int(duration_seconds * source_sample_rate))
     band_count = len(config.get_octave_center_frequencies())
     if config.get("analysis.octave_include_low_residual_band", True):
         band_count += 1
@@ -310,7 +306,7 @@ def _estimate_track_work_item(
         estimated_gb=estimated_gb,
         channels=max(channels, 1),
         duration_seconds=duration_seconds,
-        sample_rate=effective_sample_rate,
+        sample_rate=source_sample_rate,
     )
 
 
@@ -391,11 +387,10 @@ def _ffprobe_has_audio_stream(track_path: Path) -> bool:
 
 def _estimate_batch_work(
     audio_files: list[Path],
-    sample_rate: int,
 ) -> list[TrackWorkItem]:
     """Build scheduling metadata for all batch tracks."""
     items = [
-        _estimate_track_work_item(track_path, idx, sample_rate)
+        _estimate_track_work_item(track_path, idx)
         for idx, track_path in enumerate(sorted(audio_files), 1)
     ]
     for item in sorted(items, key=lambda x: x.estimated_gb, reverse=True)[:10]:
@@ -555,7 +550,6 @@ def get_config_hash() -> str:
     """
     # Get relevant config sections that affect analysis results
     relevant_config = {
-        "sample_rate": config.get("analysis.sample_rate", 44100),
         "chunk_duration": config.get("analysis.chunk_duration_seconds", 2.0),
         "octave_frequencies": config.get("analysis.octave_center_frequencies", []),
         "octave_filter_mode": config.get("analysis.octave_filter_mode", "auto"),
@@ -667,7 +661,6 @@ def save_result_cache(
 def analyze_single_track(
     track_path: Path,
     output_dir: Path,
-    sample_rate: int,
     chunk_duration: float,
     use_cache: bool = True,
     channel_filters: Optional[tuple[str, ...]] = None,
@@ -684,7 +677,6 @@ def analyze_single_track(
         track_path: Path to the audio file
         output_dir: Base output directory
         batch_tracks_root: If set (batch mode), mirror input paths under ``output_dir``
-        sample_rate: Sample rate for processing
         chunk_duration: Duration of analysis chunks in seconds
         use_cache: Whether to use result caching
 
@@ -739,31 +731,7 @@ def analyze_single_track(
 
         # Initialize components
         enable_mkv_support = config.get("mkv_support.enable", True)
-        audio_processor = AudioProcessor(
-            sample_rate=sample_rate, enable_mkv_support=enable_mkv_support
-        )
-
-        octave_filter = OctaveBandFilter(
-            sample_rate=sample_rate,
-            processing_mode=config.get("analysis.octave_filter_mode", "auto"),
-            block_duration_seconds=config.get(
-                "analysis.octave_fft_block_duration_seconds", 30.0
-            ),
-            max_memory_gb=config.get("analysis.octave_max_memory_gb", 4.0),
-            include_low_residual_band=config.get(
-                "analysis.octave_include_low_residual_band", True
-            ),
-            include_high_residual_band=config.get(
-                "analysis.octave_include_high_residual_band", True
-            ),
-            low_residual_center_hz=config.get(
-                "analysis.octave_low_residual_center_hz", 4.0
-            ),
-            high_residual_center_hz=config.get(
-                "analysis.octave_high_residual_center_hz", 32000.0
-            ),
-        )
-        logger.info("Using FFT power-complementary octave filter bank")
+        audio_processor = AudioProcessor(enable_mkv_support=enable_mkv_support)
 
         # Load audio file (preserves multi-channel)
         logger.info("Loading audio file...")
@@ -789,6 +757,28 @@ def analyze_single_track(
             f"Duration={audio_info['duration_seconds']:.2f}s"
         )
 
+        octave_filter = OctaveBandFilter(
+            sample_rate=sr,
+            processing_mode=config.get("analysis.octave_filter_mode", "auto"),
+            block_duration_seconds=config.get(
+                "analysis.octave_fft_block_duration_seconds", 30.0
+            ),
+            max_memory_gb=config.get("analysis.octave_max_memory_gb", 4.0),
+            include_low_residual_band=config.get(
+                "analysis.octave_include_low_residual_band", True
+            ),
+            include_high_residual_band=config.get(
+                "analysis.octave_include_high_residual_band", True
+            ),
+            low_residual_center_hz=config.get(
+                "analysis.octave_low_residual_center_hz", 4.0
+            ),
+            high_residual_center_hz=config.get(
+                "analysis.octave_high_residual_center_hz", 32000.0
+            ),
+        )
+        logger.info("Using FFT power-complementary octave filter bank")
+
         # Store original peak level before normalization (across all channels)
         original_peak = np.max(np.abs(audio_data))
 
@@ -800,7 +790,7 @@ def analyze_single_track(
 
         # Initialize track processor
         track_processor = TrackProcessor(
-            sample_rate=sample_rate, original_peak=original_peak
+            sample_rate=sr, original_peak=original_peak
         )
 
         # Prepare channel filters (if any)
@@ -942,12 +932,6 @@ def analyze_single_track(
     help="Output directory for results (default: from config)",
 )
 @click.option(
-    "--sample-rate",
-    "-sr",
-    type=int,
-    help="Sample rate for audio processing (overrides config)",
-)
-@click.option(
     "--chunk-duration",
     "-cd",
     type=float,
@@ -1079,7 +1063,6 @@ def main(
     input: Optional[Path],
     tracks_dir: Optional[Path],
     output_dir: Optional[Path],
-    sample_rate: Optional[int],
     chunk_duration: Optional[float],
     dpi: Optional[int],
     log_level: Optional[str],
@@ -1130,7 +1113,6 @@ def main(
 
         # Override configuration with command line arguments
         config.override_from_args(
-            sample_rate=sample_rate,
             chunk_duration=chunk_duration,
             dpi=dpi,
             log_level=log_level,
@@ -1156,7 +1138,6 @@ def main(
             logging.getLogger().setLevel(getattr(logging, log_level))
 
         # Get configuration values
-        sample_rate = config.get("analysis.sample_rate", 44100)
         chunk_duration = config.get("analysis.chunk_duration_seconds", 2.0)
 
         if chunk_duration <= 0:
@@ -1174,7 +1155,7 @@ def main(
 
         logger.info("Starting Audio Analyser")
         logger.info(f"Output directory: {output_dir}")
-        logger.info(f"Sample rate: {sample_rate} Hz")
+        logger.info("Sample rate: native source stream rate")
         logger.info(f"Chunk duration: {chunk_duration} seconds")
         logger.info(
             "Octave memory estimate per track: %.2f GB",
@@ -1462,7 +1443,7 @@ def main(
                 )
 
                 sorted_audio_files = sorted(audio_files)
-                work_items = _estimate_batch_work(sorted_audio_files, sample_rate)
+                work_items = _estimate_batch_work(sorted_audio_files)
                 per_track_memory_gb = float(
                     config.get("analysis.octave_max_memory_gb", 4.0)
                 )
@@ -1499,7 +1480,6 @@ def main(
                             analyze_and_optionally_render_track,
                             item.path,
                             output_dir,
-                            sample_rate,
                             chunk_duration,
                             index=item.index,
                             total=total_tracks,
@@ -1642,7 +1622,6 @@ def main(
                         analyze_and_optionally_render_track(
                             track_path,
                             output_dir,
-                            sample_rate,
                             chunk_duration,
                             index=idx,
                             total=total_tracks,
@@ -1761,7 +1740,6 @@ def main(
             success, elapsed_s, _render_attempted = analyze_and_optionally_render_track(
                 input,
                 output_dir,
-                sample_rate,
                 chunk_duration,
                 index=1,
                 total=1,

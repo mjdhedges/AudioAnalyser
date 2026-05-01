@@ -19,7 +19,6 @@ class TestConfigExtended:
         config = Config(config_path=Path("nonexistent_config.toml"))
 
         # Should use default config
-        assert config.get("analysis.sample_rate") == 44100
         assert config.get("analysis.chunk_duration_seconds") == 2.0
 
     def test_config_invalid_toml(self):
@@ -35,7 +34,7 @@ class TestConfigExtended:
             config = Config(config_path=tmp_path)
 
             # Should fall back to defaults
-            assert config.get("analysis.sample_rate") == 44100
+            assert config.get("analysis.chunk_duration_seconds") == 2.0
         finally:
             tmp_path.unlink(missing_ok=True)
 
@@ -48,8 +47,8 @@ class TestConfigExtended:
         assert config.get("test.new_key") == "test_value"
 
         # Override existing value
-        config.set("analysis.sample_rate", 48000)
-        assert config.get("analysis.sample_rate") == 48000
+        config.set("analysis.chunk_duration_seconds", 1.0)
+        assert config.get("analysis.chunk_duration_seconds") == 1.0
 
     def test_config_set_nested(self):
         """Test setting nested configuration values."""
@@ -64,7 +63,7 @@ class TestConfigExtended:
         config = Config()
 
         # Get existing value
-        assert config.get("analysis.sample_rate") is not None
+        assert config.get("analysis.chunk_duration_seconds") is not None
 
         # Get non-existent value with default
         assert config.get("nonexistent.key", "default") == "default"
@@ -77,13 +76,13 @@ class TestConfigExtended:
         config = Config()
 
         # Get nested value
-        sample_rate = config.get("analysis.sample_rate")
-        assert sample_rate is not None
+        chunk_duration = config.get("analysis.chunk_duration_seconds")
+        assert chunk_duration is not None
 
         # Get entire section
         analysis_config = config.get("analysis")
         assert isinstance(analysis_config, dict)
-        assert "sample_rate" in analysis_config
+        assert "chunk_duration_seconds" in analysis_config
 
     def test_config_get_section_methods(self):
         """Test section getter methods."""
@@ -101,10 +100,6 @@ class TestConfigExtended:
     def test_config_override_from_args(self):
         """Test overriding configuration from command line arguments."""
         config = Config()
-
-        # Override sample rate
-        config.override_from_args(sample_rate=48000)
-        assert config.get("analysis.sample_rate") == 48000
 
         # Override chunk duration
         config.override_from_args(chunk_duration=1.0)
@@ -126,11 +121,11 @@ class TestConfigExtended:
     def test_config_override_from_args_ignores_none(self):
         """Test that None values in override_from_args are ignored."""
         config = Config()
-        original_sample_rate = config.get("analysis.sample_rate")
+        original_chunk_duration = config.get("analysis.chunk_duration_seconds")
 
         # Pass None - should not override
-        config.override_from_args(sample_rate=None)
-        assert config.get("analysis.sample_rate") == original_sample_rate
+        config.override_from_args(chunk_duration=None)
+        assert config.get("analysis.chunk_duration_seconds") == original_chunk_duration
 
     def test_config_save_config(self):
         """Test saving configuration to file."""
@@ -216,7 +211,6 @@ class TestConfigExtended:
         ) as tmp_file:
             tmp_file.write("""
 [analysis]
-sample_rate = 48000
 chunk_duration_seconds = 1.5
 
 [plotting]
@@ -228,7 +222,6 @@ dpi = 600
             config = Config(config_path=tmp_path)
 
             # Verify loaded values
-            assert config.get("analysis.sample_rate") == 48000
             assert config.get("analysis.chunk_duration_seconds") == 1.5
             assert config.get("plotting.dpi") == 600
         finally:
@@ -240,7 +233,7 @@ dpi = 600
         bundled_config.write_text(
             """
 [analysis]
-sample_rate = 48000
+chunk_duration_seconds = 1.25
 """,
             encoding="utf-8",
         )
@@ -250,15 +243,15 @@ sample_rate = 48000
         config = Config()
 
         assert config.config_path == bundled_config
-        assert config.get("analysis.sample_rate") == 48000
+        assert config.get("analysis.chunk_duration_seconds") == 1.25
 
     def test_config_replace_uses_copy(self):
         """Worker config replacement should not share mutable dictionaries."""
         config = Config(config_path=Path("nonexistent.toml"))
         values = config.as_dict()
-        values["analysis"]["sample_rate"] = 48000
+        values["analysis"]["chunk_duration_seconds"] = 1.0
 
         config.replace(values)
-        values["analysis"]["sample_rate"] = 96000
+        values["analysis"]["chunk_duration_seconds"] = 3.0
 
-        assert config.get("analysis.sample_rate") == 48000
+        assert config.get("analysis.chunk_duration_seconds") == 1.0

@@ -2,7 +2,7 @@
 # Audio Analyser Configuration File
 # ============================================================================
 # This file defines default parameters for audio analysis.
-# Parameters can be overridden via command line arguments.
+# Common runtime controls can be overridden via command line arguments.
 # All time values are in seconds unless specified as milliseconds (ms).
 # All level values are in dBFS (decibels relative to full scale) unless otherwise noted.
 # ============================================================================
@@ -10,14 +10,14 @@
 # ============================================================================
 # AUDIO PROCESSING & ANALYSIS SETTINGS
 # ============================================================================
-# Core parameters for audio loading, resampling, and chunk processing
+# Core parameters for audio loading and chunk processing
 # ============================================================================
 
 [analysis]
-# Sample rate for audio processing (Hz)
-# Audio files will be resampled to this rate if different
-# Common values: 44100 (CD quality), 48000 (professional), 96000 (high-res)
-sample_rate = 48000
+# Audio is decoded and analysed at the source stream's native sample rate.
+# There is intentionally no resampling override: source sample-peak traces must
+# remain tied to the original samples, and resampling can create intersample
+# overs above 0 dBFS.
 
 # Duration of each analysis chunk in seconds
 # Audio is processed in chunks for memory efficiency

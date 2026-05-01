@@ -73,7 +73,6 @@ class Config:
         return {
             "analysis": {
                 "chunk_duration_seconds": 2.0,
-                "sample_rate": 44100,
                 "tracks_dir": "Tracks",
                 "output_dir": "analysis",
                 "peak_hold_tau_seconds": 1.4,
@@ -307,7 +306,6 @@ class Config:
         # Map command line argument names to configuration paths
         arg_mapping = {
             "chunk_duration": "analysis.chunk_duration_seconds",
-            "sample_rate": "analysis.sample_rate",
             "dpi": "plotting.dpi",
             "log_level": "logging.level",
             "test_start_time": "analysis.test_start_time",

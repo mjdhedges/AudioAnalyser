@@ -272,9 +272,16 @@ def _time_domain_calculation_sentence(summary: Dict[str, str]) -> str:
         )
     if mode == "fixed_chunk":
         return (
-            "For this run, time-domain crest factor uses fixed-window mode: "
+            "For this run, time-domain crest factor uses fixed-chunk mode: "
             f"RMS and peak levels are calculated over "
             f"{_format_seconds(chunk_duration)} windows."
+        )
+    if mode == "fixed_window":
+        return (
+            "For this run, time-domain crest factor uses fixed-window mode: "
+            f"RMS and peak levels are calculated over "
+            f"{_format_seconds(chunk_duration)} windows, exported every "
+            f"{_format_seconds(step_seconds)} interval."
         )
     if summary:
         return (
@@ -369,7 +376,6 @@ def _plot_block_html(title: str, rel_path: str) -> str:
     escaped_src = html.escape(quote(rel_path, safe="/."), quote=True)
     return (
         '<div class="plot-block">\n'
-        f'  <div class="plot-title">{escaped_title}</div>\n'
         f'  <img src="{escaped_src}" alt="{escaped_title}">\n'
         "</div>"
     )
@@ -495,7 +501,8 @@ def generate_bundle_report(
         f"- Duration: {_format_number(float(bundle.track.get('duration_seconds', 0.0)), 1)} s"
     )
     lines.append(
-        f"- Sample rate: {_format_number(float(bundle.track.get('sample_rate', 0.0)), 0)} Hz"
+        "- Analysis sample rate (native source): "
+        f"{_format_number(float(bundle.track.get('sample_rate', 0.0)), 0)} Hz"
     )
     lines.append(f"- {octave_processing_sentence}")
     lines.append("")
@@ -588,7 +595,7 @@ def _bundle_group_plot_section(
     report_folder: Path,
     groups: Dict[str, List[ChannelResult]],
 ) -> List[str]:
-    lines = ["## Group Plots", ""]
+    lines: List[str] = []
     gap_note_added = False
     for group_name in groups.keys():
         crest_plot = rendered_output_dir / group_name / "crest_factor_time.png"
@@ -632,7 +639,7 @@ def _bundle_frequency_section(
         "## Frequency Spectrum Summary",
         "",
         "The table below summarizes the wideband full-spectrum row for each group. "
-        "Detailed per-channel octave-band plots are generated beside the report.",
+        "Detailed per-channel core plots follow the summary table.",
         "",
         _format_table_row(
             [
@@ -658,8 +665,6 @@ def _bundle_frequency_section(
                 ]
             )
         )
-    lines.append("")
-    lines.append("### Per-Channel Core Plots")
     lines.append("")
     for group in group_data.values():
         for channel in group.get("channels", []):

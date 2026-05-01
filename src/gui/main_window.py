@@ -91,7 +91,7 @@ class MainWindow(QMainWindow):
         self.max_memory_gb.setToolTip(
             "Per-track memory estimate used to choose octave processing mode and "
             "schedule batch work. Actual RAM can be higher for multi-channel decode, "
-            "resampling, and export."
+            "octave-bank storage, and export."
         )
         self.max_memory_help = QLabel(
             "Per-track memory estimate, not a hard cap. Higher can be faster; lower "

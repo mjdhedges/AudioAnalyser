@@ -21,7 +21,7 @@ The processing flow is:
 
 1. The CLI finds one input file or recursively discovers supported audio files in a batch folder.
 2. Existing analysis results can be reused when result-cache metadata indicates that the source file and analysis configuration have not changed.
-3. The audio file is decoded through `ffmpeg`, resampled to the configured sample rate if required, and preserved as mono or multi-channel audio.
+3. The audio file is decoded through `ffmpeg` at the source stream's native sample rate and preserved as mono or multi-channel audio.
 4. Multi-channel material is split into individual channels.
 5. Each channel is normalized for analysis while retaining the original peak reference so exported levels remain tied to the source file's dBFS scale.
 6. An octave-band filter bank is created for the channel.
@@ -36,7 +36,7 @@ Audio Analyser supports common audio formats such as WAV, FLAC, MP3, AIFF, M4A, 
 
 All source decoding now goes through `ffmpeg`. This keeps stereo music files and multi-channel film containers on the same decoding path and avoids format-specific fallbacks. `ffprobe` is used to inspect audio stream metadata, channel counts, and channel layout where available. Decoded audio is written to a temporary PCM WAV representation for loading into the Python analysis pipeline.
 
-When the source sample rate differs from the configured analysis rate, `ffmpeg` resamples to the configured rate during decode.
+The analysis pipeline intentionally does not resample source material. Source sample-peak traces must remain tied to the original decoded samples; resampling can create intersample/reconstruction peaks that exceed the original source sample peak. Bundle metadata and reports record the native sample rate used for each track.
 
 ## Channel Handling
 
@@ -59,9 +59,9 @@ Group-level reports then combine or select channel results into practical review
 
 ## Level Reference and Normalization
 
-Per-channel audio is normalized for internal processing. The original source peak is retained and used when converting analysis values back to dBFS. This allows the pipeline to gain the numerical stability benefits of normalized processing while still reporting levels relative to the original source scale.
+Per-channel audio is normalized for internal processing. The original per-channel source peak is retained and used when converting analysis values back to dBFS. This allows the pipeline to gain the numerical stability benefits of normalized processing while still reporting levels relative to the original source scale.
 
-In bundle metadata, each channel records the original peak and original peak in dBFS. Plot and export calculations use this reference when reporting peak and RMS levels in dBFS.
+In bundle metadata, each channel records the channel original peak and original peak in dBFS. It also records the track-wide original peak for context. Plot and export calculations use the channel reference when reporting peak and RMS levels in dBFS.
 
 ## Octave-Band Analysis
 
