@@ -1,0 +1,2 @@
+track,channel,channel_index,sample_rate,band_hz,analysis_window_start_seconds,analysis_window_end_seconds,filtered_peak_time_seconds,source_peak_linear_dbfs,source_peak_dbfs,filtered_band_peak_linear_dbfs,filtered_band_peak_dbfs,filtered_minus_source_peak_db,channel_original_peak_dbfs
+Ready Player One (2018) - Race.mts,FL,0,48000,62.5,129.84091666666666,130.84091666666666,130.34091666666666,0.91455078125,-0.7758434985711156,1.12667932639701,1.036006509150523,1.8118500077216384,-0.6452791484714686

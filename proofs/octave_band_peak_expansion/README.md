@@ -57,6 +57,9 @@ Outputs:
 - `peak_expansion_results.csv`
 - `peak_expansion_by_signal.png`
 - `rms_power_closure_by_signal.png`
+- `real_event_metrics.csv`
+- `real_event_waveform_trace.csv`
+- `real_event_source_vs_filtered_62_5hz.png`
 
 ## Results
 
@@ -74,6 +77,34 @@ Only the clipped/square-like low-frequency case exceeds the source full-band
 peak. The same run still closes RMS power exactly to numerical precision for
 all cases.
 
+## Real-World Time-Domain Event
+
+The proof also includes a production-data case from:
+
+- Track: `Ready Player One (2018) - Race.mts`
+- Channel: `FL`
+- Band: `62.5 Hz`
+- Exported event row: `132 s`
+
+The exported `132 s` row is a fixed-window row whose timestamp marks the end of
+the 2-second window, so the event window is `130-132 s`. The proof decodes the
+source through the same `AudioProcessor.load_audio()` path as the main program,
+filters the full decoded FL channel with the same full-file FFT octave weight,
+then crops a 1-second waveform view around the strongest filtered-band sample.
+
+Result from `real_event_metrics.csv`:
+
+| Source peak in 1 s view | Filtered 62.5 Hz peak | Expansion vs source peak |
+| ---: | ---: | ---: |
+| `-0.7758 dBFS` | `+1.0360 dBFS` | `+1.8119 dB` |
+
+The waveform plot shows the full-band source repeatedly approaching the channel
+peak limit while the band-limited 62.5 Hz component continues as a smoother
+low-frequency waveform. Around the strongest sample, neighbouring frequency
+content and clipping/limiting-like waveform shape constrain the source samples,
+but the extracted 62.5 Hz component is no longer constrained by those other
+components and rises above `0 dBFS`.
+
 ## Interpretation
 
 The positive band peak in the clipped square case is expected. The square wave
@@ -81,6 +112,13 @@ is bounded to `±1`, but the full-band square contains harmonics. The octave ban
 extracts the 62.5 Hz fundamental and removes harmonics that help define the
 flat-topped waveform. The resulting band-limited sinusoidal component can peak
 above the original bounded square waveform.
+
+The real `Ready Player One` event is the same mechanism in programme material:
+it is not a mathematically pure square wave, but the source waveform in the
+event window is strongly constrained while a large low-frequency component is
+present. Filtering removes the neighbouring content that constrained the
+full-band sample stream, so the derived band-limited waveform has a higher
+sample peak than the original source waveform.
 
 This is not the previous gain-offset issue. A gain-offset issue causes the
 **full-spectrum** channel peak to be wrong. In the fixed `v0.3.2` data, full
