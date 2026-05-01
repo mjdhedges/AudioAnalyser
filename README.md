@@ -4,6 +4,8 @@
 
 Audio Analyser is an offline analysis tool for music, film, and test-signal audio. It measures octave-band level, crest factor, time-domain dynamics, envelope behaviour, sustained peaks, and channel/group behaviour across mono, stereo, and surround material. Analysis results are stored as portable per-track `.aaresults` bundles, which can then be rendered into plots, manifests, Markdown reports, and portable PDF reports without reprocessing the source audio.
 
+For a detailed description of decoding, octave processing, crest-factor paths, bundles, rendering, and report generation, see [**`reports/processing_pipeline.md`**](reports/processing_pipeline.md).
+
 ## Recommended Route: Desktop GUI
 
 For most users, the Windows desktop GUI is the easiest way to use Audio
@@ -597,6 +599,10 @@ audio-analyser/
 - **mypy**: Type checking
 - **isort**: Import sorting
 - **PyInstaller**: Windows GUI executable packaging
+
+## Feedback and issues
+
+If you find a bug, something confusing in the reports, or a missing feature, please open an issue on GitHub so it can be tracked and discussed: [**Issues**](https://github.com/mjdhedges/AudioAnalyser/issues). Include what you did, what you expected, and (if relevant) a small example file or path type, your OS, and whether you used the packaged GUI or a source install.
 
 ## License
 
