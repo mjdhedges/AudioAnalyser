@@ -183,12 +183,30 @@ Key outputs:
 - `channel_mapping_results.csv`
 - `grouped_channel_counts.png`
 
-## Incomplete / Planned Proofs
-
 ### Normalization and dBFS Reference
 
-Status: **planned**
+Status: **complete**
 
-Prove that peak, RMS, and dBFS values move correctly under gain changes, while
-crest factor remains gain-invariant. This should cover per-channel normalization,
-track-wide peak metadata, and filtered-band metrics.
+Folder: `normalization_dbfs_reference/`
+
+Purpose: proves that peak, RMS, and dBFS values move correctly under source gain
+changes while crest factor remains gain-invariant.
+
+Decision:
+
+- Analysis runs on peak-normalized channel data.
+- The channel's original peak is carried as the dBFS reference.
+- Peak and RMS dBFS values shift by the exact source gain change.
+- Crest factor remains gain-invariant because it is a peak/RMS ratio from the
+  same normalized signal path.
+- Filtered octave-band whole-interval metrics and exported octave time metrics
+  use the channel peak reference consistently.
+
+Key outputs:
+
+- `normalization_results.csv`
+- `octave_band_reference.csv`
+- `octave_time_reference.csv`
+- `gain_shift_acceptance.csv`
+- `gain_shift_dbfs.png`
+- `crest_factor_invariance.png`
