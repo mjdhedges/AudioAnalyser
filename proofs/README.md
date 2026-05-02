@@ -90,36 +90,100 @@ Key outputs:
 - `peak_expansion_by_signal.png`
 - `rms_power_closure_by_signal.png`
 
-## Incomplete / Planned Proofs
-
 ### Octave Filter Band Edges
 
-Status: **planned**
+Status: **complete; band filtering passes, crest-factor expansion recorded**
 
-Verify that octave filters place energy into the intended centre bands and that
-crossover behaviour matches the configured filter-bank design. Useful material:
-sine sweeps, stepped sines, centre-frequency tones, and crossover-frequency
-tones.
+Folder: `octave_filter_band_edges/`
 
-The existing `octave_band_energy_closure/` and `octave_band_peak_expansion/`
-proofs cover power closure and peak behaviour, but not a full band-edge
-acceptance matrix.
+Purpose: validates octave filter centre placement, crossover behaviour, and
+phase neutrality. It also records a separate EIA-426B-style compressed pink-noise
+crest-factor diagnostic for the derived octave-band signals.
+
+Decision:
+
+- Centre-frequency tones land fully in the intended band.
+- Geometric crossover tones split power equally between adjacent bands.
+- FFT weights are real and non-negative, so retained bins receive no phase
+  rotation from the filter bank.
+- Full-spectrum compressed pink noise remains at the generated `6 dB` crest
+  factor because the full-spectrum path is the unfiltered source.
+- Active derived octave bands do show crest-factor expansion on compressed pink
+  noise, so the current filter bank should **not** be described as preserving
+  compressed-noise crest factor per band.
+- Directly summing the octave-band waveforms is not perfect reconstruction; the
+  bank reconstructs to numerical precision only when the same FFT weights are
+  applied as synthesis weights before summing.
+
+Key outputs:
+
+- `band_edge_acceptance.csv`
+- `phase_response.csv`
+- `compressed_pink_noise_crest_factor.csv`
+- `reconstruction_analysis.csv`
+- `band_edge_acceptance.png`
+- `compressed_pink_noise_crest_factor.png`
+- `reconstruction_error.png`
 
 ### LFE Band-Limited Analysis
 
-Status: **planned**
+Status: **complete**
 
-Prove that LFE and low-frequency deep-dive metrics respond correctly to in-band
-low-frequency content and reject out-of-band content. This should include
-content around LFE crossover regions and confirm the report/deep-dive outputs.
+Folder: `lfe_band_limited_analysis/`
+
+Purpose: proves that LFE deep-dive target plots respond to intended
+low-frequency content, split adjacent crossover content correctly, and reject
+screen-range content.
+
+Decision:
+
+- LFE target bands are `8 Hz`, `16 Hz`, `31.25 Hz`, `62.5 Hz`, `125 Hz`, and
+  `250 Hz`.
+- Target-centre tones land fully in the intended LFE plot band.
+- Adjacent LFE crossover tones split power as expected, allowing small
+  finite-tone FFT leakage for irrational geometric crossover frequencies.
+- The `250/500 Hz` crossover is correctly treated as the upper transition: about
+  half the power remains in the plotted `250 Hz` LFE target.
+- `500 Hz` and `1 kHz` screen-range centre tones are rejected by the plotted LFE
+  target set.
+- The `4 Hz` residual octave is excluded from the plotted LFE target set.
+
+Key outputs:
+
+- `lfe_band_acceptance.csv`
+- `lfe_band_metrics.csv`
+- `lfe_target_power_by_case.png`
+- `lfe_band_power_matrix.png`
 
 ### Mono, Stereo, and Multichannel Grouping
 
-Status: **planned**
+Status: **complete**
 
-Prove channel grouping rules for mono, stereo, screen, LFE, surround, and height
-content. This should confirm that group plots and reports do not silently drop,
-duplicate, or mislabel channels.
+Folder: `channel_grouping/`
+
+Purpose: proves channel grouping rules for mono, stereo, screen, LFE, surround,
+and height content across group plots and markdown report grouping.
+
+Decision:
+
+- Mono report grouping is represented by root-level `analysis_results.csv` and
+  maps to `Mono`.
+- Stereo folders are not cinema-screen channels; they group under
+  `All Channels`.
+- `FL`, `FR`, and `FC` group as `Screen`.
+- `LFE` and `Low Frequency Effects` group as `LFE`.
+- Surround, back, top, and height channels group as `Surround+Height`.
+- Channel grouping should classify channel-name tokens, not loose substrings, so
+  `TFL` and `TFR` do not get mistaken for `FL` and `FR`.
+
+Key outputs:
+
+- `grouping_results.csv`
+- `channel_classification.csv`
+- `channel_mapping_results.csv`
+- `grouped_channel_counts.png`
+
+## Incomplete / Planned Proofs
 
 ### Normalization and dBFS Reference
 
