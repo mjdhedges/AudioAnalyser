@@ -1,0 +1,9 @@
+[TIME_DOMAIN_ANALYSIS]
+time_seconds,crest_factor_db,peak_level_dbfs,rms_level_dbfs,peak_level,rms_level
+1.0,6.0,-3.0,-9.0,0.7,0.35
+
+[OCTAVE_BAND_ANALYSIS]
+frequency_hz,max_amplitude_db,rms_db,crest_factor_db
+Full Spectrum,-3.0,-9.0,6.0
+31.25,-20.0,-26.0,6.0
+62.5,-18.0,-24.0,6.0

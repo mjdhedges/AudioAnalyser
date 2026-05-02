@@ -1,0 +1,18 @@
+channel_name,expected_group,observed_group,pass
+FL,screen,screen,True
+FR,screen,screen,True
+FC,screen,screen,True
+Channel 1 FL,screen,screen,True
+Channel 4 LFE,lfe,lfe,True
+Low Frequency Effects,lfe,lfe,True
+SL,surround,surround,True
+SR,surround,surround,True
+SBL,surround,surround,True
+SBR,surround,surround,True
+TFL,surround,surround,True
+TFR,surround,surround,True
+TBL,surround,surround,True
+TBR,surround,surround,True
+Channel 1 Left,,,True
+Channel 2 Right,,,True
+Channel 1 FC,screen,screen,True

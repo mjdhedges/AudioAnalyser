@@ -1,0 +1,30 @@
+layout,channel_index,channel_number,channel_name,folder_name
+mono,0,1,FC,Channel 1 FC
+stereo,0,1,Channel 1 Left,Channel 1 Left
+stereo,1,2,Channel 2 Right,Channel 2 Right
+5.1,0,1,FL,Channel 1 FL
+5.1,1,2,FR,Channel 2 FR
+5.1,2,3,FC,Channel 3 FC
+5.1,3,4,LFE,Channel 4 LFE
+5.1,4,5,SBL,Channel 5 SBL
+5.1,5,6,SBR,Channel 6 SBR
+5.1.2,0,1,FL,Channel 1 FL
+5.1.2,1,2,FR,Channel 2 FR
+5.1.2,2,3,FC,Channel 3 FC
+5.1.2,3,4,LFE,Channel 4 LFE
+5.1.2,4,5,SBL,Channel 5 SBL
+5.1.2,5,6,SBR,Channel 6 SBR
+5.1.2,6,7,TFL,Channel 7 TFL
+5.1.2,7,8,TFR,Channel 8 TFR
+7.1.4,0,1,FL,Channel 1 FL
+7.1.4,1,2,FR,Channel 2 FR
+7.1.4,2,3,FC,Channel 3 FC
+7.1.4,3,4,LFE,Channel 4 LFE
+7.1.4,4,5,SBL,Channel 5 SBL
+7.1.4,5,6,SBR,Channel 6 SBR
+7.1.4,6,7,SL,Channel 7 SL
+7.1.4,7,8,SR,Channel 8 SR
+7.1.4,8,9,TFL,Channel 9 TFL
+7.1.4,9,10,TFR,Channel 10 TFR
+7.1.4,10,11,TBL,Channel 11 TBL
+7.1.4,11,12,TBR,Channel 12 TBR

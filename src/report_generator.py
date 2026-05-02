@@ -314,6 +314,40 @@ def _read_worst_channels_manifest(track_dir: Path) -> Dict[str, Dict[str, str]]:
     return result
 
 
+def _classify_channel_folder(folder: str) -> Optional[str]:
+    """Classify a channel folder without substring collisions."""
+    normalized = folder.upper().replace("CHANNEL", " ").strip()
+    tokens = {
+        token.strip("()[],:;-")
+        for token in normalized.replace("_", " ").replace("/", " ").split()
+    }
+    if tokens & {"FL", "FR", "FC", "FLC", "FRC"}:
+        return "screen"
+    if any(token.startswith("LFE") for token in tokens) or "LOW FREQUENCY" in normalized:
+        return "lfe"
+    if tokens & {
+        "SL",
+        "SR",
+        "SBL",
+        "SBR",
+        "BL",
+        "BR",
+        "BC",
+        "TFL",
+        "TFR",
+        "TBL",
+        "TBR",
+        "TFC",
+        "TBC",
+        "TSL",
+        "TSR",
+        "WL",
+        "WR",
+    }:
+        return "surround"
+    return None
+
+
 def _determine_channel_groups(track_dir: Path) -> Dict[str, List[str]]:
     """Determine channel groups based on available channels."""
     manifest = _read_worst_channels_manifest(track_dir)
@@ -334,15 +368,17 @@ def _determine_channel_groups(track_dir: Path) -> Dict[str, List[str]]:
             for d in track_dir.iterdir()
             if d.is_dir() and d.name.startswith("Channel ")
         ]
-        # Simple heuristic: look for LFE, then stereo
+        # Classify by channel-name tokens. Avoid substring matches: TFL/TFR are
+        # height channels, not FL/FR screen channels.
         for folder in channel_folders:
-            if "LFE" in folder:
+            group = _classify_channel_folder(folder)
+            if group == "lfe":
                 groups["LFE"] = [folder]
-            elif "FC" in folder or "FL" in folder or "FR" in folder:
+            elif group == "screen":
                 if "Screen" not in groups:
                     groups["Screen"] = []
                 groups["Screen"].append(folder)
-            elif "SL" in folder or "SR" in folder or "SBL" in folder or "SBR" in folder:
+            elif group == "surround":
                 if "Surround+Height" not in groups:
                     groups["Surround+Height"] = []
                 groups["Surround+Height"].append(folder)
