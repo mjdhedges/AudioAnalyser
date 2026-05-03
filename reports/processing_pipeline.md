@@ -10,10 +10,10 @@ The pipeline processes each channel independently, then combines selected result
 
 The main outputs are:
 
-- Portable `.aaresults` result bundles containing per-channel metadata, octave-band statistics, time-domain crest factor data, histogram tables, envelope/recovery statistics, and replay data for rendering.
+- Portable `.aaresults` result bundles containing per-channel metadata, octave-band statistics, time-domain crest factor data, histogram tables, envelope/recovery statistics, and compact replay data for rendering the configured envelope plots.
 - Per-channel plots for octave spectrum, crest factor, time-domain behaviour, histograms, and envelope events rendered from those bundles.
 - Group-level plots, deep-dive plots, Markdown reports, and PDF reports that identify demanding channels and present the results in a reviewable form.
-- Local report image folders, so each report folder contains the graphs it needs under `images/`.
+- Local report image folders, so each report folder contains compact PDF-friendly copies of the graphs it needs under `images/`.
 
 ## End-to-End Flow
 
@@ -192,6 +192,7 @@ Important per-channel bundle artifacts include:
 - `octave_time_metrics.csv`: fixed-window octave-band crest-factor time data used for deep-dive plots, including validity, window/step settings, and `crest_factor_method = "fixed_window_peak_rms"`.
 - `histogram_linear.csv` and `histogram_log_db.csv`: amplitude distribution data.
 - Envelope and sustained-peak tables where the relevant analysis is available.
+- `envelope_plot_data.json`: compact replay data for envelope plots. It stores only the configured top-N pattern and independent envelope windows used by the plots, plus compact time-axis metadata. If more envelope examples are needed later, the source analysis can be rerun with larger envelope plot counts.
 
 Legacy `analysis_results.csv` export can still exist when explicitly enabled, but it is no longer the preferred reporting boundary. Reports and the GUI render path should prefer `.aaresults` bundles.
 
@@ -204,10 +205,10 @@ Reports are generated from `.aaresults` bundles and the rendered plot folder. Th
 3. Renders group plots and worst-channel manifests from bundle channel data.
 4. Renders LFE, Screen, and Surround+Height deep-dive plots when the required groups and octave-time data are available.
 5. Builds Markdown reports from bundle data and rendered plots.
-6. Copies referenced graph images into a local `images/` folder beside each report.
+6. Copies referenced graph images into a local `images/` folder beside each report. These report-local copies are downsampled and flattened to JPEG for compact PDF embedding; the original rendered PNG plots remain available in their channel and group folders.
 7. Converts Markdown reports to PDF using local image URLs and page-aware plot blocks.
 
-Keeping image assets local to each report folder makes the report folders portable and easier to archive or convert to PDF.
+Keeping image assets local to each report folder makes the report folders portable and easier to archive or convert to PDF. The render CLI and GUI use `plotting.render_dpi` by default for standalone plot generation, while PDF size is controlled primarily by the compact report-local image copies.
 
 In the GUI's normal analysis workflow, rendering and report generation are now part of the same per-track worker lifecycle. A worker analyzes a track, writes/updates its `.aaresults` bundle, renders that bundle, generates reports when enabled, and only then marks the item finished. The GUI progress bar therefore represents total work: analysis plus render/report steps. The table shows the current stage (`Analysis` or `Render`) and the item status.
 
@@ -224,6 +225,7 @@ Use the report as a structured review:
 - Use LFE and group deep dives for frequency-specific behaviour over time.
 - Use sustained-peak recovery tables to judge whether events are transient or sustained.
 - Use peak occurrence and duty cycle to understand how often the signal approaches full scale.
+- Treat envelope plot folders as detailed supporting artefacts. The main report lists pattern and independent envelope plot counts by channel rather than embedding every envelope plot in the PDF.
 
 Low crest factor is not automatically a problem. It matters most when peak level and RMS level are both high, because that combination implies sustained demand and reduced headroom.
 
