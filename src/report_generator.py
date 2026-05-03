@@ -15,11 +15,16 @@ from urllib.parse import quote
 
 import numpy as np
 import pandas as pd
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QImage, QPainter
 
 from src.report_pdf import markdown_report_to_pdf
 from src.results.reader import ChannelResult, ResultBundle
 
 logger = logging.getLogger(__name__)
+
+REPORT_IMAGE_MAX_WIDTH_PX = 1200
+REPORT_IMAGE_JPEG_QUALITY = 85
 
 
 def _parse_csv_section(
@@ -428,21 +433,49 @@ def _crest_factor_gaps_note() -> str:
     )
 
 
-def _safe_image_filename(filename: str) -> str:
+def _safe_image_filename(filename: str, suffix_override: Optional[str] = None) -> str:
     """Return a filesystem-safe image filename for report-local assets."""
     stem = Path(filename).stem
-    suffix = Path(filename).suffix or ".png"
+    suffix = suffix_override or Path(filename).suffix or ".png"
     safe_stem = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("._")
     return f"{safe_stem or 'image'}{suffix.lower()}"
 
 
 def _copy_report_image(source_path: Path, report_folder: Path, filename: str) -> str:
-    """Copy an analysis image beside the report and return a Markdown path."""
+    """Copy a PDF-friendly report image beside the report."""
     images_dir = report_folder / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
-    dest_path = images_dir / _safe_image_filename(filename)
-    shutil.copy2(source_path, dest_path)
+
+    dest_path = images_dir / _safe_image_filename(filename, ".jpg")
+    if not _write_compact_report_image(source_path, dest_path):
+        dest_path = images_dir / _safe_image_filename(filename)
+        shutil.copy2(source_path, dest_path)
+    else:
+        stale_png_path = images_dir / _safe_image_filename(filename)
+        if stale_png_path != dest_path and stale_png_path.exists():
+            stale_png_path.unlink()
     return f"images/{dest_path.name}"
+
+
+def _write_compact_report_image(source_path: Path, dest_path: Path) -> bool:
+    """Downsample and flatten an image for compact PDF embedding."""
+    image = QImage(str(source_path))
+    if image.isNull():
+        return False
+
+    if image.width() > REPORT_IMAGE_MAX_WIDTH_PX:
+        image = image.scaledToWidth(
+            REPORT_IMAGE_MAX_WIDTH_PX,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+
+    flattened = QImage(image.size(), QImage.Format.Format_RGB32)
+    flattened.fill(QColor("white"))
+    painter = QPainter(flattened)
+    painter.drawImage(0, 0, image)
+    painter.end()
+
+    return flattened.save(str(dest_path), "JPG", REPORT_IMAGE_JPEG_QUALITY)
 
 
 def _markdown_report_image(

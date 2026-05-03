@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
-from src.report_generator import _frequency_report_label, _octave_processing_sentence
+from PySide6.QtGui import QColor, QImage
+
+from src.report_generator import (
+    REPORT_IMAGE_MAX_WIDTH_PX,
+    _copy_report_image,
+    _frequency_report_label,
+    _octave_processing_sentence,
+)
 
 
 def test_octave_processing_sentence_reports_effective_auto_block_mode() -> None:
@@ -38,3 +45,22 @@ def test_frequency_report_label_preserves_fractional_octave_centers() -> None:
     assert _frequency_report_label(31.25) == "31.25 Hz"
     assert _frequency_report_label(62.5) == "62.5 Hz"
     assert _frequency_report_label(1000.0) == "1000 Hz"
+
+
+def test_copy_report_image_downsamples_for_pdf_embedding(tmp_path) -> None:
+    """Report image copies should be compact enough for PDF embedding."""
+    source_path = tmp_path / "source.png"
+    image = QImage(2400, 1200, QImage.Format.Format_RGB32)
+    image.fill(QColor("white"))
+    assert image.save(str(source_path), "PNG")
+    stale_png_path = tmp_path / "report" / "images" / "wide_plot.png"
+    stale_png_path.parent.mkdir(parents=True)
+    assert image.save(str(stale_png_path), "PNG")
+
+    rel_path = _copy_report_image(source_path, tmp_path / "report", "wide_plot.png")
+    copied_path = tmp_path / "report" / rel_path
+    copied_image = QImage(str(copied_path))
+
+    assert copied_path.suffix == ".jpg"
+    assert copied_image.width() == REPORT_IMAGE_MAX_WIDTH_PX
+    assert not stale_png_path.exists()
