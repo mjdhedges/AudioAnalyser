@@ -650,7 +650,10 @@ def generate_bundle_report(
 
     report_path.write_text("\n".join(lines), encoding="utf-8")
     logger.info("Bundle report written to: %s", report_path)
-    pdf_path = markdown_report_to_pdf(report_path)
+    pdf_path = markdown_report_to_pdf(
+        report_path,
+        output_path=_track_prefixed_pdf_path(report_path, track_name),
+    )
     logger.info("Bundle PDF report written to: %s", pdf_path)
     return report_path
 
@@ -1107,7 +1110,11 @@ def _write_bundle_lfe_deep_dive(
         )
         lines.append("")
 
-    _write_markdown_and_pdf(report_folder / "lfe_deep_dive.md", lines)
+    _write_markdown_and_pdf(
+        report_folder / "lfe_deep_dive.md",
+        lines,
+        track_name=track_name,
+    )
     return True
 
 
@@ -1172,14 +1179,38 @@ def _write_bundle_frequency_deep_dive(
             lines.append("")
             gap_note_added = True
 
-    _write_markdown_and_pdf(report_folder / report_filename, lines)
+    _write_markdown_and_pdf(
+        report_folder / report_filename,
+        lines,
+        track_name=track_name,
+    )
     return True
 
 
-def _write_markdown_and_pdf(path: Path, lines: List[str]) -> None:
+def _write_markdown_and_pdf(
+    path: Path,
+    lines: List[str],
+    *,
+    track_name: Optional[str] = None,
+) -> None:
     """Write a Markdown report and matching PDF."""
     path.write_text("\n".join(lines), encoding="utf-8")
-    markdown_report_to_pdf(path)
+    output_path = _track_prefixed_pdf_path(path, track_name) if track_name else None
+    markdown_report_to_pdf(path, output_path=output_path)
+
+
+def _track_prefixed_pdf_path(markdown_path: Path, track_name: str) -> Path:
+    """Return a PDF path prefixed with a filesystem-safe track name."""
+    safe_track_name = _safe_report_filename_stem(track_name)
+    return markdown_path.with_name(f"{safe_track_name} - {markdown_path.stem}.pdf")
+
+
+def _safe_report_filename_stem(value: str) -> str:
+    """Return a filename-safe report stem preserving readable track names."""
+    stem = Path(str(value or "")).stem.strip()
+    stem = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", stem)
+    stem = re.sub(r"\s+", " ", stem).strip(" .")
+    return stem or "track"
 
 
 def _frequency_report_label(frequency_hz: float) -> str:

@@ -255,9 +255,9 @@ def test_bundle_render_and_report_write_cinema_deep_dives(tmp_path):
     assert (output_dir / "lfe_deep_dive.md").exists()
     assert (output_dir / "screen_deep_dive.md").exists()
     assert (output_dir / "surround_height_deep_dive.md").exists()
-    assert (output_dir / "lfe_deep_dive.pdf").exists()
-    assert (output_dir / "screen_deep_dive.pdf").exists()
-    assert (output_dir / "surround_height_deep_dive.pdf").exists()
+    assert (output_dir / "render_test - lfe_deep_dive.pdf").exists()
+    assert (output_dir / "render_test - screen_deep_dive.pdf").exists()
+    assert (output_dir / "render_test - surround_height_deep_dive.pdf").exists()
     report_text = report_path.read_text(encoding="utf-8")
     assert "LFE Deep Dive" in report_text
     assert "Screen Channel Deep Dive" in report_text
@@ -309,7 +309,7 @@ def test_generate_bundle_report_writes_markdown(tmp_path):
     assert "##### Octave Spectrum" in report_text
     assert 'alt="Crest Factor Over Time - Screen"' in report_text
     assert "T3, T6, T9, and T12 are recovery-time measurements" in report_text
-    pdf_path = output_dir / "analysis.pdf"
+    pdf_path = output_dir / "render_test - analysis.pdf"
     assert pdf_path.exists()
     assert pdf_path.read_bytes().startswith(b"%PDF")
 
@@ -376,7 +376,7 @@ def test_render_cli_renders_histograms_from_bundle(tmp_path):
         output_dir / "render_test" / "channel_01" / "octave_crest_factor_time.png"
     ).exists()
     assert (output_dir / "render_test" / "analysis.md").exists()
-    assert (output_dir / "render_test" / "analysis.pdf").exists()
+    assert (output_dir / "render_test" / "render_test - analysis.pdf").exists()
 
     manifest = json.loads((bundle_dir / "manifest.json").read_text())
     assert manifest["track"]["track_name"] == "render_test.wav"
