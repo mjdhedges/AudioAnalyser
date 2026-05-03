@@ -107,7 +107,8 @@ def write_channel_result_bundle(
         try:
             _write_json(
                 channel_dir / "envelope_plot_data.json",
-                _extract_envelope_plot_data(envelope_statistics),
+                _extract_envelope_plot_data(envelope_statistics, envelope_config),
+                indent=None,
             )
         except Exception as exc:
             message = f"Could not write envelope plot data: {exc}"
@@ -645,19 +646,36 @@ def _frequency_from_label(label: Any) -> Optional[float]:
         return None
 
 
-def _extract_envelope_plot_data(envelope_statistics: Dict[str, Any]) -> Dict[str, Any]:
-    """Extract compact envelope fields needed for plot replay."""
+def _extract_envelope_plot_data(
+    envelope_statistics: Dict[str, Any],
+    envelope_config: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Extract only the envelope windows needed for current plot replay."""
     plot_data: Dict[str, Any] = {}
+    pattern_plot_count = max(
+        0,
+        int(envelope_config.get("envelope_plots_num_pattern_envelopes", 10) or 0),
+    )
+    independent_plot_count = max(
+        0,
+        int(envelope_config.get("envelope_plots_num_independent_envelopes", 3) or 0),
+    )
     for frequency_label, band_data in envelope_statistics.items():
         band_plot_data: Dict[str, Any] = {}
         pattern_analysis = band_data.get("pattern_analysis", {})
         patterns_detected = int(pattern_analysis.get("patterns_detected", 0) or 0)
+        selected_pattern_windows = _select_top_pattern_window_indices(
+            pattern_analysis,
+            patterns_detected,
+            pattern_plot_count,
+        )
         compact_patterns: Dict[str, Any] = {"patterns_detected": patterns_detected}
         for pattern_num in range(1, patterns_detected + 1):
             pattern_key = f"pattern_{pattern_num}"
             pattern = pattern_analysis.get(pattern_key)
             if not pattern:
                 continue
+            selected_indices = selected_pattern_windows.get(pattern_num, [])
             compact_patterns[pattern_key] = {
                 "num_repetitions": pattern.get("num_repetitions"),
                 "mean_interval_seconds": pattern.get("mean_interval_seconds"),
@@ -668,14 +686,26 @@ def _extract_envelope_plot_data(envelope_statistics: Dict[str, Any]) -> Dict[str
                 "pattern_regularity_score": pattern.get("pattern_regularity_score"),
                 "pattern_confidence": pattern.get("pattern_confidence"),
                 "beats_per_minute": pattern.get("beats_per_minute"),
-                "peak_times_seconds": pattern.get("peak_times_seconds", []),
-                "envelope_windows": pattern.get("envelope_windows", []),
-                "time_windows_ms": pattern.get("time_windows_ms", []),
+                "peak_times_seconds": _select_items(
+                    pattern.get("peak_times_seconds", []),
+                    selected_indices,
+                ),
+                "envelope_windows": _select_items(
+                    pattern.get("envelope_windows", []),
+                    selected_indices,
+                ),
+                "time_window_axes": _select_time_axes(
+                    pattern.get("time_windows_ms", []),
+                    pattern.get("envelope_windows", []),
+                    selected_indices,
+                ),
             }
         band_plot_data["pattern_analysis"] = compact_patterns
 
         compact_worst_cases = []
-        for envelope in band_data.get("worst_case_envelopes", []):
+        for envelope in band_data.get("worst_case_envelopes", [])[
+            :independent_plot_count
+        ]:
             compact_worst_cases.append(
                 {
                     "rank": envelope.get("rank"),
@@ -685,7 +715,10 @@ def _extract_envelope_plot_data(envelope_statistics: Dict[str, Any]) -> Dict[str
                     "peak_hold_time_ms": envelope.get("peak_hold_time_ms"),
                     "decay_times": envelope.get("decay_times", {}),
                     "envelope_window": envelope.get("envelope_window"),
-                    "time_window_ms": envelope.get("time_window_ms"),
+                    "time_window_axis": _compact_time_axis(
+                        envelope.get("time_window_ms"),
+                        envelope.get("envelope_window"),
+                    ),
                 }
             )
         band_plot_data["worst_case_envelopes"] = compact_worst_cases
@@ -693,14 +726,98 @@ def _extract_envelope_plot_data(envelope_statistics: Dict[str, Any]) -> Dict[str
     return _json_safe(plot_data)
 
 
+def _select_top_pattern_window_indices(
+    pattern_analysis: Dict[str, Any],
+    patterns_detected: int,
+    limit: int,
+) -> Dict[int, list[int]]:
+    """Return original window indices for the top pattern envelopes by peak level."""
+    if limit <= 0:
+        return {}
+    candidates: list[tuple[float, int, int]] = []
+    for pattern_num in range(1, patterns_detected + 1):
+        pattern = pattern_analysis.get(f"pattern_{pattern_num}", {})
+        windows = pattern.get("envelope_windows", []) or []
+        for window_index, envelope_window in enumerate(windows):
+            if envelope_window is None:
+                continue
+            values = np.asarray(envelope_window, dtype=float)
+            if values.size == 0:
+                continue
+            candidates.append((float(np.nanmax(values)), pattern_num, window_index))
+    candidates.sort(key=lambda item: item[0], reverse=True)
+
+    selected: Dict[int, list[int]] = {}
+    for _, pattern_num, window_index in candidates[:limit]:
+        selected.setdefault(pattern_num, []).append(window_index)
+    for indices in selected.values():
+        indices.sort()
+    return selected
+
+
+def _select_items(values: Any, indices: list[int]) -> list[Any]:
+    """Select list-like values by index while tolerating missing entries."""
+    if values is None:
+        return []
+    try:
+        value_count = len(values)
+    except TypeError:
+        return []
+    return [values[index] for index in indices if index < value_count]
+
+
+def _select_time_axes(
+    time_windows_ms: Any,
+    envelope_windows: Any,
+    indices: list[int],
+) -> list[Dict[str, Any]]:
+    """Select compact time-axis metadata for the retained envelope windows."""
+    axes: list[Dict[str, Any]] = []
+    for index in indices:
+        time_window = (
+            time_windows_ms[index]
+            if time_windows_ms is not None and index < len(time_windows_ms)
+            else None
+        )
+        envelope_window = (
+            envelope_windows[index]
+            if envelope_windows is not None and index < len(envelope_windows)
+            else None
+        )
+        axes.append(_compact_time_axis(time_window, envelope_window))
+    return axes
+
+
+def _compact_time_axis(time_window_ms: Any, envelope_window: Any) -> Dict[str, Any]:
+    """Represent a plot time axis without storing every sample timestamp."""
+    if time_window_ms is None:
+        return {}
+    times = np.asarray(time_window_ms, dtype=float)
+    if times.size == 0:
+        return {}
+
+    if times.size == 1:
+        return {"start_ms": float(times[0]), "step_ms": 0.0}
+
+    step_ms = float(times[1] - times[0])
+    reconstructed = times[0] + (np.arange(times.size) * step_ms)
+    if np.allclose(times, reconstructed, rtol=1e-9, atol=1e-9):
+        return {"start_ms": float(times[0]), "step_ms": step_ms}
+
+    return {"values_ms": time_window_ms}
+
+
 def _write_dataframe(path: Path, dataframe: pd.DataFrame) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     dataframe.to_csv(path, index=False)
 
 
-def _write_json(path: Path, data: Dict[str, Any]) -> None:
+def _write_json(path: Path, data: Dict[str, Any], indent: Optional[int] = 2) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps(data, indent=2)
+    json_kwargs = {"indent": indent}
+    if indent is None:
+        json_kwargs["separators"] = (",", ":")
+    payload = json.dumps(data, **json_kwargs)
     tmp_path = path.with_suffix(path.suffix + f".tmp.{os.getpid()}")
     try:
         tmp_path.write_text(payload, encoding="utf-8")

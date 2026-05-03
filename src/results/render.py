@@ -420,15 +420,19 @@ def render_channel_pattern_envelopes(
             pattern = pattern_analysis.get(f"pattern_{pattern_num}", {})
             windows = pattern.get("envelope_windows", []) or []
             time_windows = pattern.get("time_windows_ms", []) or []
+            time_axes = pattern.get("time_window_axes", []) or []
             peak_times = pattern.get("peak_times_seconds", []) or []
             for idx, envelope_window in enumerate(windows):
-                if envelope_window is None or idx >= len(time_windows):
-                    continue
-                time_window = time_windows[idx]
-                if time_window is None:
+                if envelope_window is None:
                     continue
                 values = np.asarray(envelope_window, dtype=float)
-                times = np.asarray(time_window, dtype=float)
+                time_window = time_windows[idx] if idx < len(time_windows) else None
+                time_axis = time_axes[idx] if idx < len(time_axes) else None
+                times = _envelope_time_axis(
+                    values,
+                    time_window=time_window,
+                    time_axis=time_axis,
+                )
                 if not values.size or not times.size:
                     continue
                 peak_value_db = float(np.nanmax(values))
@@ -489,10 +493,15 @@ def render_channel_independent_envelopes(
         for envelope in worst_cases[:num_envelopes]:
             envelope_window = envelope.get("envelope_window")
             time_window = envelope.get("time_window_ms")
-            if envelope_window is None or time_window is None:
+            time_axis = envelope.get("time_window_axis")
+            if envelope_window is None:
                 continue
             values = np.asarray(envelope_window, dtype=float)
-            times = np.asarray(time_window, dtype=float)
+            times = _envelope_time_axis(
+                values,
+                time_window=time_window,
+                time_axis=time_axis,
+            )
             if not values.size or not times.size:
                 continue
             envelopes.append(
@@ -530,6 +539,24 @@ def render_channel_independent_envelopes(
         )
         output_paths.append(output_path)
     return output_paths
+
+
+def _envelope_time_axis(
+    values: np.ndarray,
+    *,
+    time_window: Optional[list[float]] = None,
+    time_axis: Optional[dict] = None,
+) -> np.ndarray:
+    """Return a replay time axis from legacy arrays or compact axis metadata."""
+    if time_window is not None:
+        return np.asarray(time_window, dtype=float)
+    if not time_axis:
+        return np.array([], dtype=float)
+    if "values_ms" in time_axis:
+        return np.asarray(time_axis["values_ms"], dtype=float)
+    start_ms = _safe_float(time_axis.get("start_ms"), 0.0)
+    step_ms = _safe_float(time_axis.get("step_ms"), 0.0)
+    return start_ms + (np.arange(values.size, dtype=float) * step_ms)
 
 
 def render_channel_crest_factor_time(

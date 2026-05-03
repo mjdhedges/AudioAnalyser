@@ -49,8 +49,17 @@ def test_write_channel_result_bundle_contains_plot_replay_data(tmp_path):
                 "patterns_detected": 1,
                 "pattern_1": {
                     "num_repetitions": 2,
-                    "envelope_windows": [np.array([-12.0, -6.0, -9.0])],
-                    "time_windows_ms": [np.array([-1.0, 0.0, 1.0])],
+                    "peak_times_seconds": [0.5, 1.0, 1.5],
+                    "envelope_windows": [
+                        np.array([-12.0, -8.0, -9.0]),
+                        np.array([-12.0, -6.0, -9.0]),
+                        np.array([-12.0, -7.0, -9.0]),
+                    ],
+                    "time_windows_ms": [
+                        np.array([-1.0, 0.0, 1.0]),
+                        np.array([-1.0, 0.0, 1.0]),
+                        np.array([-1.0, 0.0, 1.0]),
+                    ],
                 },
             },
             "worst_case_envelopes": [
@@ -61,7 +70,15 @@ def test_write_channel_result_bundle_contains_plot_replay_data(tmp_path):
                     "envelope_window": np.array([-12.0, -6.0, -9.0]),
                     "time_window_ms": np.array([-1.0, 0.0, 1.0]),
                     "decay_times": {"decay_6db_ms": 20.0},
-                }
+                },
+                {
+                    "rank": 2,
+                    "peak_value_db": -7.0,
+                    "peak_time_seconds": 1.5,
+                    "envelope_window": np.array([-12.0, -7.0, -9.0]),
+                    "time_window_ms": np.array([-1.0, 0.0, 1.0]),
+                    "decay_times": {"decay_6db_ms": 10.0},
+                },
             ],
         }
     }
@@ -96,7 +113,10 @@ def test_write_channel_result_bundle_contains_plot_replay_data(tmp_path):
             "log_histogram_max_db": 0.0,
             "log_histogram_max_bin_size_db": 6.0,
         },
-        envelope_config={"envelope_plots_num_pattern_envelopes": 10},
+        envelope_config={
+            "envelope_plots_num_pattern_envelopes": 1,
+            "envelope_plots_num_independent_envelopes": 1,
+        },
         analysis_config={"peak_hold_tau_seconds": 1.0},
         advanced_statistics={"true_peak_to_rms_ratio_db": 12.0},
     )
@@ -146,8 +166,27 @@ def test_write_channel_result_bundle_contains_plot_replay_data(tmp_path):
     assert envelope_summary.loc[0, "peak_value_db"] == -6.0
 
     envelope_data = json.loads((channel_dir / "envelope_plot_data.json").read_text())
+    assert envelope_data["10.000"]["pattern_analysis"]["pattern_1"][
+        "envelope_windows"
+    ] == [[-12.0, -6.0, -9.0]]
+    assert envelope_data["10.000"]["pattern_analysis"]["pattern_1"][
+        "peak_times_seconds"
+    ] == [1.0]
+    assert envelope_data["10.000"]["pattern_analysis"]["pattern_1"][
+        "time_window_axes"
+    ] == [{"start_ms": -1.0, "step_ms": 1.0}]
+    assert (
+        "time_windows_ms"
+        not in envelope_data["10.000"]["pattern_analysis"]["pattern_1"]
+    )
+    assert len(envelope_data["10.000"]["worst_case_envelopes"]) == 1
     assert envelope_data["10.000"]["worst_case_envelopes"][0]["envelope_window"] == [
         -12.0,
         -6.0,
         -9.0,
     ]
+    assert envelope_data["10.000"]["worst_case_envelopes"][0]["time_window_axis"] == {
+        "start_ms": -1.0,
+        "step_ms": 1.0,
+    }
+    assert "time_window_ms" not in envelope_data["10.000"]["worst_case_envelopes"][0]
