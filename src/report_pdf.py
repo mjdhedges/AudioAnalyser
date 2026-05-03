@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from pathlib import Path
@@ -13,6 +14,7 @@ from PySide6.QtCore import QMarginsF, QUrl
 from PySide6.QtGui import QGuiApplication, QPageLayout, QPageSize, QPdfWriter, QTextDocument
 
 _PDF_QT_APP: Optional[QGuiApplication] = None
+logger = logging.getLogger(__name__)
 
 
 def markdown_report_to_pdf(
@@ -45,7 +47,7 @@ def markdown_report_to_pdf(
     writer.setPageSize(QPageSize(QPageSize.A4))
     writer.setPageMargins(QMarginsF(36, 36, 36, 42), QPageLayout.Unit.Point)
     writer.setResolution(96)
-    writer.setTitle(markdown_path.stem)
+    writer.setTitle(pdf_path.stem)
 
     document = QTextDocument()
     document.setDocumentMargin(0)
@@ -62,6 +64,20 @@ def markdown_report_to_pdf(
     html = _rewrite_local_img_srcs_to_file_urls(html, base_dir)
     document.setHtml(html)
     document.print_(writer)
+
+    # Older builds wrote `<stem>.pdf` next to the Markdown file. When callers pass a
+    # different output path (e.g. track-prefixed PDF names), remove the stale file so
+    # folders do not keep misleading `analysis.pdf` alongside `Track - analysis.pdf`.
+    if output_path is not None:
+        legacy_pdf = markdown_path.with_suffix(".pdf")
+        try:
+            if (
+                pdf_path.resolve() != legacy_pdf.resolve()
+                and legacy_pdf.is_file()
+            ):
+                legacy_pdf.unlink()
+        except OSError as exc:
+            logger.warning("Could not remove stale PDF %s: %s", legacy_pdf, exc)
 
     return pdf_path
 

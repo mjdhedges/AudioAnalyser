@@ -333,6 +333,22 @@ def test_markdown_report_to_pdf_writes_pdf(tmp_path):
     assert pdf_path.read_bytes().startswith(b"%PDF")
 
 
+def test_markdown_report_to_pdf_removes_stale_legacy_pdf(tmp_path):
+    """Custom PDF paths should not leave an old unprefixed `<stem>.pdf` behind."""
+    markdown_path = tmp_path / "analysis.md"
+    markdown_path.write_text("# Test Report\n\nHello.\n", encoding="utf-8")
+    stale_legacy = tmp_path / "analysis.pdf"
+    stale_legacy.write_bytes(b"%PDF-stale-placeholder")
+
+    prefixed = tmp_path / "My Track - analysis.pdf"
+    pdf_path = markdown_report_to_pdf(markdown_path, output_path=prefixed)
+
+    assert pdf_path == prefixed
+    assert prefixed.exists()
+    assert prefixed.read_bytes().startswith(b"%PDF")
+    assert not stale_legacy.exists()
+
+
 def test_render_dpi_uses_override_then_config():
     """Render DPI is configurable but still overridable from the CLI."""
     config = _DummyConfig({"plotting.render_dpi": 150, "plotting.dpi": 300})
