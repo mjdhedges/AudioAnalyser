@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.report_generator import _octave_processing_sentence
+from src.report_generator import _frequency_report_label, _octave_processing_sentence
 
 
 def test_octave_processing_sentence_reports_effective_auto_block_mode() -> None:
@@ -31,3 +31,10 @@ def test_octave_processing_sentence_handles_missing_metadata() -> None:
     sentence = _octave_processing_sentence({})
 
     assert "metadata was not found" in sentence
+
+
+def test_frequency_report_label_preserves_fractional_octave_centers() -> None:
+    """Report headings should not round fractional octave labels."""
+    assert _frequency_report_label(31.25) == "31.25 Hz"
+    assert _frequency_report_label(62.5) == "62.5 Hz"
+    assert _frequency_report_label(1000.0) == "1000 Hz"

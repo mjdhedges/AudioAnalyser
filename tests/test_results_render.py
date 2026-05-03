@@ -262,6 +262,22 @@ def test_bundle_render_and_report_write_cinema_deep_dives(tmp_path):
     assert "LFE Deep Dive" in report_text
     assert "Screen Channel Deep Dive" in report_text
     assert "Surround+Height Channel Deep Dive" in report_text
+    lfe_text = (output_dir / "lfe_deep_dive.md").read_text(encoding="utf-8")
+    screen_text = (output_dir / "screen_deep_dive.md").read_text(encoding="utf-8")
+    surround_text = (output_dir / "surround_height_deep_dive.md").read_text(
+        encoding="utf-8"
+    )
+    assert "## Contents" in lfe_text
+    assert "- [Full Channel](#full-channel)" in lfe_text
+    assert "## Full Channel" in lfe_text
+    assert "- [8 Hz](#8-hz)" in lfe_text
+    assert "## 8 Hz" in lfe_text
+    assert "## Contents" in screen_text
+    assert "- [8 Hz](#8-hz)" in screen_text
+    assert "## 8 Hz" in screen_text
+    assert "## Contents" in surround_text
+    assert "- [8 Hz](#8-hz)" in surround_text
+    assert "## 8 Hz" in surround_text
 
 
 def test_generate_bundle_report_writes_markdown(tmp_path):
@@ -270,6 +286,9 @@ def test_generate_bundle_report_writes_markdown(tmp_path):
     bundle = load_result_bundle(bundle_dir)
     output_dir = tmp_path / "rendered_report"
     render_bundle_group_outputs(bundle=bundle, output_dir=output_dir, dpi=80)
+    render_bundle_spectrum_plots(bundle=bundle, output_dir=output_dir, dpi=80)
+    render_bundle_time_plots(bundle=bundle, output_dir=output_dir, dpi=80)
+    render_bundle_histograms(bundle=bundle, output_dir=output_dir, dpi=80)
 
     report_path = generate_bundle_report(
         bundle=bundle,
@@ -280,7 +299,14 @@ def test_generate_bundle_report_writes_markdown(tmp_path):
     assert report_path == output_dir / "analysis.md"
     assert "# render_test - Audio Signal Analysis" in report_text
     assert "Source bundle: `render_test.aaresults`" in report_text
+    assert "## Contents" in report_text
+    assert "- [Group Overview Plots](#group-overview-plots)" in report_text
     assert "Crest Factor Analysis" in report_text
+    assert "## Group Overview Plots" in report_text
+    assert "### Screen" in report_text
+    assert "### Screen Channels" in report_text
+    assert "#### FL" in report_text
+    assert "##### Octave Spectrum" in report_text
     assert 'alt="Crest Factor Over Time - Screen"' in report_text
     assert "T3, T6, T9, and T12 are recovery-time measurements" in report_text
     pdf_path = output_dir / "analysis.pdf"

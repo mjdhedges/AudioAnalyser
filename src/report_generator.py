@@ -323,7 +323,10 @@ def _classify_channel_folder(folder: str) -> Optional[str]:
     }
     if tokens & {"FL", "FR", "FC", "FLC", "FRC"}:
         return "screen"
-    if any(token.startswith("LFE") for token in tokens) or "LOW FREQUENCY" in normalized:
+    if (
+        any(token.startswith("LFE") for token in tokens)
+        or "LOW FREQUENCY" in normalized
+    ):
         return "lfe"
     if tokens & {
         "SL",
@@ -450,6 +453,51 @@ def _markdown_report_image(
     return _plot_block_html(alt_text, rel_path)
 
 
+def _markdown_anchor(title: str) -> str:
+    """Return the GitHub-style Markdown anchor for a heading."""
+    normalized = re.sub(r"[^\w\s-]", "", title.lower())
+    return re.sub(r"[\s_]+", "-", normalized).strip("-")
+
+
+def _contents_section(items: List[Tuple[int, str]]) -> List[str]:
+    """Build a compact Markdown contents list."""
+    lines = ["## Contents", ""]
+    for level, title in items:
+        indent = "  " * max(level - 2, 0)
+        lines.append(f"{indent}- [{title}](#{_markdown_anchor(title)})")
+    lines.append("")
+    return lines
+
+
+def _main_report_contents() -> List[str]:
+    """Return the standard contents block for generated main reports."""
+    return _contents_section(
+        [
+            (2, "Processing Summary"),
+            (2, "Crest Factor Analysis"),
+            (2, "Group Overview Plots"),
+            (2, "Frequency Spectrum Summary"),
+            (2, "Sustained-Peak Recovery Summary"),
+            (2, "Peak Decay Characteristics"),
+            (2, "Peak Occurrence and Duty Cycle"),
+            (2, "Envelope Analysis"),
+            (2, "Deep Dive Sections"),
+            (2, "Appendix: Data Sources"),
+        ]
+    )
+
+
+def _deep_dive_contents(
+    frequencies: List[float], include_full_channel: bool = False
+) -> List[str]:
+    """Return contents for a deep-dive report."""
+    items: List[Tuple[int, str]] = []
+    if include_full_channel:
+        items.append((2, "Full Channel"))
+    items.extend((2, _frequency_report_label(frequency)) for frequency in frequencies)
+    return _contents_section(items)
+
+
 def _group_plot_reference(
     track_dir: Path,
     report_folder: Path,
@@ -528,6 +576,7 @@ def generate_bundle_report(
         "dynamic range characteristics"
     )
     lines.append("")
+    lines.extend(_main_report_contents())
     lines.append("## Processing Summary")
     lines.append("")
     lines.append(f"- Source bundle: `{bundle.path.name}`")
@@ -631,12 +680,22 @@ def _bundle_group_plot_section(
     report_folder: Path,
     groups: Dict[str, List[ChannelResult]],
 ) -> List[str]:
-    lines: List[str] = []
+    lines: List[str] = [
+        "## Group Overview Plots",
+        "",
+        "These plots give a quick visual comparison of crest factor and octave spectrum "
+        "behavior for each channel group before the per-channel plots below.",
+        "",
+    ]
     gap_note_added = False
     for group_name in groups.keys():
+        lines.append(f"### {group_name}")
+        lines.append("")
         crest_plot = rendered_output_dir / group_name / "crest_factor_time.png"
         octave_plot = rendered_output_dir / group_name / "octave_spectrum.png"
         if crest_plot.exists():
+            lines.append("#### Crest Factor Over Time")
+            lines.append("")
             lines.append(
                 _markdown_report_image(
                     f"Crest Factor Over Time - {group_name}",
@@ -652,6 +711,8 @@ def _bundle_group_plot_section(
             lines.append("*Crest factor time plot not available*")
         lines.append("")
         if octave_plot.exists():
+            lines.append("#### Octave Spectrum")
+            lines.append("")
             lines.append(
                 _markdown_report_image(
                     f"Octave Spectrum - {group_name}",
@@ -702,9 +763,11 @@ def _bundle_frequency_section(
             )
         )
     lines.append("")
-    for group in group_data.values():
+    for group_name, group in group_data.items():
+        group_lines: List[str] = []
         for channel in group.get("channels", []):
             channel_dir = rendered_output_dir / channel.channel_id
+            channel_lines: List[str] = []
             for filename, title in (
                 ("octave_spectrum.png", "Octave Spectrum"),
                 ("crest_factor.png", "Crest Factor Spectrum"),
@@ -715,7 +778,9 @@ def _bundle_frequency_section(
             ):
                 plot_path = channel_dir / filename
                 if plot_path.exists():
-                    lines.append(
+                    channel_lines.append(f"##### {title}")
+                    channel_lines.append("")
+                    channel_lines.append(
                         _markdown_report_image(
                             f"{title} - {channel.channel_name}",
                             plot_path,
@@ -723,7 +788,15 @@ def _bundle_frequency_section(
                             f"{channel.channel_id}_{filename}",
                         )
                     )
-                    lines.append("")
+                    channel_lines.append("")
+            if channel_lines:
+                group_lines.append(f"#### {channel.channel_name}")
+                group_lines.append("")
+                group_lines.extend(channel_lines)
+        if group_lines:
+            lines.append(f"### {group_name} Channels")
+            lines.append("")
+            lines.extend(group_lines)
     return lines
 
 
@@ -932,6 +1005,18 @@ def _write_bundle_lfe_deep_dive(
 ) -> bool:
     """Write the bundle LFE deep-dive report if rendered plots exist."""
     lfe_dir = rendered_output_dir / "LFE"
+    frequencies = [8.0, 16.0, 31.25, 62.5, 125.0, 250.0]
+    full_channel_path = lfe_dir / "lfe_full_channel.png"
+    available_frequencies = [
+        frequency
+        for frequency in frequencies
+        if (
+            lfe_dir / f"lfe_octave_time_{_frequency_filename_value(frequency)}Hz.png"
+        ).exists()
+    ]
+    if not full_channel_path.exists() and not available_frequencies:
+        return False
+
     lines: List[str] = [
         f"# {track_name} - LFE Deep Dive",
         "",
@@ -943,10 +1028,16 @@ def _write_bundle_lfe_deep_dive(
         "low-frequency content varies throughout the track.",
         "",
     ]
-    found_plot = False
+    lines.extend(
+        _deep_dive_contents(
+            available_frequencies,
+            include_full_channel=full_channel_path.exists(),
+        )
+    )
     gap_note_added = False
-    full_channel_path = lfe_dir / "lfe_full_channel.png"
     if full_channel_path.exists():
+        lines.append("## Full Channel")
+        lines.append("")
         lines.append(
             _markdown_report_image(
                 "LFE Full Channel Crest Factor Over Time",
@@ -966,14 +1057,13 @@ def _write_bundle_lfe_deep_dive(
             "levels are high, which places greater demands on the system.*"
         )
         lines.append("")
-        found_plot = True
 
-    for frequency in [8.0, 16.0, 31.25, 62.5, 125.0, 250.0]:
+    for frequency in available_frequencies:
         filename = f"lfe_octave_time_{_frequency_filename_value(frequency)}Hz.png"
         plot_path = lfe_dir / filename
-        if not plot_path.exists():
-            continue
         frequency_label = _frequency_report_label(frequency)
+        lines.append(f"## {frequency_label}")
+        lines.append("")
         lines.append(
             _markdown_report_image(
                 f"LFE {frequency_label} Octave Band Time Analysis",
@@ -983,10 +1073,7 @@ def _write_bundle_lfe_deep_dive(
             )
         )
         lines.append("")
-        found_plot = True
 
-    if not found_plot:
-        return False
     _write_markdown_and_pdf(report_folder / "lfe_deep_dive.md", lines)
     return True
 
@@ -1004,10 +1091,7 @@ def _write_bundle_frequency_deep_dive(
 ) -> bool:
     """Write a Screen or Surround+Height bundle deep-dive report."""
     group_dir = rendered_output_dir / group_name
-    lines: List[str] = [f"# {track_name} - {title}", "", description, ""]
-    found_plot = False
-    gap_note_added = False
-    for frequency in [
+    frequencies = [
         8.0,
         16.0,
         31.25,
@@ -1020,12 +1104,27 @@ def _write_bundle_frequency_deep_dive(
         4000.0,
         8000.0,
         16000.0,
-    ]:
+    ]
+    available_frequencies = [
+        frequency
+        for frequency in frequencies
+        if (
+            group_dir
+            / f"{filename_prefix}_{_frequency_filename_value(frequency)}Hz.png"
+        ).exists()
+    ]
+    if not available_frequencies:
+        return False
+
+    lines: List[str] = [f"# {track_name} - {title}", "", description, ""]
+    lines.extend(_deep_dive_contents(available_frequencies))
+    gap_note_added = False
+    for frequency in available_frequencies:
         filename = f"{filename_prefix}_{_frequency_filename_value(frequency)}Hz.png"
         plot_path = group_dir / filename
-        if not plot_path.exists():
-            continue
         frequency_label = _frequency_report_label(frequency)
+        lines.append(f"## {frequency_label}")
+        lines.append("")
         lines.append(
             _markdown_report_image(
                 f"{group_name} {frequency_label} Octave Band Time Analysis (All Channels)",
@@ -1039,10 +1138,7 @@ def _write_bundle_frequency_deep_dive(
             lines.append(_crest_factor_gaps_note())
             lines.append("")
             gap_note_added = True
-        found_plot = True
 
-    if not found_plot:
-        return False
     _write_markdown_and_pdf(report_folder / report_filename, lines)
     return True
 
@@ -1054,11 +1150,9 @@ def _write_markdown_and_pdf(path: Path, lines: List[str]) -> None:
 
 
 def _frequency_report_label(frequency_hz: float) -> str:
-    if frequency_hz >= 1000:
-        return f"{frequency_hz:.0f} Hz"
     if frequency_hz == int(frequency_hz):
-        return f"{frequency_hz:.0f} Hz"
-    return f"{frequency_hz:.1f} Hz"
+        return f"{int(frequency_hz)} Hz"
+    return f"{frequency_hz:g} Hz"
 
 
 def _frequency_filename_value(frequency_hz: float) -> str:
