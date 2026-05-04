@@ -193,3 +193,7 @@ cache/
 
 # Bundled vendor source archives (ship as release assets, not in git)
 vendor/ffmpeg/*.zip
+
+# Build metadata generated locally / on CI before PyInstaller (do not commit)
+src/_version_build.py
+packaging/windows_file_version_info.txt

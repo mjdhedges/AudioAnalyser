@@ -12,8 +12,14 @@ From the repository root:
 .\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 pip install -r requirements-dev.txt
+python .\packaging\write_build_info.py
 .\packaging\build_windows_gui.ps1 -Clean
 ```
+
+The packaging script runs `write_build_info.py` automatically before PyInstaller; run it
+manually when you invoke PyInstaller directly. It writes git-derived metadata into
+`src/_version_build.py` (bundled into the EXE) and `packaging/windows_file_version_info.txt`
+(Windows EXE properties).
 
 The executable is written to:
 

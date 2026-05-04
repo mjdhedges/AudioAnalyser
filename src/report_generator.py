@@ -20,6 +20,11 @@ from PySide6.QtGui import QColor, QImage, QPainter
 
 from src.report_pdf import markdown_report_to_pdf
 from src.results.reader import ChannelResult, ResultBundle
+from src.version_info import (
+    format_analyzer_markdown_lines,
+    get_application_dict,
+    resolve_application_for_report,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -623,6 +628,11 @@ def generate_bundle_report(
         f"{_format_number(float(bundle.track.get('sample_rate', 0.0)), 0)} Hz"
     )
     lines.append(f"- {octave_processing_sentence}")
+    lines.extend(
+        format_analyzer_markdown_lines(
+            resolve_application_for_report(bundle.manifest)
+        )
+    )
     lines.append("")
 
     lines.extend(
@@ -1750,6 +1760,7 @@ def generate_report(track_dir: Path, output_path: Path) -> None:
         "- **Frequency-dependent crest factor behavior:** Wideband and octave-band "
         "dynamic range characteristics"
     )
+    lines.extend(format_analyzer_markdown_lines(get_application_dict()))
     lines.append("")
 
     # Crest Factor Analysis (moved to first main section)

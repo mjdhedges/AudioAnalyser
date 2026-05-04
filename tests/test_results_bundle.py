@@ -125,6 +125,7 @@ def test_write_channel_result_bundle_contains_plot_replay_data(tmp_path):
     manifest = json.loads((bundle_dir / "manifest.json").read_text())
 
     assert manifest["schema_version"] == 1
+    assert manifest["application"]["name"] == "audio-analyser"
     assert manifest["channels"][0]["channel_name"] == "FL"
     assert (channel_dir / "octave_band_analysis.csv").exists()
     assert (channel_dir / "time_domain_analysis.csv").exists()

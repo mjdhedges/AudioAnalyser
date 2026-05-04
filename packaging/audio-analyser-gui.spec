@@ -11,6 +11,8 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 # We want the repository root (parent of ``packaging/``).
 ROOT = Path(SPECPATH).parent
 ICON = ROOT / "audioanalyser_icon.png"
+WIN_VER_FILE = ROOT / "packaging" / "windows_file_version_info.txt"
+_EXE_VER_KW = {"version": str(WIN_VER_FILE)} if WIN_VER_FILE.is_file() else {}
 
 datas = [
     (str(ROOT / "audioanalyser_icon.png"), "."),
@@ -82,6 +84,7 @@ gui_exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    **_EXE_VER_KW,
 )
 cli_exe = EXE(
     cli_pyz,
@@ -99,6 +102,7 @@ cli_exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    **_EXE_VER_KW,
 )
 coll = COLLECT(
     gui_exe,

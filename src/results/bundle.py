@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 
 from src.signal_metrics import sampled_max_abs
+from src.version_info import get_application_dict
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +159,7 @@ def _update_manifest(
             },
         }
     )
+    manifest["application"] = get_application_dict()
 
     channels = {
         channel["channel_id"]: channel

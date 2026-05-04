@@ -298,6 +298,8 @@ def test_generate_bundle_report_writes_markdown(tmp_path):
     report_text = report_path.read_text(encoding="utf-8")
     assert report_path == output_dir / "analysis.md"
     assert "# render_test - Audio Signal Analysis" in report_text
+    assert "**Analyzer:**" in report_text
+    assert "**Git commit:**" in report_text
     assert "Source bundle: `render_test.aaresults`" in report_text
     assert "## Contents" in report_text
     assert "- [Group Overview Plots](#group-overview-plots)" in report_text
@@ -396,3 +398,5 @@ def test_render_cli_renders_histograms_from_bundle(tmp_path):
 
     manifest = json.loads((bundle_dir / "manifest.json").read_text())
     assert manifest["track"]["track_name"] == "render_test.wav"
+    assert manifest["application"]["name"] == "audio-analyser"
+    assert manifest["application"]["version"]
