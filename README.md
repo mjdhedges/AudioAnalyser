@@ -15,6 +15,8 @@ creating a virtual environment, or running command-line tools.
 
 ### Download (Windows GUI)
 
+![Audio Analyser Windows GUI](audioanalyser_GUI.png)
+
 1. Open this repository on GitHub and go to **Releases**.
 2. Download the latest Windows package (the `.zip` attached to the release).
 3. Extract the zip somewhere writable (for example `Documents\AudioAnalyser\`).
